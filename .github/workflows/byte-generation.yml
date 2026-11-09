@@ -23,7 +23,7 @@ jobs:
         run: |
           set -euo pipefail
           make clean
-          make nanlm test_byte_model CXX="${{ matrix.compiler }}"
+          make nanlm-diagnostics test_byte_model CXX="${{ matrix.compiler }}"
           ./test_byte_model | tee byte-model-audit.log
           grep 'PASS: variable-order causal autoregression' byte-model-audit.log
       - name: Test real CLI with unseen text and deterministic sampling
@@ -32,10 +32,10 @@ jobs:
           set -euo pipefail
           printf 'the little model can generate tiny pieces of text.\nthe little model can learn the recurring words.\n' > /tmp/hw0-train.txt
           printf 'the little model can generate recurring text.\n' > /tmp/hw0-heldout.txt
-          ./nanlm /tmp/hw0-causal-root train-text /tmp/hw0-train.txt 3 | tee train.log
-          ./nanlm /tmp/hw0-causal-root eval-text /tmp/hw0-heldout.txt | tee eval.log
-          ./nanlm /tmp/hw0-causal-root generate 'the little model ' 100 11 0.85 0.92 > sample-1.txt
-          ./nanlm /tmp/hw0-causal-root generate 'the little model ' 100 11 0.85 0.92 > sample-2.txt
+          ./nanlm-diagnostics /tmp/hw0-causal-root train-text /tmp/hw0-train.txt 3 | tee train.log
+          ./nanlm-diagnostics /tmp/hw0-causal-root eval-text /tmp/hw0-heldout.txt | tee eval.log
+          ./nanlm-diagnostics /tmp/hw0-causal-root generate 'the little model ' 100 11 0.85 0.92 > sample-1.txt
+          ./nanlm-diagnostics /tmp/hw0-causal-root generate 'the little model ' 100 11 0.85 0.92 > sample-2.txt
           cmp sample-1.txt sample-2.txt
           test "$(wc -c < sample-1.txt)" = 117
           test "$(stat -c%s /tmp/hw0-causal-root)" = 8388608
@@ -59,21 +59,21 @@ jobs:
           An astronomer studies new patterns above a silent valley.
           A traveler follows a narrow path beside the sea.
           TEXT
-          ./nanlm /tmp/hw0-causal-root train-text /tmp/hw0-rnn-train.txt 2
-          ./nanlm /tmp/hw0-causal-root train-rnn /tmp/hw0-rnn-train.txt 8 | tee rnn-train.log
-          ./nanlm /tmp/hw0-causal-root benchmark-text /tmp/hw0-rnn-holdout.txt | tee comparison.log
+          ./nanlm-diagnostics /tmp/hw0-causal-root train-text /tmp/hw0-rnn-train.txt 2
+          ./nanlm-diagnostics /tmp/hw0-causal-root train-rnn /tmp/hw0-rnn-train.txt 8 | tee rnn-train.log
+          ./nanlm-diagnostics /tmp/hw0-causal-root benchmark-text /tmp/hw0-rnn-holdout.txt | tee comparison.log
           grep 'BENCH model=ngram order=0' comparison.log
           grep 'BENCH model=ngram order=5' comparison.log
           grep 'BENCH model=rnn32' comparison.log
-          ./nanlm /tmp/hw0-causal-root select-hybrid /tmp/hw0-rnn-development.txt /tmp/hw0-rnn-holdout.txt | tee selected-model.log
+          ./nanlm-diagnostics /tmp/hw0-causal-root select-hybrid /tmp/hw0-rnn-development.txt /tmp/hw0-rnn-holdout.txt | tee selected-model.log
           grep 'TEST selected_ce=' selected-model.log
-          ./nanlm /tmp/hw0-causal-root eval-hybrid /tmp/hw0-rnn-holdout.txt 0.25 | tee hybrid-eval.log
-          ./nanlm /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-1.txt
-          ./nanlm /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-2.txt
+          ./nanlm-diagnostics /tmp/hw0-causal-root eval-hybrid /tmp/hw0-rnn-holdout.txt 0.25 | tee hybrid-eval.log
+          ./nanlm-diagnostics /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-1.txt
+          ./nanlm-diagnostics /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-2.txt
           cmp hybrid-1.txt hybrid-2.txt
           test "$(wc -c < hybrid-1.txt)" = 132
-          ./nanlm /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-1.txt
-          ./nanlm /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-2.txt
+          ./nanlm-diagnostics /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-1.txt
+          ./nanlm-diagnostics /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-2.txt
           cmp rnn-1.txt rnn-2.txt
           test "$(wc -c < rnn-1.txt)" = 132
       - name: Save audit logs
