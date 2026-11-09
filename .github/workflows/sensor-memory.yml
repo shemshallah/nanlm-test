@@ -27,6 +27,9 @@ jobs:
             ./sensor-memory-probe tests/fixtures/sensor_sources.tsv penguin ISA animal | tee proof.log
             grep -q 'state=3 inferred=1' proof.log
             grep -q 'source_A source_B' proof.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_native_bridge.cpp -o test_sensor_native_bridge
+            ./test_sensor_native_bridge | tee native-bridge.log
+            grep -q "PASS: live UnifiedWaveLanguage membership" native-bridge.log
           done
       - name: Store sensor results
         if: always()
@@ -36,3 +39,4 @@ jobs:
           path: |
             sensor-memory-test.log
             proof.log
+            native-bridge.log
