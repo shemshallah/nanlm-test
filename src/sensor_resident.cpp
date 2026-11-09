@@ -19,6 +19,11 @@ int main(int argc,char** argv){
   if(std::filesystem::exists(path))sensor.load(path);
   TemporalMatrixLog temporal(path.string()+".slices");
   if(temporal.next_sequence()==1)temporal.capture(sensor);
+  else {
+   const auto latest=temporal.latest();
+   if(sensor.clock()<latest.frame.nanclock)sensor.advance_to(latest.frame.nanclock);
+   else if(sensor.clock()>latest.frame.nanclock)temporal.capture(sensor);
+  }
   std::cout<<"READY heads=255 triads=85 sources="<<sensor.global().unique_sources
            <<" facts="<<sensor.global().unique_statements<<"\n";
   for(std::string command;std::getline(std::cin,command);){
