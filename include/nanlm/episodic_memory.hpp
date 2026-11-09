@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace nanlm {
@@ -36,9 +37,71 @@ public:
   size_t routed=0,exact_compares=0;
   double resonance=0;
  };
+ struct Suggestion {
+  std::string cue,source;
+  double resonance=0;
+  bool exact_verified=false;
+ };
 private:
  std::string path_;
  std::vector<Record> entries_;
+ // Derived addressing, never serialized; rebuilding it cannot modify
+ // the 8MiB root or its source-attributed episodic records.
+ std::array<std::unordered_map<uint64_t,std::vector<size_t>>,MAX_KEY+1>
+     suffix_index_{};
+ std::unordered_map<std::string,std::vector<size_t>> cue_index_;
+ std::array<bool,MAX_KEY+1> lengths_{};
+ static uint64_t reversed_hash(std::string_view bytes){
+  uint64_t h=14695981039346656037ull;
+  for(auto it=bytes.rbegin();it!=bytes.rend();++it){
+   h^=static_cast<uint8_t>(*it);
+   h*=1099511628211ull;
+  }
+  return h;
+ }
+ void rebuild_index(){
+  cue_index_.clear();lengths_.fill(false);
+  for(auto& m:suffix_index_)m.clear();
+  for(size_t i=0;i<entries_.size();++i){
+   const auto& r=entries_[i];
+   const size_t n=r.cue.size();
+   lengths_[n]=true;
+   suffix_index_[n][reversed_hash(r.cue)].push_back(i);
+   cue_index_[r.cue].push_back(i);
+  }
+ }
+ Lookup probe_hash(const uint8_t* history,size_t length)const{
+  Lookup out{};
+  if(!length||history[length-1]!=static_cast<uint8_t>(' '))return out;
+  const size_t limit=std::min(length,MAX_KEY);
+  std::array<uint64_t,MAX_KEY+1> hashes{};
+  uint64_t h=14695981039346656037ull;
+  for(size_t n=1;n<=limit;++n){
+   h^=history[length-n];h*=1099511628211ull;
+   hashes[n]=h;
+  }
+  for(size_t n=limit;n>=6;--n){
+   if(!lengths_[n])continue;
+   auto it=suffix_index_[n].find(hashes[n]);
+   if(it==suffix_index_[n].end())continue;
+   out.routed+=it->second.size();
+   for(size_t i:it->second){
+    const std::string& cue=entries_[i].cue;
+    ++out.exact_compares;
+    bool match=true;
+    for(size_t j=0;j<n;++j)
+     if(history[length-n+j]!=static_cast<uint8_t>(cue[j])){
+      match=false;break;
+     }
+    if(!match)continue; // 64-bit hash is NOT a proof.
+    const Record* candidate=exact(cue);
+    if(candidate)
+     out.record=static_cast<uint32_t>(candidate-entries_.data());
+    return out; // Preserve conflict abstention.
+   }
+  }
+  return out;
+ }
  static PhaseCode phase_code(std::string_view bytes){
   // Damped fixed-frequency two-channel oscillators approximate a cue's
   // temporal pattern; only byte equality can authorize copying.
@@ -192,25 +255,25 @@ public:
   }
   if(in.peek()!=std::char_traits<char>::eof())
    throw std::runtime_error("unexpected episodic checkpoint trailing data");
+  rebuild_index();
  }
  size_t size()const{return entries_.size();}
  // Multiple independent sources may make the SAME claim. Divergent
  // values are contested: never auto-complete one value as authoritative.
  const Record* exact(std::string_view cue)const{
-  const Record* chosen=nullptr;
-  for(const auto& r:entries_){
-   if(r.cue!=cue)continue;
-   if(chosen&&chosen->value!=r.value)return nullptr;
-   if(!chosen)chosen=&r;
-  }
-  return chosen;
+  const auto it=cue_index_.find(std::string(cue));
+  if(it==cue_index_.end())return nullptr;
+  const auto& first=entries_[it->second.front()];
+  for(size_t index:it->second)
+   if(entries_[index].value!=first.value)return nullptr;
+  return &first;
  }
  bool contested(std::string_view cue)const{
-  const std::string* value=nullptr;
-  for(const auto& r:entries_)if(r.cue==cue){
-   if(value&&*value!=r.value)return true;
-   value=&r.value;
-  }
+  const auto it=cue_index_.find(std::string(cue));
+  if(it==cue_index_.end())return false;
+  const auto& first=entries_[it->second.front()];
+  for(size_t index:it->second)
+   if(entries_[index].value!=first.value)return true;
   return false;
  }
  void remember(const std::string& cue,const std::string& value,
@@ -219,6 +282,7 @@ public:
   upsert(next,{cue,value,source});
   save(next);
   entries_=std::move(next);
+  rebuild_index();
  }
  size_t import_tsv(std::istream& input,const std::string& source){
   auto next=entries_;
@@ -234,7 +298,7 @@ public:
    ++loaded;
   }
   if(!input.eof()&&input.fail())throw std::runtime_error("episodic input read failed");
-  if(loaded){save(next);entries_=std::move(next);}
+  if(loaded){save(next);entries_=std::move(next);rebuild_index();}
   return loaded;
  }
  // Explicit source-document indexing: each sufficiently long UTF-8 line
@@ -261,7 +325,7 @@ public:
   }
   if(!input.eof()&&input.fail())
    throw std::runtime_error("document indexing input read failed");
-  if(accepted){save(next);entries_=std::move(next);}
+  if(accepted){save(next);entries_=std::move(next);rebuild_index();}
   return accepted;
  }
  // Optional phase-resonant ranking. Candidate ranking is advisory:
@@ -274,6 +338,7 @@ public:
   Lookup found{};
   if(length==0||history[length-1]!=static_cast<uint8_t>(' '))
    return found;
+  if(!resonate)return probe_hash(history,length);
   std::vector<size_t> order;
   order.reserve(entries_.size());
   std::vector<double> scores(entries_.size(),0.0);
@@ -330,6 +395,55 @@ public:
    return found;
   }
   return found;
+ }
+ // A nonbinding associative search for operator review: approximate
+ // cues and source labels only; NEVER returns the fact/value, never copies,
+ // and never claims a phase hit is an exact memory match.
+ std::vector<Suggestion> suggest(const uint8_t* history,size_t length,
+                        size_t count=3,
+                        const std::array<double,255>* live_wave=nullptr)const{
+  if(!history||length==0||count==0||count>16)return {};
+  std::array<PhaseCode,MAX_KEY+1> recent{};
+  std::array<bool,MAX_KEY+1> ready{};
+  std::vector<Suggestion> scored;
+  scored.reserve(entries_.size());
+  for(const auto& r:entries_){
+   const size_t n=r.cue.size();
+   if(n>length)continue;
+   if(!ready[n]){
+    const auto* start=reinterpret_cast<const char*>(history+length-n);
+    recent[n]=phase_code(std::string_view(start,n));ready[n]=true;
+   }
+   double score=similarity(recent[n],r.phase);
+   if(live_wave){
+    double imprint=0;
+    for(size_t i=0;i<n;++i){
+     const uint8_t h=static_cast<uint8_t>(r.cue[i]);
+     if(h<255)imprint+=(*live_wave)[h]*
+         std::cos(0.238*double(n-i));
+    }
+    score+=0.005*std::tanh(imprint/double(n));
+   }
+   bool verified=true;
+   for(size_t i=0;i<n;++i)
+    if(history[length-n+i]!=static_cast<uint8_t>(r.cue[i])){
+     verified=false;break;
+    }
+   // Even a byte-exact contested key is NOT unambiguously verified.
+   verified=verified&&!contested(r.cue);
+   scored.push_back({r.cue,r.source,score,verified});
+  }
+  std::sort(scored.begin(),scored.end(),
+            [](const Suggestion& a,const Suggestion& b){
+    if(a.exact_verified!=b.exact_verified)
+     return a.exact_verified;
+    if(a.resonance!=b.resonance)
+     return a.resonance>b.resonance;
+    if(a.cue!=b.cue)return a.cue<b.cue;
+    return a.source<b.source;
+  });
+  if(scored.size()>count)scored.resize(count);
+  return scored;
  }
  // A caller streams one symbol at a time. Once a cue matches, the active
  // record ID/offset survives truncation of the 64-byte attention window.

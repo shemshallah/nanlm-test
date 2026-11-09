@@ -721,6 +721,10 @@ public:
  ExactEpisodicMemory::Lookup probe_memory(const State& s,bool resonate)const{
   return episodic_.probe(s.history.data(),s.length,resonate,&s.wave);
  }
+ std::vector<ExactEpisodicMemory::Suggestion> suggest_memory(
+     const State& s,size_t limit=3)const{
+  return episodic_.suggest(s.history.data(),s.length,limit,&s.wave);
+ }
  void memorize(const std::string& cue,const std::string& value,
                const std::string& source){episodic_.remember(cue,value,source);}
  size_t memorize_tsv(std::istream& data,const std::string& source){

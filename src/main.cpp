@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -107,6 +107,30 @@ int main(int argc,char** argv){
    if(!record){std::cout<<"UNIFIED_EPISODIC_MISS\n";return 3;}
    std::cout<<"UNIFIED_EPISODIC_HIT source="<<record->source
             <<" value="<<record->value<<"\n";
+  }else if(operation=="probe-memory"){
+   if(argc<4||argc>5)throw std::invalid_argument("probe-memory CUE [RESONANCE_0_OR_1]");
+   const bool on=argc==5?number(4)!=0:false;
+   UnifiedWaveLanguage mind(universe);
+   UnifiedWaveLanguage::State s{};
+   for(unsigned char c:std::string(argv[3]))mind.observe(s,c);
+   const auto hit=mind.probe_memory(s,on);
+   std::cout<<"UNIFIED_MEMORY_PROBE resonance="<<int(on)
+            <<" exact="<<int(hit.record!=ExactEpisodicMemory::NONE)
+            <<" contested="<<int(mind.contested_episodic(argv[3]))
+            <<" routed="<<hit.routed
+            <<" checked="<<hit.exact_compares
+            <<" phase_score="<<hit.resonance<<"\n";
+  }else if(operation=="suggest"){
+   if(argc<4||argc>5)throw std::invalid_argument("suggest CUE [TOP_K]");
+   const size_t limit=argc>4?std::stoull(argv[4]):3u;
+   if(limit==0||limit>16)throw std::invalid_argument("suggest limit must be 1..16");
+   UnifiedWaveLanguage mind(universe);
+   UnifiedWaveLanguage::State s{};
+   for(unsigned char c:std::string(argv[3]))mind.observe(s,c);
+   for(const auto& hint:mind.suggest_memory(s,limit))
+    std::cout<<"UNIFIED_MEMORY_SUGGEST verified="<<int(hint.exact_verified)
+             <<" score="<<hint.resonance<<" source="<<hint.source
+             <<" cue="<<hint.cue<<"\n";
   }else if(operation=="eval"){
    if(argc<4)throw std::invalid_argument("evaluation file required");
    std::ifstream file(argv[3],std::ios::binary);
@@ -230,6 +254,12 @@ int main(int argc,char** argv){
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);
+   if(argc>8){
+    const int enabled=number(8);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("resonance generation flag must be 0 or 1");
+    mind.set_resonance_retrieval_enabled(enabled==1);
+   }
    const std::string prompt=argv[3];
    const size_t bytes=std::stoull(argv[4]);
    const uint64_t seed=argc>5?std::stoull(argv[5]):11ull;

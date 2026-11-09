@@ -154,3 +154,25 @@ nonmatch. A fixed 50-repeat microbenchmark prints equality-comparison counts
 and wall-clock microseconds for each probe. These are diagnostic CPU timings,
 not whole-model generation rates; use them to decide whether the optional
 resonance route earns its runtime cost. No blanket speedup is presumed.
+
+### Native exact-hash addressing (new default)
+
+The basic exact-cue path now indexes **reversed 64-bit byte hashes by cue
+length**. At a cue boundary, a 64-byte reverse hash walk creates candidate
+buckets for every possible suffix length; longest verified suffix wins.
+Hash matches are always byte-verified, and all distinct source claims
+are still checked for contradictions. The hash index is reconstructed from
+records on checkpoint open/import; it is not a second persisted root.
+
+Phase ranking is still opt-in. For operator-assisted approximate lookups,
+`suggest CUE [TOP_K]` returns only candidate cue strings, sources, scores
+and an explicit `verified` flag, **never source-backed fact values**.
+`probe-memory CUE [RESONANCE_0_OR_1]` exposes the exact search result,
+number of candidates, comparison count and the phase score. These controls
+are diagnostic and do not automatically authorize copying from a near miss.
+`generate` accepts a final optional 0/1 resonance-routing flag; it defaults
+0 for predictable low overhead.
+
+The adversarial benchmark now compares **hash-indexed** exact retrieval with
+phase ranking, not a linear scan. Any faster hash result is independent of
+whether wave-based associative search is useful.

@@ -67,8 +67,9 @@ int main(){
     require(no_rank.record==ranked.record&&
             ranked.record!=ExactEpisodicMemory::NONE,
             "resonance changed byte-verified result under distractors");
-    require(ranked.exact_compares<no_rank.exact_compares,
-            "phase routing did not reduce exact comparisons");
+    require(no_rank.exact_compares==1&&
+            ranked.exact_compares>=1,
+            "hashed exact lookup regressed or resonance skipped verification");
     const std::string near="Beacon archive coda: ";
     std::vector<uint8_t> wrong(near.begin(),near.end());
     require(many.probe(wrong.data(),wrong.size(),true).record==
@@ -94,10 +95,18 @@ int main(){
             std::isfinite(ranked_us),
             "invalid routing timing");
     std::cout<<"EPISODIC_DISTRACTOR_AUDIT candidates="<<ranked.routed
-             <<" scan_exact_compares="<<no_rank.exact_compares
+             <<" hash_exact_compares="<<no_rank.exact_compares
              <<" resonance_exact_compares="<<ranked.exact_compares
-             <<" scan_us="<<unranked_us
+             <<" hash_us="<<unranked_us
              <<" resonance_us="<<ranked_us<<"\n";
+    // Near-miss suggestions are explicitly unverified; source labels and
+    // candidate cues can be inspected without exposing any fact value.
+    const auto suggestions=many.suggest(wrong.data(),wrong.size(),5);
+    require(!suggestions.empty(),"phase search produced no candidate hints");
+    for(const auto& suggestion:suggestions)
+     require(!suggestion.exact_verified,
+             "near-miss phase result falsely marked exact");
+
     std::error_code ignored;std::filesystem::remove(probe_path,ignored);
    }
    require(std::filesystem::file_size(root)==ROOT_BYTES,
@@ -117,6 +126,9 @@ int main(){
    for(unsigned char c:long_gap+cue)mind.observe(phase_on,c);
    require(phase_on.recall_record==raw.record,
            "phase-ranked exact recall lost ground truth");
+   const auto hints=mind.suggest_memory(phase_on,3);
+   require(!hints.empty()&&hints[0].exact_verified,
+           "verified cue was not marked verified in optional suggestions");
    mind.set_resonance_retrieval_enabled(false);
    UnifiedWaveLanguage::State near_miss{};
    for(unsigned char c:std::string("Beacon archive codes: "))
