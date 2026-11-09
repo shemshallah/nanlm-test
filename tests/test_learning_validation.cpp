@@ -74,6 +74,42 @@ struct CountBaseline {
   return ce/n;
  }
 };
+// A closed-form one-parameter circular-offset estimator is an essential
+// conventional control: it has the SAME circular inductive bias as rule_frozen.
+// This baseline is diagnostics only; it is never a second production universe.
+struct OffsetBaseline {
+ double sum_cos=0,sum_sin=0;
+ void add(uint8_t src,uint8_t label) {
+  const double displacement=TAU*(int(label)-int(src))/FabricTeacher::VOCAB;
+  sum_cos+=std::cos(displacement);
+  sum_sin+=std::sin(displacement);
+ }
+ double angle()const{return std::atan2(sum_sin,sum_cos);}
+ Metrics evaluate(bool unseen)const{
+  Metrics result;
+  constexpr double gain=12.0;
+  const double phi=angle();
+  for(unsigned src=FIRST;src<LAST;++src){
+   if(unseen_source(src)!=unseen)continue;
+   const double at=TAU*(double(src)+0.5)/FabricTeacher::VOCAB+phi;
+   std::array<double,FabricTeacher::VOCAB> logits{};
+   double max_logit=-std::numeric_limits<double>::infinity();
+   unsigned best=0;
+   for(unsigned j=0;j<FabricTeacher::VOCAB;++j) {
+    const double theta=TAU*(double(j)+0.5)/FabricTeacher::VOCAB;
+    logits[j]=gain*std::cos(at-theta);
+    if(logits[j]>max_logit){max_logit=logits[j];best=j;}
+   }
+   double denom=0;
+   for(double logit:logits)denom+=std::exp(logit-max_logit);
+   const auto label=target(src);
+   result.ce+=std::log(denom)+max_logit-logits[label];
+   result.correct+=best==label?1u:0u;
+   ++result.n;
+  }
+  return result;
+ }
+};
 struct Configuration {
  const char* name;
  double angle,quaternion,dot_gain;
@@ -88,7 +124,7 @@ struct Outcome {
  double max_scratch_gap=0;
  double rule_angle_rad=0;
 };
-Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
+Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts,OffsetBaseline* offset) {
  const std::string path=(std::filesystem::temp_directory_path()/
    ("nanlm-validation-"+std::to_string(::getpid())+"-"+
     std::to_string(seed)+"-"+config.name)).string();
@@ -114,6 +150,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
     const double before=model.loss(src,label);
     const auto update=model.teach(src,label,++o.attempted);
     if(counts)counts->add(src,label);
+    if(offset)offset->add(src,label);
     if(update.accepted) {
      ++o.accepted;
      const double actual=model.loss(src,label);
@@ -181,19 +218,26 @@ int main() {
  }};
  for(uint32_t seed:seeds) {
   CountBaseline counts;
+  OffsetBaseline offset;
   for(const Configuration config:arms) {
    // Count-only learner is updated once, with the same ordered training observations.
    CountBaseline* baseline=std::string(config.name)=="flat"?&counts:nullptr;
-   report(seed,config,experiment(seed,config,baseline));
+   OffsetBaseline* circular=baseline?&offset:nullptr;
+   report(seed,config,experiment(seed,config,baseline,circular));
   }
   std::cout<<seed<<",count,,"<<counts.mean_ce(false)
-    <<",,"<<counts.mean_ce(true)<<",,,,,,\n";
+    <<",,"<<counts.mean_ce(true)<<",,,,,,,\n";
+  const Metrics circular_seen=offset.evaluate(false);
+  const Metrics circular_unseen=offset.evaluate(true);
+  std::cout<<seed<<",cyclic_offset,,"<<circular_seen.mean_ce()<<",,"
+    <<circular_unseen.mean_ce()<<","<<circular_seen.accuracy()<<","
+    <<circular_unseen.accuracy()<<",,,,,"<<offset.angle()<<"\n";
   if(seed==seeds[0]) {
    constexpr Configuration negative{"shuffled_labels",0.08,0.45,4.0,true,12.0};
-   report(seed,negative,experiment(seed,negative,nullptr));
+   report(seed,negative,experiment(seed,negative,nullptr,nullptr));
   }
  }
  std::cout<<"PASS: deterministic source-disjoint held-out audit, matched training budgets, "
-            "count-only baseline, scalar, quaternion, shared-relation and pure-rule controls, inverse consistency, shuffled-label control, "
+            "count and matched circular-offset baselines, scalar, quaternion and pure-rule controls, inverse consistency, shuffled-label control, "
             "committed-loss audit and persistence.\n";
 }
