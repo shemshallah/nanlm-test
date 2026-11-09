@@ -140,6 +140,23 @@ int main(){
            "TSV episode import failed");
    require(mind.exact_recall("Mission ID: ")->value=="PX-8837",
            "TSV memory exact content mismatch");
+   std::istringstream authored(
+      "The silver spacecraft settled softly by the east laboratory.\n"
+      "A quiet forest catches sunlight beyond the ancient village.\n");
+   require(mind.memorize_lines(authored,"fixture-book")==2,
+           "explicit source-line indexing rejected long quotations");
+   const std::string line=
+      "The silver spacecraft settled softly by the east laboratory.";
+   const size_t cut=line.find(' ',16)+1;
+   const std::string quote_key=line.substr(0,cut);
+   const std::string quote_tail=line.substr(cut);
+   const auto* quotation=mind.exact_recall(quote_key);
+   require(quotation&&quotation->value==quote_tail&&
+           quotation->source=="fixture-book#L1",
+           "indexed quote does not preserve exact source line");
+   require(mind.generate(long_gap+quote_key,quote_tail.size(),37)==quote_tail,
+           "indexed quotation did not replay through source-backed memory");
+
    mind.memorize("Mission ID: ","PX-9999","independent-source");
    require(mind.contested_episodic("Mission ID: ")&&
            mind.exact_recall("Mission ID: ")==nullptr,
