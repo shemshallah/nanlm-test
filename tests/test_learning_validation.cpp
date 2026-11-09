@@ -1,4 +1,5 @@
 #include "nanlm/teacher.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -160,8 +161,8 @@ int main() {
    CountBaseline* baseline=std::string(config.name)=="flat"?&counts:nullptr;
    report(seed,config,experiment(seed,config,baseline));
   }
-  std::cout<<seed<<",count,,,,"
-    <<counts.mean_ce(false)<<','<<counts.mean_ce(true)<<",,,,,,\n";
+  std::cout<<seed<<",count,,"<<counts.mean_ce(false)
+    <<",,"<<counts.mean_ce(true)<<",,,,,,\n";
   if(seed==seeds[0]) {
    constexpr Configuration negative{"shuffled_labels",0.08,0.45,4.0,true};
    report(seed,negative,experiment(seed,negative,nullptr));
