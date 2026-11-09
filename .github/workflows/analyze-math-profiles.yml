@@ -1,0 +1,60 @@
+name: Analyze five full-WordNet mathematical tensor signatures
+on:
+  push:
+    branches: [experiment/specialist-matrix-probes-20261109]
+    paths:
+      - 'tools/compare_math_profile_outputs.py'
+      - 'tests/test_math_profile_analysis.py'
+      - '.github/workflows/analyze-math-profiles.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test common nanclock and statistics integrity
+        run: python3 -m unittest discover -s tests -p 'test_math_profile_analysis.py' -v
+      - name: Retrieve frozen five-profile WordNet 3.1 measurement artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/frozen-math
+          gh run download 42722781038 --repo "$GITHUB_REPOSITORY" \
+            --name full-wordnet31-five-tensor-specialists --dir /tmp/frozen-math
+          ls -lh /tmp/frozen-math/*.c256tensor
+      - name: Compare mathematical data distributions and paired-time signatures
+        run: |
+          python3 tools/compare_math_profile_outputs.py \
+            --tensors /tmp/frozen-math --out /tmp/frozen-math/math-statistics.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("/tmp/frozen-math/math-statistics.json").read_text())
+          assert r["ticks_per_profile"] == 314143 and r["all_aligned"]
+          for name,profile in r["profiles"].items():
+              for channel in ("global","metric"):
+                  stat=profile["per_channel"][channel]
+                  print("SIGNATURE",name,channel,
+                        "entries",stat["entries"],"mean",stat["mean"],
+                        "stddev",stat["stddev"],"min",stat["min"],
+                        "max",stat["max"],"nonzero",stat["nonzero_ratio"])
+          for item,c in r["pair_metric_correlations"].items():
+              print("PAIR_CORRELATION",item,c)
+          for item,c in r["global_correlations"].items():
+              print("GLOBAL_CORRELATION",item,c)
+          PY
+          mkdir -p artifacts
+          cp /tmp/frozen-math/math-statistics.json artifacts/
+      - name: Publish small numeric summary only
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordnet31-specialist-mathematical-statistics
+          path: artifacts/math-statistics.json
+          if-no-files-found: error
