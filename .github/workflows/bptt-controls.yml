@@ -1,0 +1,31 @@
+name: HW0 matched recurrent BPTT training ablation
+on:
+  push:
+    branches:
+      - 'feat/hw0-bptt-controlled-training'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bptt-ablation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the single production wave engine
+        run: make nanlm CXX=clang++
+      - name: Matched independent scratch-root training outcomes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/bptt_control_benchmark.py | tee bptt-control.log
+      - name: Record source hashes, BPTT counts and held-out comparisons
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bptt-controlled-training
+          path: |
+            bptt-control.log
+            bptt-control-report.json
+          if-no-files-found: warn
