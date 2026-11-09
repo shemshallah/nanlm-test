@@ -716,6 +716,9 @@ public:
  size_t memorize_tsv(std::istream& data,const std::string& source){
   return episodic_.import_tsv(data,source);
  }
+ size_t memorize_lines(std::istream& data,const std::string& source){
+  return episodic_.import_text_lines(data,source);
+ }
  const ExactEpisodicMemory::Record* exact_recall(const std::string& cue)const{
   return episodic_.exact(cue);
  }
