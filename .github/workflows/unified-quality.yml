@@ -59,6 +59,11 @@ jobs:
           b, a = before["full"][1], after["full"][1]
           print(f"QUALITY_SENTINEL tokens={after['full'][0]} before_ce={b:.9f} after_ce={a:.9f} delta_nats={a-b:+.9f}")
           print(f"ABLATION_SENTINEL trained_full_ce={a:.9f} teacher_only_ce={after['teacher_only'][1]:.9f}")
+          hyper_delta = after["no_hyperedge"][1] - a
+          print(f"HYPERMATRIX_ABLATION full_ce={a:.9f} no_hyperedge_ce={after['no_hyperedge'][1]:.9f} delta_nats={hyper_delta:+.9f}")
+          # Guard against the specific inert-hyperedge regression. This
+          # fixture is a wiring sentinel, not a source-disjoint fluency test.
+          assert abs(hyper_delta) > 1e-4, "hypermatrix has no measurable readout"
           print(f"CALIBRATION_TEST_DELTA uncalibrated_test_ce={uncalibrated['full'][1]:.9f} calibrated_test_ce={a:.9f} delta_nats={a-uncalibrated['full'][1]:+.9f}")
           # The sentinel is observational: it does not assert improvement.
           PY

@@ -34,6 +34,8 @@ public:
  static constexpr size_t N=FabricTeacher::VOCAB;
  static constexpr size_t WINDOW=16;
  static constexpr size_t MODES=4;
+ static constexpr size_t GROUP_SIZE=3;
+ static constexpr size_t GROUPS=(N+GROUP_SIZE-1)/GROUP_SIZE; // 85 voting triads
  // Bitmask for read-only, single-root counterfactual evaluations.
  static constexpr unsigned ABLATE_WAVE=1u<<0;
  static constexpr unsigned ABLATE_ATTENTION=1u<<1;
@@ -51,6 +53,16 @@ public:
  static constexpr size_t CALIBRATION_MAGIC_OFFSET=61;
  static constexpr size_t CALIBRATION_OFFSET=64;
  static constexpr uint8_t CALIBRATION_MAGIC=0xD3;
+ // Fixed-point register ownership: local hypergain [28..31] per head,
+ // triad gain [12..15] in the third head, field gain [12..15] in head 0.
+ // Markers [62,63]. No mirror lane, embedding, gauge, or ingress overlap.
+ static constexpr size_t HYPER_LOCAL_OFFSET=28;
+ static constexpr size_t HYPER_SHARED_OFFSET=12;
+ static constexpr size_t HYPER_LOCAL_MAGIC_OFFSET=62;
+ static constexpr size_t HYPER_SHARED_MAGIC_OFFSET=63;
+ static constexpr uint8_t HYPER_LOCAL_MAGIC=0xB6;
+ static constexpr uint8_t HYPER_GROUP_MAGIC=0xB7;
+ static constexpr uint8_t HYPER_FIELD_MAGIC=0xB8;
  using GlobalScales=std::array<double,4>;
  struct State {
   std::array<double,N> wave{};
@@ -108,6 +120,29 @@ private:
   auto& h=universe_.root().h[head];
   std::memcpy(h.data+HEAD_GAIN_OFFSET,g.data(),sizeof(g));
   h.data[HEAD_GAIN_MAGIC_OFFSET]=HEAD_GAIN_MAGIC;
+ }
+ static constexpr uint8_t group_register(size_t group){
+  return static_cast<uint8_t>(group*GROUP_SIZE+GROUP_SIZE-1);
+ }
+ static float read_scalar(const Head& h,size_t offset){
+  float result=0;
+  std::memcpy(&result,h.data+offset,sizeof(result));
+  return result;
+ }
+ static void write_scalar(Head& h,size_t offset,float value){
+  std::memcpy(h.data+offset,&value,sizeof(value));
+ }
+ float local_hyper(uint8_t head)const{
+  return read_scalar(universe_.root().h[head],HYPER_LOCAL_OFFSET);
+ }
+ float group_hyper(size_t group)const{
+  return read_scalar(universe_.root().h[group_register(group)],HYPER_SHARED_OFFSET);
+ }
+ float field_hyper()const{
+  return read_scalar(universe_.root().h[0],HYPER_SHARED_OFFSET);
+ }
+ double hyper_gain(uint8_t head)const{
+  return double(local_hyper(head))+group_hyper(head/GROUP_SIZE)+field_hyper();
  }
  struct Features {
   double wave=0,attention=0,spectral=0,cycle=0;
@@ -259,15 +294,26 @@ private:
   if(s.length<2)return 0;
   const uint8_t a=s.history[s.length-2],b=s.history[s.length-1];
   if(a==b||a==candidate||b==candidate)return 0;
-  // Query the existing sparse native hyperedge store: exact typed triples,
-  // not an additional trainable tensor or lookup-based language model.
-  const auto links=universe_.routes(candidate);
-  double value=0;
-  for(const auto& edge:links){
-   if(edge.a==a&&edge.b==b&&edge.c==candidate&&edge.relation==PRECEDES)
-    value+=(edge.refutes?-1.0:1.0)*edge.strength;
-  }
-  return clamp(value,3.0);
+  // Logical factorized H[a,b,c]: pair-lane interaction with a directed,
+  // genuinely third-order product. Every pair comes from the same mapped
+  // NaN16 register, no redundant 255^3 allocation or second language model.
+  const auto pair_score=[&](uint8_t from,uint8_t to){
+   const auto forward=universe_.query(from,to,PRECEDES);
+   const auto backward=universe_.query(to,from,FOLLOWS);
+   const double pos=0.5*(forward.support+backward.support);
+   const double neg=0.5*(forward.refute+backward.refute);
+   return (pos-neg)/(1.0+pos+neg);
+  };
+  const double ab=pair_score(a,b);
+  const double bc=pair_score(b,candidate);
+  const double ac=pair_score(a,candidate);
+  const double holonomy=0.65+0.35*std::cos(universe_.triangle(a,b,candidate));
+  const double factor=1.25*ab*(0.7*bc+0.3*ac)*holonomy;
+  // Constant-time signed sparse hyperedge residual, exact address order.
+  const auto residual=universe_.hyper_query(a,b,candidate,PRECEDES);
+  const double exact=2.0*(residual.support-residual.refute)/
+                     (1.0+residual.support+residual.refute);
+  return clamp(factor+exact,3.0);
  }
  Features features(const State& s,uint8_t target)const{
   Features f{};
@@ -324,13 +370,109 @@ private:
   }
   return false;
  }
+ // Local independent gradients, triad consensus and full-field consensus
+ // all vote on one output distribution, and commit only if exact scratch
+ // softmax loss improves. No second model or unvalidated live mutation.
+ bool learn_hyper_gains(const State& s,uint8_t label){
+  if(s.length<2)return false;
+  const auto p=predict(s);
+  const double before=-std::log(std::max(p.p[label],1e-300));
+  std::array<double,N> signals{},grad{},old_local{};
+  std::array<double,GROUPS> old_group{},group_grad{};
+  double field_grad=0;
+  for(size_t c=0;c<N;++c){
+   signals[c]=hyperedge_signal(s,static_cast<uint8_t>(c));
+   old_local[c]=local_hyper(static_cast<uint8_t>(c));
+   grad[c]=(p.p[c]-(c==label?1.0:0.0))*signals[c];
+   group_grad[c/GROUP_SIZE]+=grad[c];
+   field_grad+=grad[c];
+  }
+  for(size_t group=0;group<GROUPS;++group)
+   old_group[group]=group_hyper(group);
+  const double old_field=field_hyper();
+  for(int retry=0;retry<8;++retry){
+   const double rate=std::ldexp(0.08,-retry);
+   std::array<float,N> next_local{};
+   std::array<float,GROUPS> next_group{};
+   for(size_t group=0;group<GROUPS;++group)
+    next_group[group]=static_cast<float>(
+      std::clamp(old_group[group]-0.4*rate*group_grad[group],-1.0,1.0));
+   const float next_field=static_cast<float>(
+     std::clamp(old_field-0.1*rate*field_grad,-1.0,1.0));
+   double largest=-std::numeric_limits<double>::infinity();
+   std::array<double,N> logits{};
+   for(size_t c=0;c<N;++c){
+    next_local[c]=static_cast<float>(
+      std::clamp(old_local[c]-rate*grad[c],-1.0,1.0));
+    const double delta=signals[c]*
+      (double(next_local[c])-old_local[c]+
+       double(next_group[c/GROUP_SIZE])-old_group[c/GROUP_SIZE]+
+       double(next_field)-old_field);
+    logits[c]=std::log(std::max(p.p[c],1e-300))+delta;
+    largest=std::max(largest,logits[c]);
+   }
+   double total=0;
+   for(double logit:logits)total+=std::exp(logit-largest);
+   const double after=std::log(total)+largest-logits[label];
+   if(after+1e-12<before){
+    for(size_t c=0;c<N;++c)
+     write_scalar(universe_.root().h[c],HYPER_LOCAL_OFFSET,next_local[c]);
+    for(size_t group=0;group<GROUPS;++group)
+     write_scalar(universe_.root().h[group_register(group)],
+                  HYPER_SHARED_OFFSET,next_group[group]);
+    write_scalar(universe_.root().h[0],HYPER_SHARED_OFFSET,next_field);
+    return true;
+   }
+  }
+  return false;
+ }
+ // Sparse residual writes are individually supported by the observed
+ // label, with two-of-three constructive votes, bounded residual mass.
+ bool learn_hyper_residual(const State& s,uint8_t label,uint64_t when){
+  if(s.length<2)return false;
+  const uint8_t a=s.history[s.length-2],b=s.history[s.length-1];
+  if(a==b||a==label||b==label)return false;
+  const double head=local_hyper(label);
+  const double group=group_hyper(label/GROUP_SIZE);
+  const double field=field_hyper();
+  const unsigned votes=unsigned(head>0)+unsigned(group>0)+unsigned(field>0);
+  const double gain=head+group+field;
+  if(votes<2||gain<=0)return false;
+  const auto old=universe_.hyper_query(a,b,label,PRECEDES);
+  if(old.support>=2.0f)return false;
+  constexpr float step=0.04f;
+  const double prior=2.0*(old.support-old.refute)/
+                     (1.0+old.support+old.refute);
+  const double updated=2.0*(old.support+step-old.refute)/
+                       (1.0+old.support+step+old.refute);
+  if(gain*(updated-prior)<=1e-12)return false;
+  universe_.add_hyper(a,b,label,PRECEDES,false,step,when);
+  return true;
+ }
 
 public:
  explicit UnifiedWaveLanguage(Universe& u):
   universe_(u),teacher_(u,0.055,0.08,0.09,0.45,4.0,0.0,true,0.12){
   for(size_t h=0;h<N;++h){
-   if(universe_.root().h[h].data[HEAD_GAIN_MAGIC_OFFSET]!=HEAD_GAIN_MAGIC)
+   auto& head=universe_.root().h[h];
+   if(head.data[HEAD_GAIN_MAGIC_OFFSET]!=HEAD_GAIN_MAGIC)
     write_gains(static_cast<uint8_t>(h),initial_gains());
+   if(head.data[HYPER_LOCAL_MAGIC_OFFSET]!=HYPER_LOCAL_MAGIC){
+    write_scalar(head,HYPER_LOCAL_OFFSET,0.14f);
+    head.data[HYPER_LOCAL_MAGIC_OFFSET]=HYPER_LOCAL_MAGIC;
+   }
+  }
+  for(size_t group=0;group<GROUPS;++group){
+   auto& head=universe_.root().h[group_register(group)];
+   if(head.data[HYPER_SHARED_MAGIC_OFFSET]!=HYPER_GROUP_MAGIC){
+    write_scalar(head,HYPER_SHARED_OFFSET,0.05f);
+    head.data[HYPER_SHARED_MAGIC_OFFSET]=HYPER_GROUP_MAGIC;
+   }
+  }
+  auto& field=universe_.root().h[0];
+  if(field.data[HYPER_SHARED_MAGIC_OFFSET]!=HYPER_FIELD_MAGIC){
+   write_scalar(field,HYPER_SHARED_OFFSET,0.025f);
+   field.data[HYPER_SHARED_MAGIC_OFFSET]=HYPER_FIELD_MAGIC;
   }
   rebuild_spectrum();
  }
@@ -435,7 +577,7 @@ public:
       ((disabled&ABLATE_SPECTRAL)?0.0:double(g[2])*scales[2]*f.spectral)+
       ((disabled&ABLATE_CYCLE)?0.0:double(g[3])*scales[3]*f.cycle)+
       ((disabled&ABLATE_INVERSE_EVIDENCE)?0.0:evidence_gain_*inverse_consensus)+
-      ((disabled&ABLATE_HYPEREDGE)?0.0:0.03*hyperedge_signal(s,target));
+      ((disabled&ABLATE_HYPEREDGE)?0.0:hyper_gain(target)*hyperedge_signal(s,target));
    largest=std::max(largest,logits[c]);
   }
   double z=0;
@@ -482,16 +624,11 @@ public:
     const uint8_t prev=state.history[state.length-1];
     // All persistent training occurs INSIDE the one mapped root and its
     // already-native temporal/pair/phase/quaternion overlays.
-    const auto accepted=teacher_.teach(prev,symbol,initial_time+trained_);
-    // Prediction gradients now update the four expert gates held directly
-    // in each of the 255 palindromic head registers.
+    teacher_.teach(prev,symbol,initial_time+trained_);
+    // One teacher and one higher-order field share all 255 registers.
     learn_head_gains(state,symbol);
-    if(accepted.accepted&&state.length>=2&&(trained_%8==0)){
-     const uint8_t first=state.history[state.length-2];
-     if(first!=prev&&first!=symbol&&prev!=symbol)
-      universe_.add_hyper(first,prev,symbol,PRECEDES,false,
-                          0.02f,initial_time+trained_);
-    }
+    learn_hyper_gains(state,symbol);
+    learn_hyper_residual(state,symbol,initial_time+trained_);
    }
    observe(state,symbol);
    ++trained_;
