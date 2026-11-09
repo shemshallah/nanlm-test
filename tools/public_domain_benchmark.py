@@ -11,6 +11,8 @@ import math
 import re
 import subprocess
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -29,8 +31,30 @@ def book(name: str) -> tuple[str, dict]:
         "User-Agent": "NaNLM-public-domain-research/1.0 (noncommercial evaluation)",
         "Accept": "text/plain",
     })
-    with urllib.request.urlopen(request, timeout=60) as response:
-        raw = response.read(3_000_000)
+    # Gutenberg's public gateway intermittently responds with HTTP 503/504.
+    # Retry only transient failures; the SHA-256 pin below rejects altered
+    # content. Never substitute an unverified edition or claim model failure.
+    raw = None
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                raw = response.read(3_000_000)
+            break
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code not in (
+                408, 429, 500, 502, 503, 504
+            ):
+                raise
+            if attempt == 4:
+                raise RuntimeError(
+                    f"Transient public corpus source unavailable after five attempts: {url}"
+                ) from exc
+            delay = (2, 4, 8, 12)[attempt]
+            print(f"PUBLIC_DOMAIN_RETRY name={name} attempt={attempt+1} "
+                  f"delay_seconds={delay} reason={type(exc).__name__}",
+                  flush=True)
+            time.sleep(delay)
+    assert raw is not None
     assert 30_000 < len(raw) < 3_000_000, (name, len(raw))
     digest = hashlib.sha256(raw).hexdigest()
     assert digest == expected_sha256, (
