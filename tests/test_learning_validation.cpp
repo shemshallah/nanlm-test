@@ -80,6 +80,7 @@ struct Configuration {
  bool shuffled=false;
  double rule_gain=0;
  bool train_heads=true;
+ double feature_rotor_gain=0.12;
 };
 struct Outcome {
  Metrics before_seen{},before_unseen{},after_seen{},after_unseen{};
@@ -95,7 +96,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  Outcome o;
  {
   Universe universe(path);
-  FabricTeacher model(universe,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain,config.train_heads);
+  FabricTeacher model(universe,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain,config.train_heads,config.feature_rotor_gain);
   o.before_seen=evaluate(model,false);
   o.before_unseen=evaluate(model,true);
   std::vector<uint8_t> sources;
@@ -124,6 +125,10 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
   if(config.rule_gain>0) {
    Quat q;
    std::memcpy(&q,universe.root().h[PRECEDES].data+96,sizeof(q));
+   Quat inv;
+   std::memcpy(&inv,universe.root().h[FOLLOWS].data+96,sizeof(inv));
+   if((q*inv).angle()>1e-5)
+    throw std::runtime_error("shared forward/reverse relation quaternions inconsistent");
    const Vec3q v=q.rotate({1,0,0});
    o.rule_angle_rad=std::atan2(v.y,v.x);
   }
@@ -135,10 +140,17 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  }
  {
   Universe restored(path);
-  FabricTeacher reloaded(restored,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain,config.train_heads);
+  FabricTeacher reloaded(restored,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain,config.train_heads,config.feature_rotor_gain);
   if(std::fabs(evaluate(reloaded,false).mean_ce()-o.after_seen.mean_ce())>1e-7 ||
      std::fabs(evaluate(reloaded,true).mean_ce()-o.after_unseen.mean_ce())>1e-7)
    throw std::runtime_error("restart changed held-out predictions");
+  if(config.rule_gain>0) {
+   Quat q,inv;
+   std::memcpy(&q,restored.root().h[PRECEDES].data+96,sizeof(q));
+   std::memcpy(&inv,restored.root().h[FOLLOWS].data+96,sizeof(inv));
+   if((q*inv).angle()>1e-5)
+    throw std::runtime_error("restored inverse relation rotor inconsistent");
+  }
  }
  cleanup(path);
  return o;
@@ -165,7 +177,7 @@ int main() {
   {"hybrid",0.08,0.45,4.0,false,0.0},
   {"rule",0.0,0.0,4.45,false,12.0},
   {"hybrid_rule",0.08,0.45,4.0,false,12.0},
-  {"rule_frozen",0.0,0.0,4.45,false,12.0,false}
+  {"rule_frozen",0.0,0.0,0.0,false,12.0,false,0.0}
  }};
  for(uint32_t seed:seeds) {
   CountBaseline counts;
@@ -182,6 +194,6 @@ int main() {
   }
  }
  std::cout<<"PASS: deterministic source-disjoint held-out audit, matched training budgets, "
-            "count-only baseline, scalar, quaternion, shared-relation and frozen-head controls, shuffled-label control, "
+            "count-only baseline, scalar, quaternion, shared-relation and pure-rule controls, inverse consistency, shuffled-label control, "
             "committed-loss audit and persistence.\n";
 }
