@@ -40,7 +40,8 @@ public:
  struct State {
   std::array<double,N> wave{};
   std::array<double,N> old_wave{};
-  std::array<double,N> prior{};
+  std::array<double,N> inverse_wave{};
+  std::array<double,N> inverse_old_wave{};
   std::array<uint8_t,WINDOW> history{};
   size_t length=0;
   uint64_t tick=0;
@@ -72,14 +73,11 @@ public:
 private:
  Universe& universe_;
  FabricTeacher teacher_;
- double wave_gain_=0.12;
- double attention_gain_=0.16;
- double spectral_gain_=0.06;
- double cycle_gain_=0.045;
  double evidence_gain_=0.08;
  double damping_=0.80;
  double omega_=0.53;
  std::array<std::array<double,N>,N> adjacency_{};
+ std::array<std::array<double,N>,N> directed_{};
  Spectral eigen_{};
  uint64_t trained_=0;
  using GainVector=std::array<float,4>;
@@ -147,12 +145,15 @@ private:
    for(size_t j=i+1;j<N;++j){
     const double forward=edge_weight(uint8_t(i),uint8_t(j));
     const double backward=edge_weight(uint8_t(j),uint8_t(i));
+    directed_[i][j]=forward;
+    directed_[j][i]=backward;
     const double w=0.5*(forward+backward);
     adjacency_[i][j]=w;
     adjacency_[j][i]=w;
     eigen_.edge_mass+=std::fabs(w);
    }
    adjacency_[i][i]=0;
+   directed_[i][i]=0;
   }
   if(eigen_.edge_mass<1e-12)return;
   for(size_t mode=0;mode<MODES;++mode){
@@ -257,7 +258,8 @@ private:
   Features f{};
   if(!s.length)return f;
   const uint8_t last=s.history[s.length-1];
-  f.wave=clamp(s.wave[target]-0.5*s.old_wave[target],3.0);
+  f.wave=clamp(0.5*(s.wave[target]-0.5*s.old_wave[target])+
+    0.5*(s.inverse_wave[target]-0.5*s.inverse_old_wave[target]),3.0);
   f.attention=attention(s,target);
   for(size_t m=0;m<MODES;++m)
    f.spectral+=eigen_.eigenvalues[m]*eigen_.vectors[m][target]*
@@ -326,13 +328,18 @@ public:
   // All 255 heads participate in each temporal transition. Opposing
   // mirror directions contribute through the symmetric scattering
   // operator while the second-order recurrence preserves wave history.
+  std::array<double,N> next_inverse{};
   for(size_t i=0;i<N;++i){
-   double scattering=0,degree=1;
+   double forward_in=0,inverse_in=0;
+   double incoming_degree=1,outgoing_degree=1;
    for(size_t j=0;j<N;++j){
-    scattering+=adjacency_[i][j]*s.wave[j];
-    degree+=std::fabs(adjacency_[i][j]);
+    // Temporal forward operator T and its exact transpose T* operate
+    // on the same physical mirror-pair fabric, not duplicated weights.
+    forward_in+=directed_[j][i]*s.wave[j];
+    inverse_in+=directed_[i][j]*s.inverse_wave[j];
+    incoming_degree+=std::fabs(directed_[j][i]);
+    outgoing_degree+=std::fabs(directed_[i][j]);
    }
-   const double input=(i==c?1.0:0.0);
    double modulation=0,modal_frequency=0;
    for(size_t m=0;m<MODES;++m){
     modulation+=eigen_.vectors[m][i]*eigen_.vectors[m][c]/(1.0+m);
@@ -341,11 +348,17 @@ public:
    }
    const double local_omega=omega_+0.1*std::tanh(modal_frequency);
    const double local_oscillation=2.0*damping_*std::cos(local_omega);
+   const double input=(i==c?1.0:0.0);
    next[i]=clamp(local_oscillation*s.wave[i]-decay*s.old_wave[i]+
-        0.08*scattering/degree+0.05*modulation+input,3.0);
+        0.08*forward_in/incoming_degree+0.05*modulation+input,3.0);
+   next_inverse[i]=clamp(local_oscillation*s.inverse_wave[i]-
+        decay*s.inverse_old_wave[i]+0.08*inverse_in/outgoing_degree+
+        0.05*modulation+input,3.0);
   }
   s.old_wave=s.wave;
+  s.inverse_old_wave=s.inverse_wave;
   s.wave=next;
+  s.inverse_wave=next_inverse;
   s.push(c);
   ++s.tick;
  }
