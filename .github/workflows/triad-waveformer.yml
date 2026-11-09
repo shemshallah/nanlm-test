@@ -1,0 +1,86 @@
+name: HW0 TriadWaveFormer staged corpus learning
+on:
+  push:
+    branches: ['feat/hw0-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  triad-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify one unified triad architecture
+        run: |
+          set -euo pipefail
+          make test_triad_waveformer test_adaptive_triads CXX="${{ matrix.compiler }}"
+          ./test_triad_waveformer | tee triad-regression.log
+          ./test_adaptive_triads | tee topology-regression.log
+      - name: Store logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triad-regression-${{ matrix.compiler }}
+          path: |
+            triad-regression.log
+            topology-regression.log
+          if-no-files-found: warn
+  staged-corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production unified language model
+        run: make nanlm CXX=clang++
+      - name: Same-root staged corpus scale experiment
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=/tmp/triad-corpus-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+          head -c 420 tests/fixtures/unified_quality_train.txt > /tmp/triad-small.txt
+          tail -c +421 tests/fixtures/unified_quality_train.txt > /tmp/triad-rest.txt
+          cat tests/fixtures/transfer_train.txt >> /tmp/triad-rest.txt
+          sha256sum /tmp/triad-small.txt /tmp/triad-rest.txt tests/fixtures/unified_quality_heldout.txt | tee staged-corpus-sha256.txt
+          wc -c /tmp/triad-small.txt /tmp/triad-rest.txt tests/fixtures/unified_quality_heldout.txt
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt | tee eval-before.log
+          ./nanlm "$root" train /tmp/triad-small.txt 1 | tee train-small.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt | tee eval-small.log
+          ./nanlm "$root" train /tmp/triad-rest.txt 1 | tee train-expanded.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt | tee eval-expanded.log
+          ./nanlm "$root" audit tests/fixtures/unified_quality_heldout.txt | tee triad-audit.log
+          ./nanlm "$root" generate "The sailor returned " 100 29 > free-generation.txt
+          test "$(stat -c%s "$root")" = 8388608
+          python3 - <<'PY'
+          import pathlib, re, math
+          regexp = re.compile(r"UNIFIED_EVAL bytes=(\d+) ce_nats=([0-9.eE+-]+) accuracy=([0-9.eE+-]+)")
+          values={}
+          for name in ("before","small","expanded"):
+              match=regexp.search(pathlib.Path(f"eval-{name}.log").read_text())
+              assert match, name
+              n,ce,acc=match.groups()
+              n=int(n);ce=float(ce);acc=float(acc)
+              assert n>300 and math.isfinite(ce) and 0<=acc<=1
+              values[name]=(n,ce,acc)
+              print(f"STAGED_CORPUS phase={name} heldout_bytes={n} ce={ce:.9f} accuracy={acc:.9f}")
+          assert len({x[0] for x in values.values()})==1
+          print(f"STAGED_DELTA expanded_minus_small_ce={values['expanded'][1]-values['small'][1]:+.9f} expanded_minus_small_acc={values['expanded'][2]-values['small'][2]:+.9f}")
+          # Report the sign, never assume more data must improve generalization.
+          PY
+      - name: Upload measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triad-staged-corpus
+          path: |
+            eval-*.log
+            train-*.log
+            triad-audit.log
+            staged-corpus-sha256.txt
+            free-generation.txt
+          if-no-files-found: warn
