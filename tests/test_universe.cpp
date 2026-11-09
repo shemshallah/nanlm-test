@@ -13,6 +13,7 @@ static std::string path(){
 }
 int main(){
  const auto root=path();
+ const double before=1.1-0.2+0.8;
  std::filesystem::remove(root);std::filesystem::remove(root+".overlay");
  size_t hits[PAIRS]{};size_t fixed=0;
  std::uint64_t leaf_checks=0;
@@ -58,7 +59,6 @@ int main(){
  check(u.query(3,4,CAUSES).state()==0,"rejected trial did not change root");
  check(u.trial(7,3,4,CAUSES,false,0.5f,1,30),"scratch accepts improving update");
  check(u.query(4,3,CAUSED_BY).state()==1,"trial commits inverse relation");
- const double before=1.1-0.2+0.8;
  u.set_phase(1,2,1.1);u.set_phase(2,3,-0.2);u.set_phase(3,1,0.8);
  check(std::fabs(u.triangle(1,2,3)-before)<1e-12,"triangle circulation");
  std::array<double,HEADS> g{};
