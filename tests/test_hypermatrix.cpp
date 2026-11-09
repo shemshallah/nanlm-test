@@ -94,6 +94,9 @@ int main(){
            "signed indexed hyperedges lost their independent lanes");
    require(u.hyper_query('y','x','z',PRECEDES).state()==0,
            "wrong triple orientation aliased");
+   mind.set_tensor_scales({1.5,-0.5});
+   const auto tensor=mind.tensor_scales();
+   require(tensor[0]==1.5&&tensor[1]==-0.5,"tensor scale register roundtrip failed");
    exact_probability=mind.predict(context).p['z'];
    require(std::fabs(exact_probability-factor.p['z'])>1e-7,
            "exact residual made no predictive difference");
@@ -105,6 +108,9 @@ int main(){
    UnifiedWaveLanguage::State context{};
    mind.observe(context,'x');mind.observe(context,'y');
    require(u.hyperedge_count()==2,"sparse hyperedge count not persisted");
+   const auto persisted=mind.tensor_scales();
+   require(persisted[0]==1.5&&persisted[1]==-0.5,
+           "head-register tensor modulation lost after reload");
    require(std::fabs(mind.predict(context).p['z']-exact_probability)<1e-7,
            "hypermatrix prediction not restored after mapped-root reload");
    // All three voter levels must update in-place when trained.
