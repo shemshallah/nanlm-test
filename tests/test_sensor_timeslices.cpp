@@ -101,9 +101,29 @@ int main(){
     check(edge.physical_offset==offsetof(Root,p)+pair_index(edge.from,edge.to)*sizeof(Pair),
           "canonical pair index uses incorrect matrix coordinate");
     check(std::isfinite(edge.oriented_flux),"nonfinite directed vector flux");
+    const auto forward=recovered.mirror_at(edge.forward);
+    const auto backward=recovered.mirror_at(edge.reverse);
+    check(forward.has_value()&&backward.has_value(),
+          "directed sparse matrix coordinate missing");
+    check(forward->physical_offset==backward->physical_offset&&
+          forward->physical_offset==edge.physical_offset,
+          "reverse16 creates an extra physical sensor cell");
+    check(close(forward->oriented_flux,-backward->oriented_flux),
+          "mirror time-slice flux did not reverse sign");
+    check(close(forward->tensor_cos,backward->tensor_cos)&&
+          close(forward->phase_lock,backward->phase_lock),
+          "mirror-invariant tensor and phase projections diverged");
    }
    check(std::filesystem::file_size(native)==ROOT_BYTES,"sensor modified native root size");
   }
+  check(!recovered.mirror_at(address(0,255)).has_value(),
+        "reserved ingress improperly used as active sensor pair");
+  std::cout<<"SENSOR_MATRIX sample_payload_bytes="<<raw.size()
+           <<" active_heads="<<snapshot.heads.size()
+           <<" active_triads="<<snapshot.triads.size()
+           <<" hot_triads="<<snapshot.hot.size()
+           <<" canonical_hot_pairs="<<snapshot.mirrors.size()
+           <<" canonical_pair_capacity="<<PAIRS<<"\n";
   // Enforce fixed-size bounded storage and monotonic sequence across wrap/reopen.
   std::uint64_t last_sequence=0;
   {
