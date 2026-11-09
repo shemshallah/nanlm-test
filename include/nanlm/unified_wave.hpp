@@ -34,6 +34,9 @@ public:
  static constexpr size_t N=FabricTeacher::VOCAB;
  static constexpr size_t WINDOW=16;
  static constexpr size_t MODES=4;
+ static constexpr size_t HEAD_GAIN_OFFSET=80;
+ static constexpr size_t HEAD_GAIN_MAGIC_OFFSET=60;
+ static constexpr uint8_t HEAD_GAIN_MAGIC=0xC7;
  struct State {
   std::array<double,N> wave{};
   std::array<double,N> old_wave{};
@@ -79,6 +82,27 @@ private:
  std::array<std::array<double,N>,N> adjacency_{};
  Spectral eigen_{};
  uint64_t trained_=0;
+ using GainVector=std::array<float,4>;
+ static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
+ GainVector gains(uint8_t head)const{
+  GainVector out{};
+  const auto& h=universe_.root().h[head];
+  if(h.data[HEAD_GAIN_MAGIC_OFFSET]!=HEAD_GAIN_MAGIC)return initial_gains();
+  std::memcpy(out.data(),h.data+HEAD_GAIN_OFFSET,sizeof(out));
+  return out;
+ }
+ void write_gains(uint8_t head,const GainVector& g){
+  auto& h=universe_.root().h[head];
+  std::memcpy(h.data+HEAD_GAIN_OFFSET,g.data(),sizeof(g));
+  h.data[HEAD_GAIN_MAGIC_OFFSET]=HEAD_GAIN_MAGIC;
+ }
+ struct Features {
+  double wave=0,attention=0,spectral=0,cycle=0;
+  double at(size_t i)const{
+   switch(i){case 0:return wave;case 1:return attention;
+             case 2:return spectral;default:return cycle;}
+  }
+ };
  static double clamp(double x,double limit=8.0){
   return std::clamp(x,-limit,limit);
  }
@@ -229,9 +253,67 @@ private:
   }
   return clamp(value,3.0);
  }
+ Features features(const State& s,uint8_t target)const{
+  Features f{};
+  if(!s.length)return f;
+  const uint8_t last=s.history[s.length-1];
+  f.wave=clamp(s.wave[target]-0.5*s.old_wave[target],3.0);
+  f.attention=attention(s,target);
+  for(size_t m=0;m<MODES;++m)
+   f.spectral+=eigen_.eigenvalues[m]*eigen_.vectors[m][target]*
+               eigen_.vectors[m][last]/(1.0+m);
+  if(s.length>=2)
+   f.cycle=cycle(s.history[s.length-2],last,target);
+  return f;
+ }
+ // Exact scratch softmax acceptance for head-local four-expert gates.
+ // 255x4 independent weights are stored in the existing palindrome head
+ // records, not in a second neural model or another memory matrix.
+ bool learn_head_gains(const State& s,uint8_t label){
+  if(!s.length)return false;
+  const auto distribution=predict(s);
+  const double old_loss=-std::log(std::max(distribution.p[label],1e-300));
+  std::array<Features,N> field{};
+  std::array<GainVector,N> old_weights{},proposal{};
+  for(size_t i=0;i<N;++i){
+   field[i]=features(s,static_cast<uint8_t>(i));
+   old_weights[i]=gains(static_cast<uint8_t>(i));
+  }
+  for(int retry=0;retry<8;++retry){
+   const double rate=std::ldexp(0.03,-retry);
+   std::array<double,N> logits{};
+   double largest=-std::numeric_limits<double>::infinity();
+   for(size_t i=0;i<N;++i){
+    const double error=distribution.p[i]-(i==label?1.0:0.0);
+    double change=0;
+    for(size_t k=0;k<4;++k){
+     const double old=old_weights[i][k];
+     const double updated=std::clamp(old-rate*error*field[i].at(k),-1.0,1.0);
+     proposal[i][k]=static_cast<float>(updated);
+     change+=(updated-old)*field[i].at(k);
+    }
+    logits[i]=std::log(std::max(distribution.p[i],1e-300))+change;
+    largest=std::max(largest,logits[i]);
+   }
+   double total=0;
+   for(double logit:logits)total+=std::exp(logit-largest);
+   const double candidate_loss=std::log(total)+largest-logits[label];
+   if(candidate_loss+1e-12<old_loss){
+    for(size_t i=0;i<N;++i)
+     write_gains(static_cast<uint8_t>(i),proposal[i]);
+    return true;
+   }
+  }
+  return false;
+ }
+
 public:
  explicit UnifiedWaveLanguage(Universe& u):
   universe_(u),teacher_(u,0.055,0.08,0.09,0.45,4.0,0.0,true,0.12){
+  for(size_t h=0;h<N;++h){
+   if(universe_.root().h[h].data[HEAD_GAIN_MAGIC_OFFSET]!=HEAD_GAIN_MAGIC)
+    write_gains(static_cast<uint8_t>(h),initial_gains());
+  }
   rebuild_spectrum();
  }
  uint64_t trained()const{return trained_;}
@@ -279,22 +361,16 @@ public:
   double largest=-std::numeric_limits<double>::infinity();
   for(size_t c=0;c<N;++c){
    const uint8_t target=static_cast<uint8_t>(c);
-   const double attention_term=attention(s,target);
-   const double wave_term=clamp(s.wave[c]-0.5*s.old_wave[c],3.0);
-   double spectral_term=0;
-   for(size_t m=0;m<MODES;++m)
-    spectral_term+=eigen_.eigenvalues[m]*eigen_.vectors[m][c]*
-                   eigen_.vectors[m][last]/(1.0+m);
-   const double cycle_term=s.length>=2?
-      cycle(s.history[s.length-2],last,target):0.0;
+   const auto f=features(s,target);
+   const auto g=gains(target);
    const auto forward=universe_.query(last,target,PRECEDES);
    const auto inverse=universe_.query(target,last,FOLLOWS);
    const double inverse_consensus=
       (forward.support+inverse.support-forward.refute-inverse.refute)/
       (2.0+forward.support+inverse.support+forward.refute+inverse.refute);
-   logits[c]=baseline.logit[c]+wave_gain_*wave_term+
-      attention_gain_*attention_term+spectral_gain_*spectral_term+
-      cycle_gain_*cycle_term+evidence_gain_*inverse_consensus+
+   logits[c]=baseline.logit[c]+double(g[0])*f.wave+
+      double(g[1])*f.attention+double(g[2])*f.spectral+
+      double(g[3])*f.cycle+evidence_gain_*inverse_consensus+
       0.03*hyperedge_signal(s,target);
    largest=std::max(largest,logits[c]);
   }
@@ -342,6 +418,9 @@ public:
     // All persistent training occurs INSIDE the one mapped root and its
     // already-native temporal/pair/phase/quaternion overlays.
     const auto accepted=teacher_.teach(prev,symbol,initial_time+trained_);
+    // Prediction gradients now update the four expert gates held directly
+    // in each of the 255 palindromic head registers.
+    learn_head_gains(state,symbol);
     if(accepted.accepted&&state.length>=2&&(trained_%8==0)){
      const uint8_t first=state.history[state.length-2];
      if(first!=prev&&first!=symbol&&prev!=symbol)
