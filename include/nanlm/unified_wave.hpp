@@ -130,6 +130,9 @@ private:
  double omega_=0.53;
  std::array<std::array<double,N>,N> adjacency_{};
  std::array<std::array<double,N>,N> directed_{};
+ struct DirectedArc {uint8_t head=0;double weight=0;};
+ std::array<std::vector<DirectedArc>,N> incoming_{},outgoing_{};
+ std::array<double,N> in_degree_{},out_degree_{};
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
  using GainVector=std::array<float,4>;
@@ -254,6 +257,18 @@ private:
    }
    adjacency_[i][i]=0;
    directed_[i][i]=0;
+  }
+  // Derived, deterministic mirror arcs share the identical NaN16 pair bank.
+  for(size_t i=0;i<N;++i){
+   incoming_[i].clear();outgoing_[i].clear();
+   in_degree_[i]=1;out_degree_[i]=1;
+   for(size_t j=0;j<N;++j){
+    const double forward=directed_[j][i],inverse=directed_[i][j];
+    if(forward!=0)incoming_[i].push_back({uint8_t(j),forward});
+    if(inverse!=0)outgoing_[i].push_back({uint8_t(j),inverse});
+    in_degree_[i]+=std::fabs(forward);
+    out_degree_[i]+=std::fabs(inverse);
+   }
   }
   if(eigen_.edge_mass<1e-12)return;
   for(size_t mode=0;mode<MODES;++mode){
@@ -666,6 +681,11 @@ public:
   }
   bytes[CALIBRATION_MAGIC_OFFSET]=CALIBRATION_MAGIC;
  }
+ size_t active_mirror_arcs()const{
+  size_t count=0;
+  for(const auto& row:incoming_)count+=row.size();
+  return count;
+ }
  void refresh_spectrum(){rebuild_spectrum();}
  struct WaveAdjoint {
   std::array<double,N> x{},xp{},y{},yp{};
@@ -773,11 +793,8 @@ public:
    for(size_t m=0;m<MODES;++m)
     modal+=eigen_.eigenvalues[m]*eigen_.vectors[m][i]*eigen_.vectors[m][i];
    oscillator[i]=2.0*damping_*std::cos(omega_+0.1*std::tanh(modal));
-   in_degree[i]=1;out_degree[i]=1;
-   for(size_t j=0;j<N;++j){
-    in_degree[i]+=std::fabs(directed_[j][i]);
-    out_degree[i]+=std::fabs(directed_[i][j]);
-   }
+   in_degree[i]=in_degree_[i];
+   out_degree[i]=out_degree_[i];
   }
   for(size_t step=symbols.size();step>0;--step){
    const auto& after=states[step];
@@ -793,10 +810,10 @@ public:
     prev.xp[i]-=damping_*damping_*dx;
     prev.yp[i]-=damping_*damping_*dy;
     if(i==byte)result.input[i]+=dx+dy;
-    for(size_t j=0;j<N;++j){
-     prev.x[j]+=0.08*directed_[j][i]*dx/in_degree[i];
-     prev.y[j]+=0.08*directed_[i][j]*dy/out_degree[i];
-    }
+    for(const auto& arc:incoming_[i])
+     prev.x[arc.head]+=0.08*arc.weight*dx/in_degree[i];
+    for(const auto& arc:outgoing_[i])
+     prev.y[arc.head]+=0.08*arc.weight*dy/out_degree[i];
    }
    adj=prev;
   }
@@ -877,15 +894,11 @@ public:
   std::array<double,N> next_inverse{};
   for(size_t i=0;i<N;++i){
    double forward_in=0,inverse_in=0;
-   double incoming_degree=1,outgoing_degree=1;
-   for(size_t j=0;j<N;++j){
-    // Temporal forward operator T and its exact transpose T* operate
-    // on the same physical mirror-pair fabric, not duplicated weights.
-    forward_in+=directed_[j][i]*s.wave[j];
-    inverse_in+=directed_[i][j]*s.inverse_wave[j];
-    incoming_degree+=std::fabs(directed_[j][i]);
-    outgoing_degree+=std::fabs(directed_[i][j]);
-   }
+   for(const auto& arc:incoming_[i])
+    forward_in+=arc.weight*s.wave[arc.head];
+   for(const auto& arc:outgoing_[i])
+    inverse_in+=arc.weight*s.inverse_wave[arc.head];
+   const double incoming_degree=in_degree_[i],outgoing_degree=out_degree_[i];
    double modulation=0,modal_frequency=0;
    for(size_t m=0;m<MODES;++m){
     modulation+=eigen_.vectors[m][i]*eigen_.vectors[m][c]/(1.0+m);
