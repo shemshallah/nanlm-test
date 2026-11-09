@@ -79,11 +79,13 @@ struct Configuration {
  double angle,quaternion,dot_gain;
  bool shuffled=false;
  double rule_gain=0;
+ bool train_heads=true;
 };
 struct Outcome {
  Metrics before_seen{},before_unseen{},after_seen{},after_unseen{};
  unsigned accepted=0,attempted=0,regressed=0;
  double max_scratch_gap=0;
+ double rule_angle_rad=0;
 };
 Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  const std::string path=(std::filesystem::temp_directory_path()/
@@ -93,7 +95,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  Outcome o;
  {
   Universe universe(path);
-  FabricTeacher model(universe,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain);
+  FabricTeacher model(universe,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain,config.train_heads);
   o.before_seen=evaluate(model,false);
   o.before_unseen=evaluate(model,true);
   std::vector<uint8_t> sources;
@@ -119,6 +121,12 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
     }
    }
   }
+  if(config.rule_gain>0) {
+   Quat q;
+   std::memcpy(&q,universe.root().h[PRECEDES].data+96,sizeof(q));
+   const Vec3q v=q.rotate({1,0,0});
+   o.rule_angle_rad=std::atan2(v.y,v.x);
+  }
   o.after_seen=evaluate(model,false);
   o.after_unseen=evaluate(model,true);
   if(universe.root().h[255].data[3]!=0)
@@ -127,7 +135,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  }
  {
   Universe restored(path);
-  FabricTeacher reloaded(restored,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain);
+  FabricTeacher reloaded(restored,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain,config.train_heads);
   if(std::fabs(evaluate(reloaded,false).mean_ce()-o.after_seen.mean_ce())>1e-7 ||
      std::fabs(evaluate(reloaded,true).mean_ce()-o.after_unseen.mean_ce())>1e-7)
    throw std::runtime_error("restart changed held-out predictions");
@@ -140,22 +148,24 @@ void report(uint32_t seed,Configuration config,const Outcome& o) {
   <<o.before_seen.mean_ce()<<','<<o.after_seen.mean_ce()<<','
   <<o.before_unseen.mean_ce()<<','<<o.after_unseen.mean_ce()<<','
   <<o.after_seen.accuracy()<<','<<o.after_unseen.accuracy()<<','
-  <<o.accepted<<','<<o.attempted<<','<<o.regressed<<','<<o.max_scratch_gap<<"\n";
+  <<o.accepted<<','<<o.attempted<<','<<o.regressed<<','<<o.max_scratch_gap
+  <<','<<o.rule_angle_rad<<"\n";
 }
 } // namespace
 int main() {
  std::cout<<std::fixed<<std::setprecision(8);
  std::cout<<"seed,model,seen_CE_before,seen_CE_after,unseen_source_CE_before,"
            "unseen_source_CE_after,seen_accuracy,unseen_source_accuracy,"
-           "accepted,attempted,post_commit_regressions,max_actual_vs_scratch_gap\n";
+           "accepted,attempted,post_commit_regressions,max_actual_vs_scratch_gap,rule_angle_rad\n";
  constexpr std::array<uint32_t,3> seeds{11,29,47};
- constexpr std::array<Configuration,6> arms{{
+ constexpr std::array<Configuration,7> arms{{
   {"flat",0.0,0.0,4.45,false,0.0},
   {"u1",0.08,0.0,4.45,false,0.0},
   {"so3",0.0,0.45,4.0,false,0.0},
   {"hybrid",0.08,0.45,4.0,false,0.0},
   {"rule",0.0,0.0,4.45,false,12.0},
-  {"hybrid_rule",0.08,0.45,4.0,false,12.0}
+  {"hybrid_rule",0.08,0.45,4.0,false,12.0},
+  {"rule_frozen",0.0,0.0,4.45,false,12.0,false}
  }};
  for(uint32_t seed:seeds) {
   CountBaseline counts;
@@ -172,6 +182,6 @@ int main() {
   }
  }
  std::cout<<"PASS: deterministic source-disjoint held-out audit, matched training budgets, "
-            "count-only baseline, scalar, quaternion and shared-relation ablations, shuffled-label control, "
+            "count-only baseline, scalar, quaternion, shared-relation and frozen-head controls, shuffled-label control, "
             "committed-loss audit and persistence.\n";
 }
