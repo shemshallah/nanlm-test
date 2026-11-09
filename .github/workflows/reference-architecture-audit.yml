@@ -1,0 +1,52 @@
+name: Reference architecture correctness and memory audit
+on:
+  push:
+    branches:
+      - 'feat/hw0-reference-audit-*'
+  pull_request:
+    paths:
+      - 'experiments/**'
+      - 'tests/test_independent_heads.py'
+      - 'tests/test_sparse_shared.py'
+      - 'tools/audit_reference_architecture.py'
+      - '.github/workflows/reference-architecture-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reference-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU reference dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Existing independent-head and sparse-shared tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+          python -m unittest tests.test_independent_heads tests.test_sparse_shared -v 2>&1 | tee reference-tests.log
+      - name: Detect layout, position and transactional invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+          python tools/audit_reference_architecture.py 2>&1 | tee reference-audit.log
+      - name: Save complete test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-architecture-audit
+          path: |
+            reference-tests.log
+            reference-audit.log
+          if-no-files-found: warn
