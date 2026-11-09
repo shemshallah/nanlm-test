@@ -205,7 +205,9 @@ public:
    }
   }
   record=NONE;offset=0;
-  if(length==0)return;
+  // Every stored cue ends in ASCII space; avoid scanning the index on
+  // other bytes. This also bounds per-byte overhead on long prose.
+  if(length==0||symbol!=static_cast<uint8_t>(' '))return;
   size_t best=0;
   for(size_t i=0;i<entries_.size();++i){
    const std::string& cue=entries_[i].cue;
