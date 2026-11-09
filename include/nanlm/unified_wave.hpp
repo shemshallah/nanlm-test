@@ -1012,9 +1012,17 @@ public:
   if(ga==gb)return false;
   auto& ha=universe_.root().h[a].data[TRIAD_ID_OFFSET];
   auto& hb=universe_.root().h[b].data[TRIAD_ID_OFFSET];
-  const double before=predict(s).p[label];
+  // Topology mutation requires replay of the causal recurrent field.
+  // Testing a remapped register against a stale cached field is not an
+  // exact-loss trial and can fail determinism after reboot.
+  const auto score=[&](){
+   State replay{};
+   for(size_t i=0;i<s.length;++i)observe(replay,s.history[i]);
+   return predict(replay).p[label];
+  };
+  const double before=score();
   ha=static_cast<uint8_t>(gb);hb=static_cast<uint8_t>(ga);
-  const double after=predict(s).p[label];
+  const double after=score();
   if(std::isfinite(after)&&after>before+1e-10)return true;
   ha=static_cast<uint8_t>(ga);hb=static_cast<uint8_t>(gb);
   return false;
