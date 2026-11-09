@@ -118,6 +118,9 @@ private:
  double omega_=0.53;
  std::array<std::array<double,N>,N> adjacency_{};
  std::array<std::array<double,N>,N> directed_{};
+ struct DirectedArc {uint8_t head=0;double weight=0;};
+ std::array<std::vector<DirectedArc>,N> incoming_{},outgoing_{};
+ std::array<double,N> in_degree_{},out_degree_{};
  Spectral eigen_{};
  uint64_t trained_=0;
  using GainVector=std::array<float,4>;
@@ -226,6 +229,18 @@ private:
    }
    adjacency_[i][i]=0;
    directed_[i][i]=0;
+  }
+  // Sparse traversal of the same physical mirror fabric, in original j order.
+  for(size_t i=0;i<N;++i){
+   incoming_[i].clear();outgoing_[i].clear();
+   in_degree_[i]=1;out_degree_[i]=1;
+   for(size_t j=0;j<N;++j){
+    const double forward=directed_[j][i],inverse=directed_[i][j];
+    if(forward!=0)incoming_[i].push_back({uint8_t(j),forward});
+    if(inverse!=0)outgoing_[i].push_back({uint8_t(j),inverse});
+    in_degree_[i]+=std::fabs(forward);
+    out_degree_[i]+=std::fabs(inverse);
+   }
   }
   if(eigen_.edge_mass<1e-12)return;
   for(size_t mode=0;mode<MODES;++mode){
@@ -630,6 +645,11 @@ public:
   }
   bytes[CALIBRATION_MAGIC_OFFSET]=CALIBRATION_MAGIC;
  }
+ size_t active_mirror_arcs()const{
+  size_t count=0;
+  for(const auto& row:incoming_)count+=row.size();
+  return count;
+ }
  void refresh_spectrum(){rebuild_spectrum();}
  size_t head_triad(uint8_t head)const{return triad_of(head);}
  bool trial_swap_triads(uint8_t a,uint8_t b,const State& s,uint8_t label){
@@ -655,15 +675,11 @@ public:
   std::array<double,N> next_inverse{};
   for(size_t i=0;i<N;++i){
    double forward_in=0,inverse_in=0;
-   double incoming_degree=1,outgoing_degree=1;
-   for(size_t j=0;j<N;++j){
-    // Temporal forward operator T and its exact transpose T* operate
-    // on the same physical mirror-pair fabric, not duplicated weights.
-    forward_in+=directed_[j][i]*s.wave[j];
-    inverse_in+=directed_[i][j]*s.inverse_wave[j];
-    incoming_degree+=std::fabs(directed_[j][i]);
-    outgoing_degree+=std::fabs(directed_[i][j]);
-   }
+   for(const auto& arc:incoming_[i])
+    forward_in+=arc.weight*s.wave[arc.head];
+   for(const auto& arc:outgoing_[i])
+    inverse_in+=arc.weight*s.inverse_wave[arc.head];
+   const double incoming_degree=in_degree_[i],outgoing_degree=out_degree_[i];
    double modulation=0,modal_frequency=0;
    for(size_t m=0;m<MODES;++m){
     modulation+=eigen_.vectors[m][i]*eigen_.vectors[m][c]/(1.0+m);
