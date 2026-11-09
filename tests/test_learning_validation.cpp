@@ -219,25 +219,43 @@ int main() {
  for(uint32_t seed:seeds) {
   CountBaseline counts;
   OffsetBaseline offset;
+  Outcome frozen{};
+  bool saw_frozen=false;
   for(const Configuration config:arms) {
    // Count-only learner is updated once, with the same ordered training observations.
    CountBaseline* baseline=std::string(config.name)=="flat"?&counts:nullptr;
    OffsetBaseline* circular=baseline?&offset:nullptr;
-   report(seed,config,experiment(seed,config,baseline,circular));
+   const Outcome outcome=experiment(seed,config,baseline,circular);
+   report(seed,config,outcome);
+   if(std::string(config.name)=="rule_frozen") {
+    saw_frozen=true;frozen=outcome;
+    const double expected_angle=TAU*19.0/FabricTeacher::VOCAB;
+    if(outcome.after_unseen.accuracy()<0.999 ||
+       outcome.after_unseen.mean_ce()>=outcome.before_unseen.mean_ce()-1.0 ||
+       std::fabs(outcome.rule_angle_rad-expected_angle)>0.015)
+     throw std::runtime_error("shared relation failed synthetic zero-shot transfer");
+   }
   }
+  if(!saw_frozen)throw std::runtime_error("missing isolated relation control");
   std::cout<<seed<<",count,,"<<counts.mean_ce(false)
     <<",,"<<counts.mean_ce(true)<<",,,,,,,\n";
   const Metrics circular_seen=offset.evaluate(false);
   const Metrics circular_unseen=offset.evaluate(true);
+  if(std::fabs(circular_unseen.mean_ce()-frozen.after_unseen.mean_ce())>0.02 ||
+     circular_unseen.accuracy()<0.999)
+   throw std::runtime_error("shared field diverged from matched circular-offset control");
   std::cout<<seed<<",cyclic_offset,,"<<circular_seen.mean_ce()<<",,"
     <<circular_unseen.mean_ce()<<","<<circular_seen.accuracy()<<","
     <<circular_unseen.accuracy()<<",,,,,"<<offset.angle()<<"\n";
   if(seed==seeds[0]) {
    constexpr Configuration negative{"shuffled_labels",0.08,0.45,4.0,true,12.0};
-   report(seed,negative,experiment(seed,negative,nullptr,nullptr));
+   const Outcome corrupted=experiment(seed,negative,nullptr,nullptr);
+   report(seed,negative,corrupted);
+   if(corrupted.after_unseen.mean_ce()<=corrupted.before_unseen.mean_ce())
+    throw std::runtime_error("corrupted-label control must not learn true rule");
   }
  }
  std::cout<<"PASS: deterministic source-disjoint held-out audit, matched training budgets, "
-            "count and matched circular-offset baselines, scalar, quaternion and pure-rule controls, inverse consistency, shuffled-label control, "
+            "count and matched circular-offset baselines, scalar, quaternion, exact zero-shot rule transfer, inverse consistency, corrupted-label failure, "
             "committed-loss audit and persistence.\n";
 }
