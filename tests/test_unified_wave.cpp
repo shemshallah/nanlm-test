@@ -1,5 +1,6 @@
 #include "nanlm/unified_wave.hpp"
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -78,6 +79,20 @@ int main(){
       !std::isfinite(baseline.ce())||!std::isfinite(missing_wave.ce())||
       std::fabs(intact.ce()-final_ce)>1e-12)
     throw std::runtime_error("single-root ablation audit inconsistent");
+   // Calibration uses unused Q8.8 bytes 64..71; gauge potential at
+   // bytes 72..79 and gateway head 255 must remain untouched.
+   std::array<uint8_t,8> gauge{};
+   std::memcpy(gauge.data(),u.root().h[0].data+72,gauge.size());
+   const auto defaults=mind.global_scales();
+   for(double scale:defaults)
+    if(scale!=1.0)throw std::runtime_error("invalid default shared scales");
+   mind.set_global_scales({1.0,0.5,0.0,1.0});
+   const auto scales=mind.global_scales();
+   if(scales[0]!=1.0||scales[1]!=0.5||scales[2]!=0||scales[3]!=1.0||
+      std::memcmp(gauge.data(),u.root().h[0].data+72,gauge.size())!=0)
+    throw std::runtime_error("shared scale encoding damages gauge field");
+   std::istringstream calibrated_held(unseen);
+   final_ce=mind.evaluate(calibrated_held).ce();
    sample=mind.generate("wind ",80,19);
    if(sample.size()!=80||!valid_utf8(sample)||
       sample!=mind.generate("wind ",80,19))
@@ -89,6 +104,9 @@ int main(){
   {
    Universe u(root);
    UnifiedWaveLanguage mind(u);
+   const auto saved_scale=mind.global_scales();
+   if(saved_scale[1]!=0.5||saved_scale[2]!=0)
+    throw std::runtime_error("shared calibration lost during reload");
    const auto restored=mind.generate("wind ",80,19);
    if(restored!=sample)
     throw std::runtime_error("unified generation drift after root reload");
