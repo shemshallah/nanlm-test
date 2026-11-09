@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|recall CUE|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -86,6 +86,15 @@ int main(int argc,char** argv){
    UnifiedWaveLanguage mind(universe);
    const auto loaded=mind.memorize_tsv(file,argv[4]);
    std::cout<<"UNIFIED_EPISODIC_IMPORT imported="<<loaded
+            <<" records="<<mind.episodic_records()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="memorize-lines"){
+   if(argc!=5)throw std::invalid_argument("memorize-lines requires TEXT_FILE SOURCE");
+   std::ifstream file(argv[3],std::ios::binary);
+   if(!file)throw std::runtime_error("episodic source text unavailable");
+   UnifiedWaveLanguage mind(universe);
+   const auto loaded=mind.memorize_lines(file,argv[4]);
+   std::cout<<"UNIFIED_EPISODIC_LINES indexed="<<loaded
             <<" records="<<mind.episodic_records()
             <<" root_bytes="<<ROOT_BYTES<<"\n";
   }else if(operation=="recall"){
