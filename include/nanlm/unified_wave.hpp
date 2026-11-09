@@ -1236,13 +1236,14 @@ public:
  bool learn_triad_kernel(State& s,uint8_t label){
   if(!s.length||s.workspace.active_count==0)return false;
   auto saved=triad_parameters_;
+  const auto initial_parameters=triad_parameters_;
   auto trial=[&](const TriadWaveFormer::Parameters& p,State* result=nullptr){
    triad_parameters_=p;
    State probe=s;
    refresh_triad(probe,s.previous_workspace);
    const double p_label=predict(probe).p[label];
    if(result)*result=std::move(probe);
-   triad_parameters_=saved;
+   triad_parameters_=initial_parameters;
    return -std::log(std::max(p_label,1e-300));
   };
   const double before=trial(saved);
