@@ -34,6 +34,51 @@ class FabricTeacher {
  double evidence_weight_;
  double dot_gain_;
  double quaternion_weight_;
+ double rule_gain_;
+ static constexpr uint8_t RULE_HEAD=PRECEDES;
+ static constexpr size_t RULE_QUAT_OFFSET=96;
+ static constexpr size_t RULE_INIT_OFFSET=112;
+ static constexpr uint8_t RULE_MAGIC=0xA5;
+ static Vec3q ring(uint8_t byte) {
+  // A fixed circular coordinate prior, not learned natural-language semantics.
+  const double theta=TAU*(static_cast<double>(byte)+0.5)/VOCAB;
+  return {std::cos(theta),std::sin(theta),0.0};
+ }
+ Quat shared_rule()const{
+  Quat q{};
+  std::memcpy(&q,u_.root().h[RULE_HEAD].data+RULE_QUAT_OFFSET,sizeof(q));
+  return q.normalized();
+ }
+ bool teach_shared_rule(uint8_t previous,uint8_t next) {
+  if(rule_gain_<=0)return false;
+  const Prediction p=predict(previous);
+  const Quat old_q=shared_rule();
+  const Vec3q old_v=old_q.rotate(ring(previous));
+  const Vec3q tangent{-old_v.y,old_v.x,0};
+  double gradient=0;
+  for(unsigned j=0;j<VOCAB;++j) {
+   const double dz=rule_gain_*dot(tangent,ring(static_cast<uint8_t>(j)));
+   gradient+=(p.probability[j]-(j==next?1.0:0.0))*dz;
+  }
+  const double original=-std::log(std::max(p.probability[next],1e-300));
+  for(int retry=0;retry<10;++retry) {
+   const double step=std::clamp(std::ldexp(-lr_*gradient,-retry),-0.30,0.30);
+   if(!std::isfinite(step)||std::fabs(step)<1e-13)continue;
+   const Quat candidate=Quat::axis_angle({0,0,1},step)*old_q;
+   const Vec3q moved=candidate.rotate(ring(previous));
+   auto logits=p.logit;
+   for(unsigned j=0;j<VOCAB;++j) {
+    const Vec3q d=ring(static_cast<uint8_t>(j));
+    logits[j]+=rule_gain_*(dot(moved,d)-dot(old_v,d));
+   }
+   if(logloss(logits,next)+1e-12<original) {
+    std::memcpy(u_.root().h[RULE_HEAD].data+RULE_QUAT_OFFSET,
+                &candidate,sizeof(candidate));
+    return true;
+   }
+  }
+  return false;
+ }
  using Vector=std::array<float,3>;
  using Matrix=std::array<Vector,VOCAB>;
  static Vector get(const Head& h,size_t offset){
@@ -77,7 +122,9 @@ class FabricTeacher {
   const double transported=quaternion_weight_*(double(src[0])*shifted.x+
                                    double(src[1])*shifted.y+
                                    double(src[2])*shifted.z);
-  return coupling+geometry+triply_rotated+transported+
+  const double rule=rule_gain_>0?
+    rule_gain_*dot(shared_rule().rotate(ring(previous)),ring(candidate)):0.0;
+  return coupling+geometry+triply_rotated+transported+rule+
          evidence_weight_*std::log1p(evidence);
  }
  static double logloss(const std::array<double,VOCAB>& logits,uint8_t label){
@@ -89,13 +136,16 @@ class FabricTeacher {
  public:
  explicit FabricTeacher(Universe& u,double learning_rate=0.055,
                         double angular_weight=0.08,double evidence_weight=0.09,
-                        double quaternion_weight=0.45,double dot_gain=4.0):
+                        double quaternion_weight=0.45,double dot_gain=4.0,
+                        double rule_gain=0.0):
   u_(u),lr_(learning_rate),angular_weight_(angular_weight),
-  evidence_weight_(evidence_weight),dot_gain_(dot_gain),quaternion_weight_(quaternion_weight){
+  evidence_weight_(evidence_weight),dot_gain_(dot_gain),
+  quaternion_weight_(quaternion_weight),rule_gain_(rule_gain){
   if(!std::isfinite(lr_)||!std::isfinite(angular_weight_)||
      !std::isfinite(evidence_weight_)||!std::isfinite(dot_gain_)||
-     !std::isfinite(quaternion_weight_)||lr_<=0||lr_>1||
-     angular_weight_<0||evidence_weight_<0||dot_gain_<=0||quaternion_weight_<0)
+     !std::isfinite(quaternion_weight_)||!std::isfinite(rule_gain_)||
+     lr_<=0||lr_>1||angular_weight_<0||evidence_weight_<0||
+     dot_gain_<=0||quaternion_weight_<0||rule_gain_<0)
    throw std::invalid_argument("invalid learning rate or gain");
   // Fixed, reproducible, deterministic state for previously blank heads.
   for(unsigned i=0;i<VOCAB;++i){
@@ -111,6 +161,16 @@ class FabricTeacher {
    put(h,32,in);put(h,48,out);
    const uint16_t enabled=0xffff;std::memcpy(h.data+4,&enabled,2);
    h.data[3]=1;
+  }
+  // The shared PRECEDES relation rotor occupies free bytes in head 6.
+  // It is part of the same mmap root, and does not steal a language symbol.
+  if(rule_gain_>0) {
+   Head& h=u_.root().h[RULE_HEAD];
+   if(h.data[RULE_INIT_OFFSET]!=RULE_MAGIC) {
+    const Quat id=Quat::identity();
+    std::memcpy(h.data+RULE_QUAT_OFFSET,&id,sizeof(id));
+    h.data[RULE_INIT_OFFSET]=RULE_MAGIC;
+   }
   }
  }
  Prediction predict(uint8_t previous)const{
@@ -258,7 +318,10 @@ class FabricTeacher {
      ++count;std::memcpy(h.data+24,&count,4);
     }
     u_.observe(next);
-    return Update{before,after,true};
+    teach_shared_rule(previous,next);
+    // Return the real committed objective (after head, pair, phase,
+    // quaternion, observation and shared-relation writes), not scratch CE.
+    return Update{before,loss(previous,next),true};
    }
   }
   return Update{before,before,false};
