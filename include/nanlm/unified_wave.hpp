@@ -1,0 +1,379 @@
+#pragma once
+#include "nanlm/teacher.hpp"
+#include "nanlm/utf8.hpp"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <deque>
+#include <istream>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace nanlm {
+
+// One HW0:0 Root, 255 active palindromic cognitive heads, 32,640 mirror
+// pairs. The 256th head (255) remains dedicated to network ingress.
+//
+// NOT 255 independently trained language models: these are 255 coupled
+// attention/excitation channels of ONE conditional distribution. The only
+// persistent trainable state here is the existing FabricTeacher's head
+// vectors, gates, relation evidence, phases, and SO(3) transports.
+// Wave memory is an ephemeral causal activation, recomputed per stream.
+//
+// The standing wave obeys x(t+1)=2*d*cos(omega)*x(t)-d^2*x(t-1)+input
+// (with a bounded neighbor-scattering contribution). On graph excitation,
+// eigenvectors of symmetric mirror coupling are obtained by power iteration.
+// This is an experimental spectral graph recurrent predictor, not yet a
+// general transformer or an end-to-end differentiable spectral learner.
+class UnifiedWaveLanguage {
+public:
+ static constexpr size_t N=FabricTeacher::VOCAB;
+ static constexpr size_t WINDOW=16;
+ struct State {
+  std::array<double,N> wave{};
+  std::array<double,N> old_wave{};
+  std::array<double,N> prior{};
+  std::array<uint8_t,WINDOW> history{};
+  size_t length=0;
+  uint64_t tick=0;
+  void push(uint8_t c) {
+   if(length<WINDOW){history[length++]=c;}
+   else {
+    for(size_t j=1;j<WINDOW;++j)history[j-1]=history[j];
+    history[WINDOW-1]=c;
+   }
+  }
+  void reset(){*this=State{};}
+ };
+ struct Metrics {
+  uint64_t tokens=0,correct=0;
+  double nll=0;
+  double ce()const{return tokens?nll/tokens:0.0;}
+  double accuracy()const{return tokens?double(correct)/tokens:0.0;}
+ };
+ struct Spectral {
+  std::array<double,N> vector{};
+  double eigenvalue=0,residual=0,edge_mass=0;
+ };
+ struct Prediction {
+  std::array<double,N> p{};
+  uint8_t best=0;
+ };
+private:
+ Universe& universe_;
+ FabricTeacher teacher_;
+ double wave_gain_=0.12;
+ double attention_gain_=0.16;
+ double spectral_gain_=0.06;
+ double cycle_gain_=0.045;
+ double evidence_gain_=0.08;
+ double damping_=0.80;
+ double omega_=0.53;
+ std::array<std::array<double,N>,N> adjacency_{};
+ Spectral eigen_{};
+ uint64_t trained_=0;
+ static double clamp(double x,double limit=8.0){
+  return std::clamp(x,-limit,limit);
+ }
+ static double dot3(const std::array<float,3>& a,const std::array<float,3>& b){
+  return double(a[0])*b[0]+double(a[1])*b[1]+double(a[2])*b[2];
+ }
+ static std::array<float,3> vector(const Head& h,size_t offset){
+  std::array<float,3> out{};
+  std::memcpy(out.data(),h.data+offset,sizeof(out));
+  return out;
+ }
+ static uint64_t rand64(uint64_t& x){
+  x+=0x9e3779b97f4a7c15ull;
+  uint64_t z=x;
+  z=(z^(z>>30))*0xbf58476d1ce4e5b9ull;
+  z=(z^(z>>27))*0x94d049bb133111ebull;
+  return z^(z>>31);
+ }
+ static double random01(uint64_t& x){
+  return double(rand64(x)>>11)*(1.0/9007199254740992.0);
+ }
+ static double norm(const std::array<double,N>& v){
+  double sum=0;
+  for(double x:v)sum+=x*x;
+  return std::sqrt(sum);
+ }
+ double edge_weight(uint8_t a,uint8_t b)const{
+  if(a==b)return 0;
+  const auto evidence=universe_.query(a,b,PRECEDES);
+  const auto inverse=universe_.query(b,a,FOLLOWS);
+  const double strength=0.5*(evidence.support+inverse.support);
+  const double opposition=0.5*(evidence.refute+inverse.refute);
+  const double theta=universe_.covariant_phase(a,b);
+  // Pair mirror lanes carry both temporal orientations. This is a
+  // symmetric graph scattering amplitude, not the directed prediction.
+  return clamp((strength-opposition)/(1.0+strength+opposition),1.0)*
+         std::cos(theta);
+ }
+ void rebuild_spectrum(){
+  eigen_=Spectral{};
+  for(size_t i=0;i<N;++i) {
+   for(size_t j=i+1;j<N;++j){
+    const double forward=edge_weight(uint8_t(i),uint8_t(j));
+    const double backward=edge_weight(uint8_t(j),uint8_t(i));
+    const double w=0.5*(forward+backward);
+    adjacency_[i][j]=w;
+    adjacency_[j][i]=w;
+    eigen_.edge_mass+=std::fabs(w);
+   }
+   adjacency_[i][i]=0;
+  }
+  if(eigen_.edge_mass<1e-12)return;
+  std::array<double,N> v{};
+  // Deterministic full-support initialization, not a seeded random solver.
+  for(size_t i=0;i<N;++i)
+   v[i]=std::cos((i+0.5)*TAU/N)+0.3*std::sin((i+0.5)*3*TAU/N);
+  const double vnorm=norm(v);
+  for(double& a:v)a/=vnorm;
+  for(int iteration=0;iteration<48;++iteration){
+   std::array<double,N> next{};
+   for(size_t i=0;i<N;++i)
+    for(size_t j=0;j<N;++j)
+     next[i]+=adjacency_[i][j]*v[j];
+   const double length=norm(next);
+   if(length<1e-14)break;
+   for(size_t i=0;i<N;++i)v[i]=next[i]/length;
+  }
+  std::array<double,N> av{};
+  for(size_t i=0;i<N;++i)
+   for(size_t j=0;j<N;++j)
+    av[i]+=adjacency_[i][j]*v[j];
+  double lambda=0,residual=0;
+  for(size_t i=0;i<N;++i)lambda+=v[i]*av[i];
+  for(size_t i=0;i<N;++i)residual+=(av[i]-lambda*v[i])*(av[i]-lambda*v[i]);
+  eigen_.vector=v;
+  eigen_.eigenvalue=lambda;
+  eigen_.residual=std::sqrt(residual);
+ }
+ double attention(const State& s,uint8_t candidate)const{
+  if(s.length==0)return 0;
+  // Each of the 255 head-specific query vectors attends to the window.
+  const auto q=vector(universe_.root().h[candidate],48);
+  std::array<double,WINDOW> scores{};
+  double best=-std::numeric_limits<double>::infinity();
+  for(size_t k=0;k<s.length;++k){
+   const uint8_t src=s.history[k];
+   const auto key=vector(universe_.root().h[src],32);
+   const double geometry=0.11*std::cos(universe_.covariant_phase(src,candidate));
+   const double temporal=0.04*std::cos(omega_*double(s.length-k));
+   scores[k]=dot3(q,key)*2.0+geometry+temporal;
+   best=std::max(best,scores[k]);
+  }
+  double denominator=0,aggregation=0;
+  for(size_t k=0;k<s.length;++k)denominator+=std::exp(scores[k]-best);
+  for(size_t k=0;k<s.length;++k){
+   const uint8_t src=s.history[k];
+   const double weight=std::exp(scores[k]-best)/denominator;
+   const auto forward=universe_.query(src,candidate,PRECEDES);
+   const auto inverse=universe_.query(candidate,src,FOLLOWS);
+   const double evidence=(forward.support+inverse.support)/
+                    (2.0+forward.support+inverse.support);
+   const double phase=universe_.covariant_phase(src,candidate);
+   aggregation+=weight*(s.wave[src]+0.4*evidence+
+                  0.12*std::sin(phase+omega_*(s.length-k)));
+  }
+  return clamp(aggregation,3.0);
+ }
+ double cycle(uint8_t a,uint8_t b,uint8_t c)const{
+  if(a==b||b==c||a==c)return 0;
+  // The anchored U(1) cycle is already gauge invariant, so no dense
+  // C(256,3) allocation or second hypergraph representation is needed.
+  const double loop=universe_.triangle(a,b,c);
+  const auto qa=universe_.quaternion_field().get(a,b);
+  const auto qb=universe_.quaternion_field().get(b,c);
+  const auto qc=universe_.quaternion_field().get(c,a);
+  const double nonabelian=(qa*qb*qc).angle();
+  return 0.5*std::cos(loop)+0.5*std::cos(nonabelian);
+ }
+ double hyperedge_signal(const State& s,uint8_t candidate)const{
+  if(s.length<2)return 0;
+  const uint8_t a=s.history[s.length-2],b=s.history[s.length-1];
+  if(a==b||a==candidate||b==candidate)return 0;
+  // Query the existing sparse native hyperedge store: exact typed triples,
+  // not an additional trainable tensor or lookup-based language model.
+  const auto links=universe_.routes(candidate);
+  double value=0;
+  for(const auto& edge:links){
+   if(edge.a==a&&edge.b==b&&edge.c==candidate&&edge.relation==PRECEDES)
+    value+=(edge.refutes?-1.0:1.0)*edge.strength;
+  }
+  return clamp(value,3.0);
+ }
+public:
+ explicit UnifiedWaveLanguage(Universe& u):
+  universe_(u),teacher_(u,0.055,0.08,0.09,0.45,4.0,0.0,true,0.12){
+  rebuild_spectrum();
+ }
+ uint64_t trained()const{return trained_;}
+ const Spectral& spectral()const{return eigen_;}
+ void refresh_spectrum(){rebuild_spectrum();}
+ void observe(State& s,uint8_t c)const{
+  if(c==255){s.reset();return;}
+  std::array<double,N> next{};
+  const double oscillation=2.0*damping_*std::cos(omega_);
+  const double decay=damping_*damping_;
+  // All 255 heads participate in each temporal transition. Opposing
+  // mirror directions contribute through the symmetric scattering
+  // operator while the second-order recurrence preserves wave history.
+  double vmax=1.0;
+  for(size_t i=0;i<N;++i)vmax=std::max(vmax,std::fabs(s.wave[i]));
+  for(size_t i=0;i<N;++i){
+   double scattering=0,degree=1;
+   for(size_t j=0;j<N;++j){
+    scattering+=adjacency_[i][j]*s.wave[j];
+    degree+=std::fabs(adjacency_[i][j]);
+   }
+   const double input=(i==c?1.0:0.0);
+   const double modulation=eigen_.vector[i]*eigen_.vector[c];
+   next[i]=clamp(oscillation*s.wave[i]-decay*s.old_wave[i]+
+        0.08*scattering/degree+0.05*modulation+input,3.0);
+  }
+  s.old_wave=s.wave;
+  s.wave=next;
+  s.push(c);
+  ++s.tick;
+ }
+ Prediction predict(const State& s)const{
+  Prediction out{};
+  if(s.length==0){
+   out.p.fill(1.0/N);
+   return out;
+  }
+  const uint8_t last=s.history[s.length-1];
+  const auto baseline=teacher_.predict(last);
+  std::array<double,N> logits{};
+  double largest=-std::numeric_limits<double>::infinity();
+  for(size_t c=0;c<N;++c){
+   const uint8_t target=static_cast<uint8_t>(c);
+   const double attention_term=attention(s,target);
+   const double wave_term=clamp(s.wave[c]-0.5*s.old_wave[c],3.0);
+   const double spectral_term=eigen_.vector[c]*eigen_.vector[last]*
+                              eigen_.eigenvalue;
+   const double cycle_term=s.length>=2?
+      cycle(s.history[s.length-2],last,target):0.0;
+   const auto forward=universe_.query(last,target,PRECEDES);
+   const auto inverse=universe_.query(target,last,FOLLOWS);
+   const double inverse_consensus=
+      (forward.support+inverse.support-forward.refute-inverse.refute)/
+      (2.0+forward.support+inverse.support+forward.refute+inverse.refute);
+   logits[c]=baseline.logit[c]+wave_gain_*wave_term+
+      attention_gain_*attention_term+spectral_gain_*spectral_term+
+      cycle_gain_*cycle_term+evidence_gain_*inverse_consensus+
+      0.03*hyperedge_signal(s,target);
+   largest=std::max(largest,logits[c]);
+  }
+  double z=0;
+  for(size_t c=0;c<N;++c){
+   out.p[c]=std::exp(logits[c]-largest);
+   z+=out.p[c];
+  }
+  for(size_t c=0;c<N;++c){
+   out.p[c]/=z;
+   if(out.p[c]>out.p[out.best])out.best=static_cast<uint8_t>(c);
+  }
+  return out;
+ }
+ Metrics evaluate(std::istream& corpus)const{
+  State state{};
+  Metrics result{};
+  char ch;
+  while(corpus.get(ch)){
+   const uint8_t symbol=static_cast<uint8_t>(static_cast<unsigned char>(ch));
+   if(symbol==255){state.reset();continue;}
+   if(state.length){
+    const auto p=predict(state);
+    result.nll-=std::log(std::max(p.p[symbol],1e-300));
+    result.correct+=(p.best==symbol?1u:0u);
+    ++result.tokens;
+   }
+   observe(state,symbol);
+  }
+  return result;
+ }
+ Metrics train(std::istream& corpus,uint64_t initial_time=1){
+  State state{};
+  Metrics result{};
+  char ch;
+  while(corpus.get(ch)){
+   const uint8_t symbol=static_cast<uint8_t>(static_cast<unsigned char>(ch));
+   if(symbol==255){state.reset();continue;}
+   if(state.length){
+    const auto p=predict(state);
+    result.nll-=std::log(std::max(p.p[symbol],1e-300));
+    result.correct+=(p.best==symbol?1u:0u);
+    ++result.tokens;
+    const uint8_t prev=state.history[state.length-1];
+    // All persistent training occurs INSIDE the one mapped root and its
+    // already-native temporal/pair/phase/quaternion overlays.
+    const auto accepted=teacher_.teach(prev,symbol,initial_time+trained_);
+    if(accepted.accepted&&state.length>=2&&(trained_%8==0)){
+     const uint8_t first=state.history[state.length-2];
+     if(first!=prev&&first!=symbol&&prev!=symbol)
+      universe_.add_hyper(first,prev,symbol,PRECEDES,false,
+                          0.02f,initial_time+trained_);
+    }
+   }
+   observe(state,symbol);
+   ++trained_;
+   // Recalculate spectral graph after significant new edge evidence.
+   if((trained_%128)==0)rebuild_spectrum();
+  }
+  rebuild_spectrum();
+  return result;
+ }
+ std::string generate(const std::string& prefix,size_t count,uint64_t seed,
+                      double temperature=0.85,double top_p=0.92)const{
+  if(count>1000000||temperature<=0||temperature>5||!std::isfinite(temperature)||
+      top_p<=0||top_p>1||!std::isfinite(top_p))
+   throw std::invalid_argument("invalid generation settings");
+  Utf8Prefix utf8;
+  if(!utf8.consume_prefix(prefix)||count<utf8.remaining)
+   throw std::invalid_argument("prompt is not a valid UTF-8 prefix");
+  State state{};
+  for(unsigned char c:prefix)observe(state,c);
+  std::string result;
+  result.reserve(count);
+  uint64_t random=seed;
+  for(size_t step=0;step<count;++step){
+   const auto p=predict(state);
+   std::vector<std::pair<double,uint8_t>> weighted;
+   weighted.reserve(N);
+   for(size_t c=0;c<N;++c){
+    const auto b=static_cast<uint8_t>(c);
+    if(utf8.permits(b,count-step))
+     weighted.emplace_back(std::pow(p.p[c],1.0/temperature),b);
+   }
+   if(weighted.empty())throw std::runtime_error("no Unicode continuation");
+   std::sort(weighted.begin(),weighted.end(),[](auto a,auto b){
+    return a.first==b.first?a.second<b.second:a.first>b.first;
+   });
+   double total=0;
+   for(const auto& item:weighted)total+=item.first;
+   size_t take=0;double mass=0;
+   while(take<weighted.size()&&(take==0||mass/total<top_p))
+    mass+=weighted[take++].first;
+   const double sample=random01(random)*mass;
+   double cumul=0;uint8_t chosen=weighted[take-1].second;
+   for(size_t i=0;i<take;++i){
+    cumul+=weighted[i].first;
+    if(sample<cumul){chosen=weighted[i].second;break;}
+   }
+   if(!utf8.push(chosen,count-step))
+    throw std::runtime_error("invalid Unicode continuation");
+   result.push_back(static_cast<char>(chosen));
+   observe(state,chosen);
+  }
+  if(!utf8.complete())throw std::runtime_error("truncated generated Unicode");
+  return result;
+ }
+};
+} // namespace nanlm
