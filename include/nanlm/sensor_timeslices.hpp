@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -34,6 +35,11 @@ struct MirrorMeasurement {
  float tensor_cos=0,phase_lock=0,oriented_flux=0;
  std::uint16_t shared_sources=0;
 };
+struct DirectedMatrixValue {
+ std::uint32_t physical_offset=0;
+ float oriented_flux=0,tensor_cos=0,phase_lock=0;
+ std::uint16_t shared_sources=0;
+};
 struct MatrixTimeSlice {
  std::uint64_t nanclock=0;
  std::uint32_t source_count=0,fact_count=0;
@@ -41,6 +47,17 @@ struct MatrixTimeSlice {
  std::vector<MatrixMeasurement> heads,triads,hot;
  std::vector<MirrorMeasurement> mirrors;
  MatrixMeasurement hot_field{},global_field{};
+ // Logical C(256,2) matrix view: a directed address and its bitwise
+ // mirror are two readings of ONE stored physical canonical pair.
+ std::optional<DirectedMatrixValue> mirror_at(std::uint16_t raw)const {
+  for(const auto& e:mirrors) {
+   if(raw==e.forward)return DirectedMatrixValue{
+    e.physical_offset,e.oriented_flux,e.tensor_cos,e.phase_lock,e.shared_sources};
+   if(raw==e.reverse)return DirectedMatrixValue{
+    e.physical_offset,-e.oriented_flux,e.tensor_cos,e.phase_lock,e.shared_sources};
+  }
+  return std::nullopt; // no active hotspot relation; NOT evidence of refutation
+ }
  const MatrixMeasurement* head(std::uint8_t h)const {
   for(const auto& sample:heads)if(sample.id==h)return &sample;
   return nullptr;
