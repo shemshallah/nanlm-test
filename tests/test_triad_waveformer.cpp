@@ -20,10 +20,12 @@ int main(){
   TriadWaveFormer::Parameters trained{};
   {
    Universe u(root);
+   std::array<uint8_t,128> ingress{};
+   std::memcpy(ingress.data(),u.root().h[255].data,ingress.size());
    UnifiedWaveLanguage mind(u);
    check(u.root().h[0].data[UnifiedWaveLanguage::TRIAD_KERNEL_MARKER_OFFSET]==
       UnifiedWaveLanguage::TRIAD_KERNEL_MAGIC,"shared kernel not persisted");
-   check(u.root().h[255].data[UnifiedWaveLanguage::TRIAD_KERNEL_MARKER_OFFSET]==0,
+   check(std::memcmp(ingress.data(),u.root().h[255].data,128)==0,
       "network ingress modified by triad kernel");
    auto old=mind.triad_parameters();
    UnifiedWaveLanguage::State state{};
@@ -70,6 +72,8 @@ int main(){
    generated=mind.generate("sailor ",24,47);
    check(valid_utf8(generated),"generation not valid UTF-8");
    check(std::filesystem::file_size(root)==8388608,"root size changed");
+   check(std::memcmp(ingress.data(),u.root().h[255].data,128)==0,
+         "network ingress modified during training");
    u.sync();
   }
   {
