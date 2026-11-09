@@ -1,0 +1,63 @@
+name: Full Princeton WordNet 3.1 — five independent C256 mathematical sensors
+on:
+  push:
+    branches: [experiment/specialist-matrix-probes-20261109]
+    paths:
+      - '.github/workflows/wordnet31-specialist-benchmark.yml'
+      - 'tools/matrix_probe_bank.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wordnet31:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Acquire original public Princeton WordNet 3.1 database
+        run: |
+          mkdir -p /tmp/princeton-wordnet31
+          curl --fail --show-error --silent --location --retry 3 \
+            https://wordnetcode.princeton.edu/wn3.1.dict.tar.gz \
+            --output /tmp/princeton-wordnet31/wn3.1.dict.tar.gz
+          sha256sum /tmp/princeton-wordnet31/wn3.1.dict.tar.gz
+          tar -tzf /tmp/princeton-wordnet31/wn3.1.dict.tar.gz | grep -E '(^|/)data.noun$'
+          tar -xzf /tmp/princeton-wordnet31/wn3.1.dict.tar.gz -C /tmp/princeton-wordnet31
+          find /tmp/princeton-wordnet31 -type f -name data.noun -print -quit > /tmp/princeton-wordnet31/noun.path
+          test -s /tmp/princeton-wordnet31/noun.path
+          path="$(cat /tmp/princeton-wordnet31/noun.path)"
+          test -s "$path"
+          sha256sum "$path"
+      - name: Train all five mathematical specialists on same complete WordNet 3.1 noun graph
+        run: |
+          input="$(cat /tmp/princeton-wordnet31/noun.path)"
+          python3 tools/matrix_probe_bank.py \
+            --data-noun "$input" \
+            --out /tmp/full-wordnet31-math \
+            --epochs 1 --snapshot-every 128 --hotspots 4 \
+            > /tmp/princeton-wordnet31/run-result.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("/tmp/full-wordnet31-math/summary.json")
+          s=json.loads(p.read_text())
+          assert s["distinct_universes"]==5
+          assert s["total_input_events_each"]>10000
+          for result in s["profiles"]:
+              assert result["events"] == s["total_input_events_each"]
+              print("ACTUAL_WN31", result["profile"], "ticks",result["events"],
+                    "entries",result["entries"],"bytes",result["bytes_compressed"],
+                    "nonzero",result["nonzero"],"unique_pairs",result["unique_mirror_pairs"])
+          PY
+      - name: Publish only tensor exports and digest-bound metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-wordnet31-five-tensor-specialists
+          path: |
+            /tmp/full-wordnet31-math/*.c256tensor
+            /tmp/full-wordnet31-math/summary.json
+          if-no-files-found: error
+          retention-days: 30
