@@ -88,6 +88,19 @@ int main() {
   require(sensor.ingest({"S4","pangolin","ISA","mammal",false,1.}),
           "hot reactivation ingest failed");
   require(sensor.hot_count()>0,"new evidence did not reactivate hot triheads");
+  // Hot maps must honor dynamically assigned native three-head groups,
+  // rather than presuming consecutive head addresses.
+  SensorMemory remapped;
+  auto mapping=default_map();
+  std::swap(mapping[0][1],mapping[1][1]);
+  remapped.set_mapping(mapping);
+  remapped.ingest({"R1","whale","ISA","mammal",false,1.});
+  require(remapped.hot_count()>0,"adaptively mapped hot view absent");
+  for(std::size_t i=0;i<remapped.hot_count();++i) {
+   const auto& h=remapped.hot_triad(i);
+   require(h.heads==mapping[h.group],
+           "hot-triad mapping ignored adaptive trihead membership");
+  }
   bool threw=false;
   try{sensor.set_hot_budget(13);}catch(const std::invalid_argument&){threw=true;}
   require(threw,"out-of-bounds hot capacity was allowed");

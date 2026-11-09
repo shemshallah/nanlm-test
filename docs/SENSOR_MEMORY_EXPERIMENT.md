@@ -1,8 +1,8 @@
-# NaNLM: three-resolution mathematical sensor memory (experiment)
+# NaNLM: four-resolution mathematical sensor memory (experiment)
 
 **Non-production test branch.** Existing HW0 8 MiB universe, 255-head predictor and NaN16 root layout remain unchanged. This experiment exercises a host-side mathematical sensor and source-aware hypergraph overlay. It is not an additional LLM.
 
-## Three resolutions, one logical information space
+## Four resolutions, one logical information space
 
 1. **255 head branches:** a head is a mathematical detector/address, not one fixed byte, word or concept. Each branch contains bounded keyed leaves. A leaf has a 256-bit role-bound vector, a 3x3 tensor, explicit positive/refuting charge, activation, last tick and source identities.
 2. **85 triads:** sum tensor/charge/activity over the head mapping, preserve phase/triangle holonomy; mapping may be imported from native adaptive-triad registers. No separate expert models.
@@ -137,3 +137,14 @@ retain a synchronized bootstrap lexicon for human-language labels.
 These are read-only derived views, not yet a physical mirror-register
 temporal journal. A future NaN16-native clock-backed slice layer should
 persist deltas with provenance and an atomic replay protocol.
+
+
+### Live hotspot inspection
+
+The resident sensor accepts \`HOTMAP\` to emit current hot-triad slot,
+original triad ID, its three member heads, salience, present and prior
+activation, signed charge, curvature and contributing source count.
+It then emits \`HOTEDGE\` records with pairwise tensor-cosine, phase
+coherence and shared-source counts. \`STATUS\` includes active hotspot
+and link counts. The CLI is read-only for this command; original
+head/triad/global state and proof-bearing graph are unchanged.

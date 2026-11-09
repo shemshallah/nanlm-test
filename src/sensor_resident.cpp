@@ -40,6 +40,28 @@ int main(int argc,char** argv){
      std::cout<<" sources=";
      for(const auto& s:r.proof_sources)std::cout<<s<<",";
      std::cout<<"\n";
+    }else if(f[0]=="HOTMAP"){
+     if(f.size()!=1)throw std::invalid_argument("HOTMAP takes no arguments");
+     std::cout<<"HOTMAP count="<<sensor.hot_count()
+              <<" budget="<<sensor.hot_budget()
+              <<" links="<<sensor.hot_links().size()
+              <<" tick="<<sensor.clock()<<"\n";
+     for(std::size_t slot=0;slot<sensor.hot_count();++slot) {
+      const auto& hot=sensor.hot_triad(slot);
+      std::cout<<"HOT slot="<<slot<<" triad="<<int(hot.group)
+               <<" heads="<<int(hot.heads[0])<<","<<int(hot.heads[1])
+               <<","<<int(hot.heads[2])
+               <<" score="<<hot.score<<" activity="<<hot.activation
+               <<" prior="<<hot.previous_activation
+               <<" support="<<hot.support<<" refute="<<hot.refute
+               <<" curvature="<<hot.curvature
+               <<" sources="<<hot.source_count<<"\n";
+     }
+     for(const auto& link:sensor.hot_links())
+      std::cout<<"HOTEDGE a="<<int(link.a)<<" b="<<int(link.b)
+               <<" tensor_cos="<<link.tensor_cosine
+               <<" phase_lock="<<link.phase_lock
+               <<" shared_sources="<<link.shared_sources<<"\n";
     }else if(f[0]=="TICK"){
      if(f.size()!=1)throw std::invalid_argument("TICK takes no arguments");
      sensor.tick();
@@ -47,7 +69,9 @@ int main(int argc,char** argv){
     }else if(f[0]=="STATUS"){
      std::cout<<"STATUS tick="<<sensor.clock()<<" sources="<<sensor.global().unique_sources
               <<" facts="<<sensor.global().unique_statements
-              <<" activity="<<sensor.global().activation<<"\n";
+              <<" activity="<<sensor.global().activation
+              <<" hot="<<sensor.hot_count()
+              <<" hot_links="<<sensor.hot_links().size()<<"\n";
     }else if(f[0]=="SYNC"){
      sensor.save(path);std::cout<<"SYNC saved=1\n";
     }else if(f[0]=="QUIT"){

@@ -33,10 +33,14 @@ jobs:
             "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude src/sensor_resident.cpp -o sensor-resident
             SNAP=$(mktemp /tmp/nanlm-sensor.XXXXXX)
             rm -f "$SNAP"
-            printf 'INGEST\tsource_A\t+\towl\tISA\tbird\nINGEST\tsource_B\t+\tbird\tISA\tanimal\nINGEST\tsource_C\t-\towl\tISA\tanimal\nQUERY\towl\tISA\tanimal\nTICK\nQUIT\n' | ./sensor-resident "$SNAP" | tee resident.log
-            printf 'QUERY\towl\tISA\tanimal\nQUIT\n' | ./sensor-resident "$SNAP" | tee resumed.log
+            printf 'INGEST\tsource_A\t+\towl\tISA\tbird\nINGEST\tsource_B\t+\tbird\tISA\tanimal\nINGEST\tsource_C\t-\towl\tISA\tanimal\nQUERY\towl\tISA\tanimal\nHOTMAP\nTICK\nSTATUS\nQUIT\n' | ./sensor-resident "$SNAP" | tee resident.log
+            printf 'QUERY\towl\tISA\tanimal\nHOTMAP\nQUIT\n' | ./sensor-resident "$SNAP" | tee resumed.log
             grep -q 'QUERY state=3 inferred=1' resident.log
             grep -q 'QUERY state=3 inferred=1' resumed.log
+            grep -q '^HOTMAP count=' resident.log
+            grep -q '^HOT slot=' resident.log
+            grep -q '^HOTMAP count=' resumed.log
+            grep -q '^STATUS tick=' resident.log
             "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_packet.cpp -o test_sensor_packet
             "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_hot_triads.cpp -o test_sensor_hot_triads
             ./test_sensor_hot_triads | tee hot-triads.log
