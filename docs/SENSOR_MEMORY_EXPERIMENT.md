@@ -81,3 +81,24 @@ This is live only while a host runs the resident process. It is a separate
 sidecar, not the native atomic .overlay format. Rename alone is not fsync-safe.
 Native NaNclock scheduling, network intake, CRC and transactional journaling
 are required before calling this an always-on permanent native overlay.
+
+
+## Numeric-only output and HW0 bootstrap decoding
+
+include/nanlm/sensor_packet.hpp defines a standard-layout, trivially
+copyable NumericProofPacket. Its fields are solely integers and floats:
+64-bit query concept/relation IDs; the inferred path and contributing source
+IDs; explicit four-valued truth; 255 head activities; 85 3x3 triad tensors;
+and one global 3x3 tensor plus separate positive and refuting evidence.
+The packet has no plaintext or C++ string pointers. It is an in-memory
+numerical carrier, NOT yet a stable endian-neutral NaN16 wire encoding.
+
+BootstrapCatalog maps those numeric IDs back to exactly registered labels
+and rejects unknown identifiers (no guessing). Thus the test demonstrates
+a purely numerical exchange boundary with exact symbol reconstruction
+using a synchronized symbol catalog. The catalog is not a language model:
+fluent prose generation through HW0 and any claim of semantic abstraction
+still require a learned conditioned decoder and proper held-out evaluation.
+
+tests/test_sensor_packet.cpp validates the end-to-end numeric proof packet
+and source catalog under both GCC and Clang in the GitHub workflow.
