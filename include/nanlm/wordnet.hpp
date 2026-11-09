@@ -127,6 +127,56 @@ class WordNetIndex {
   }
   return {};
  }
+ // Reconstitute the exact synset graph from an inspectable deterministic TSV.
+ // A 16-bit leaf is an anchor, not a synset identifier; collisions are preserved.
+ void load(const std::string& filename){
+  std::ifstream f(filename);
+  if(!f)throw std::runtime_error("WordNet index not found");
+  concepts_.clear();edges_.clear();lemma_.clear();leaf_.clear();outgoing_.clear();
+  std::string line;
+  if(!std::getline(f,line)||line.rfind("NANLM-WN1\t",0)!=0)
+   throw std::runtime_error("invalid WordNet index header");
+  size_t expected_nodes=0,expected_edges=0;
+  {
+   std::istringstream h(line);std::string magic;
+   h>>magic>>expected_nodes>>expected_edges;
+   if(!h||expected_nodes>5000000||expected_edges>20000000)
+    throw std::runtime_error("invalid index sizes");
+  }
+  while(std::getline(f,line)){
+   if(line.empty())continue;
+   std::vector<std::string> fields;
+   std::istringstream ss(line);std::string part;
+   while(std::getline(ss,part,'\t'))fields.push_back(part);
+   if(fields.empty())continue;
+   if(fields[0]=="N"){
+    if(fields.size()<5)throw std::runtime_error("truncated index node");
+    auto id=static_cast<uint32_t>(std::stoul(fields[1]));
+    auto loc=static_cast<uint16_t>(std::stoul(fields[2]));
+    concepts_[id]=Concept{id,loc,fields[3],fields[4]};
+    leaf_[loc].push_back(id);
+    lemma_[lower(fields[3])].push_back(id);
+   }else if(fields[0]=="L"){
+    if(fields.size()<3)throw std::runtime_error("truncated synonym");
+    auto id=static_cast<uint32_t>(std::stoul(fields[2]));
+    if(concepts_.count(id) && lower(fields[1])!=lower(concepts_.at(id).lemma))
+     lemma_[lower(fields[1])].push_back(id);
+   }else if(fields[0]=="E"){
+    if(fields.size()<4)throw std::runtime_error("truncated index edge");
+    auto a=static_cast<uint32_t>(std::stoul(fields[1]));
+    auto b=static_cast<uint32_t>(std::stoul(fields[2]));
+    const int type=std::stoi(fields[3]);
+    if(type<0||type>=16||!concepts_.count(a)||!concepts_.count(b))
+     throw std::runtime_error("invalid exact edge");
+    const uint64_t provenance=fields.size()>=5?
+      std::stoull(fields[4]):fnv(std::to_string(a)+":"+std::to_string(b));
+    edges_.push_back(ConceptEdge{a,b,static_cast<uint8_t>(type),provenance});
+    outgoing_[a].push_back(edges_.size()-1);
+   }else throw std::runtime_error("unknown index record");
+  }
+  if(concepts_.size()!=expected_nodes||edges_.size()!=expected_edges)
+   throw std::runtime_error("index counts mismatch");
+ }
  // Text export is deterministic and inspectable, unlike an implicit lookup table.
  void save(const std::string& filename)const{
   std::ofstream f(filename,std::ios::trunc);
@@ -141,7 +191,13 @@ class WordNetIndex {
    for(char& x:gloss)if(x=='\t'||x=='\n'||x=='\r')x=' ';
    f<<"N\t"<<id<<"\t"<<c.leaf<<"\t"<<c.lemma<<"\t"<<gloss<<"\n";
   }
-  for(const auto& e:edges_)f<<"E\t"<<e.src<<"\t"<<e.dst<<"\t"<<int(e.type)<<"\n";
+  std::vector<std::pair<std::string,uint32_t>> synonyms;
+  for(const auto& [name,ids_for_name]:lemma_)for(uint32_t id:ids_for_name)
+   synonyms.emplace_back(name,id);
+  std::sort(synonyms.begin(),synonyms.end());
+  synonyms.erase(std::unique(synonyms.begin(),synonyms.end()),synonyms.end());
+  for(const auto& [name,id]:synonyms)f<<"L\t"<<name<<"\t"<<id<<"\n";
+  for(const auto& e:edges_)f<<"E\t"<<e.src<<"\t"<<e.dst<<"\t"<<int(e.type)<<"\t"<<e.source<<"\n";
  }
 };
 } // namespace nanlm
