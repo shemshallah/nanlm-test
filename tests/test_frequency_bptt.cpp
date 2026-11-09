@@ -57,6 +57,32 @@ int main(){
     informative+=std::fabs(analytic)>1e-6;
    }
    check(informative>=2,"frequency gradients did not flow through recurrence");
+   // Verify the genuinely multi-target teacher-forced objective too:
+   // each earlier label contributes an adjoint through later recurrence.
+   const auto sequence_gradient=mind.bptt_gradient(history,tokens,label,true);
+   const auto sequence_loss=[&](uint8_t head,double frequency){
+    mind.set_recurrent_frequency_shift(head,frequency);
+    std::deque<UnifiedWaveLanguage::State> replay{history.front()};
+    for(uint8_t byte:tokens){
+     auto next=replay.back();
+     mind.observe(next,byte);
+     replay.push_back(next);
+    }
+    return mind.bptt_window_loss(replay,tokens,label,true);
+   };
+   for(const auto c:{uint8_t('a'),uint8_t('c'),uint8_t('f')}){
+    const double old=mind.recurrent_frequency_shift(c),epsilon=0.0005;
+    const double plus=sequence_loss(c,old+epsilon);
+    const double minus=sequence_loss(c,old-epsilon);
+    mind.set_recurrent_frequency_shift(c,old);
+    const double numeric=(plus-minus)/(2*epsilon);
+    const double analytic=sequence_gradient.frequency[c];
+    std::cout<<"SEQUENCE_FREQUENCY_GRADCHECK head="<<int(c)
+             <<" analytic="<<analytic<<" finite="<<numeric
+             <<" error="<<std::fabs(numeric-analytic)<<"\n";
+    check(std::fabs(numeric-analytic)<std::max(2e-7,0.02*std::fabs(analytic)),
+          "multi-target frequency gradient disagrees with finite differences");
+   }
    const double initial=mind.bptt_window_loss(history,tokens,label,true);
    mind.set_frequency_learning_enabled(true);
    check(mind.learn_bptt(state,history,tokens,label),
