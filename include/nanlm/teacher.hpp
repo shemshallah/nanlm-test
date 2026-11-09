@@ -57,7 +57,7 @@ class FabricTeacher {
   const Vec3q tangent{-old_v.y,old_v.x,0};
   double gradient=0;
   for(unsigned j=0;j<VOCAB;++j) {
-   const double dz=rule_gain_*dot(tangent,ring(static_cast<uint8_t>(j)));
+   const double dz=rule_gain_*nanlm::dot(tangent,ring(static_cast<uint8_t>(j)));
    gradient+=(p.probability[j]-(j==next?1.0:0.0))*dz;
   }
   const double original=-std::log(std::max(p.probability[next],1e-300));
@@ -69,7 +69,7 @@ class FabricTeacher {
    auto logits=p.logit;
    for(unsigned j=0;j<VOCAB;++j) {
     const Vec3q d=ring(static_cast<uint8_t>(j));
-    logits[j]+=rule_gain_*(dot(moved,d)-dot(old_v,d));
+    logits[j]+=rule_gain_*(nanlm::dot(moved,d)-nanlm::dot(old_v,d));
    }
    if(logloss(logits,next)+1e-12<original) {
     std::memcpy(u_.root().h[RULE_HEAD].data+RULE_QUAT_OFFSET,
@@ -123,7 +123,7 @@ class FabricTeacher {
                                    double(src[1])*shifted.y+
                                    double(src[2])*shifted.z);
   const double rule=rule_gain_>0?
-    rule_gain_*dot(shared_rule().rotate(ring(previous)),ring(candidate)):0.0;
+    rule_gain_*nanlm::dot(shared_rule().rotate(ring(previous)),ring(candidate)):0.0;
   return coupling+geometry+triply_rotated+transported+rule+
          evidence_weight_*std::log1p(evidence);
  }
