@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace nanlm {
@@ -54,7 +55,14 @@ private:
  std::array<std::unordered_map<uint64_t,std::vector<size_t>>,MAX_KEY+1>
      suffix_index_{};
  std::unordered_map<std::string,std::vector<size_t>> cue_index_;
+ // Three-byte inverted index used only by opt-in error-tolerant
+ // suggestions. Common grams are ignored to avoid all-record scans
+ // for shared prefixes; strict source verification is unchanged.
+ std::unordered_map<uint32_t,std::vector<size_t>> grams_;
  std::array<bool,MAX_KEY+1> lengths_{};
+ static uint32_t gram(const uint8_t* p){
+  return (uint32_t(p[0])<<16)|(uint32_t(p[1])<<8)|uint32_t(p[2]);
+ }
  static uint64_t reversed_hash(std::string_view bytes){
   uint64_t h=14695981039346656037ull;
   for(auto it=bytes.rbegin();it!=bytes.rend();++it){
@@ -64,7 +72,7 @@ private:
   return h;
  }
  void rebuild_index(){
-  cue_index_.clear();lengths_.fill(false);
+  cue_index_.clear();lengths_.fill(false);grams_.clear();
   for(auto& m:suffix_index_)m.clear();
   for(size_t i=0;i<entries_.size();++i){
    const auto& r=entries_[i];
@@ -72,6 +80,12 @@ private:
    lengths_[n]=true;
    suffix_index_[n][reversed_hash(r.cue)].push_back(i);
    cue_index_[r.cue].push_back(i);
+   std::unordered_set<uint32_t> unique;
+   for(size_t j=0;j+3<=n;++j){
+    const auto* p=reinterpret_cast<const uint8_t*>(r.cue.data()+j);
+    const uint32_t g=gram(p);
+    if(unique.insert(g).second)grams_[g].push_back(i);
+   }
   }
  }
  Lookup probe_hash(const uint8_t* history,size_t length)const{
@@ -458,15 +472,35 @@ public:
          const uint8_t* history,size_t length,size_t count,
          size_t max_edits,const TriadCueRouter::Mapping& group_of,
          const std::array<double,255>* live_wave=nullptr,
-         bool use_triad=true)const{
+         bool use_triad=true,bool use_grams=true,
+         size_t* examined=nullptr)const{
+  if(examined)*examined=0;
   if(!history||length==0||count==0||count>16||max_edits>3)
    return {};
   length=std::min(length,TriadCueRouter::MAX_CUE);
   const auto* ptr=reinterpret_cast<const char*>(history);
   std::string_view recent(ptr,length);
+  std::vector<uint8_t> candidate(entries_.size(),0);
+  bool narrowed=false;
+  if(use_grams&&length>=14&&entries_.size()>=32){
+   // Entries in the same source often share boilerplate. Only grams
+   // seen in <=12.5% of records carry useful pruning information.
+   const size_t cap=std::max<size_t>(8,entries_.size()/8);
+   size_t informative=0;
+   for(size_t i=0;i+3<=length;++i){
+    const auto found=grams_.find(gram(history+i));
+    if(found==grams_.end()||found->second.size()>cap)continue;
+    ++informative;
+    for(size_t index:found->second)candidate[index]=1;
+   }
+   narrowed=informative>0;
+  }
   std::vector<Suggestion> ranked;
   ranked.reserve(entries_.size());
-  for(const auto& r:entries_){
+  for(size_t i=0;i<entries_.size();++i){
+   if(narrowed&&!candidate[i])continue;
+   if(examined)++*examined;
+   const auto& r=entries_[i];
    const size_t n=r.cue.size();
    const size_t first=n>max_edits?n-max_edits:1;
    const size_t last=std::min(length,n+max_edits);

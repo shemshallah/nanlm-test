@@ -227,3 +227,18 @@ sketch. Each reports top-1 and top-3 recovered cue counts and measured
 per-query microseconds. No approximate cue is permitted to trigger
 exact-copy. This evaluates lexical typo tolerance, **not semantic
 memory retrieval, factual correctness, or public-domain language CE**.
+
+### Bounded 3-gram inverted-index screening
+
+The opt-in typo-search path now reconstructs a three-byte inverted index
+from source-backed cue strings alongside the exact hash index. It ignores
+boilerplate grams present in more than one eighth of records, collects
+informative postings, and compares the surviving candidates with the same
+bounded edit-distance verifier. If no informative gram is available it
+falls back to a full scan. This **can miss** highly corrupted short cues,
+so it is a search heuristic, never an authorization to copy a fact.
+
+The 512-challenge benchmark explicitly compares **phase-only**, **full
+edit-distance scan**, **trigram-screened edit distance**, and **trigram +
+triad-hotspot**. It measures candidate counts and actual wall time; no
+architecture component is declared beneficial merely for being present.

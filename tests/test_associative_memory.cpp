@@ -51,7 +51,8 @@ int main(){
    synthetic_wave[i]=std::sin(0.13*double(i));
   size_t trials=0,baseline_top1=0,baseline_top3=0;
   size_t edit_top1=0,edit_top3=0,triad_top1=0,triad_top3=0;
-  double baseline_micros=0,edit_micros=0,triad_micros=0;
+  size_t scan_top1=0,scan_top3=0,scanned=0,pruned=0;
+  double baseline_micros=0,edit_micros=0,triad_micros=0,scan_micros=0;
   for(unsigned i=0;i<RECORDS;++i){
    const std::string exact=key(i);
    const size_t offset=std::string("Archive research ").size();
@@ -71,21 +72,28 @@ int main(){
       reinterpret_cast<const uint8_t*>(typo.data()),typo.size(),3,
       &synthetic_wave);
     const auto t1=std::chrono::steady_clock::now();
+    size_t scan_checked=0,pruned_checked=0;
+    const auto linear=bank.suggest_robust(
+      reinterpret_cast<const uint8_t*>(typo.data()),typo.size(),3,2,
+      groups,nullptr,false,false,&scan_checked);
+    const auto t2=std::chrono::steady_clock::now();
     const auto lexical=bank.suggest_robust(
       reinterpret_cast<const uint8_t*>(typo.data()),typo.size(),3,2,
-      groups,nullptr,false);
-    const auto t2=std::chrono::steady_clock::now();
+      groups,nullptr,false,true,&pruned_checked);
+    const auto t3=std::chrono::steady_clock::now();
     const auto hybrid=bank.suggest_robust(
       reinterpret_cast<const uint8_t*>(typo.data()),typo.size(),3,2,
       groups,&synthetic_wave,true);
-    const auto t3=std::chrono::steady_clock::now();
+    const auto t4=std::chrono::steady_clock::now();
+    scanned+=scan_checked;pruned+=pruned_checked;
     const auto elapsed=[](auto first,auto second){
      return std::chrono::duration<double,std::micro>(
        second-first).count();
     };
     baseline_micros+=elapsed(t0,t1);
-    edit_micros+=elapsed(t1,t2);
-    triad_micros+=elapsed(t2,t3);
+    scan_micros+=elapsed(t1,t2);
+    edit_micros+=elapsed(t2,t3);
+    triad_micros+=elapsed(t3,t4);
     auto rank=[&](const auto& records){
      size_t found=0;
      for(size_t j=0;j<records.size();++j)
@@ -93,7 +101,9 @@ int main(){
      return found;
     };
     const size_t a=rank(phase),b=rank(lexical),c=rank(hybrid);
+    const size_t d=rank(linear);
     baseline_top1+=(a==1);baseline_top3+=(a>0&&a<=3);
+    scan_top1+=(d==1);scan_top3+=(d>0&&d<=3);
     edit_top1+=(b==1);edit_top3+=(b>0&&b<=3);
     triad_top1+=(c==1);triad_top3+=(c>0&&c<=3);
     // No approximate cue may trigger byte-exact copy, even if its
@@ -109,6 +119,10 @@ int main(){
    }
   }
   require(trials==512,"unexpected number of typo challenge trials");
+  require(scan_top3==trials&&edit_top3==trials,
+          "trigram index missed error-bounded target in fixed-seed fixture");
+  require(pruned<scanned/2,
+          "trigram postings did not halve fuzzy candidate scans");
   require(triad_top3>=edit_top3-10,
           "triad hints severely degraded lexical shortlist recall");
   require(triad_top3>baseline_top3,
@@ -125,8 +139,12 @@ int main(){
             <<" mean_microseconds="<<micros/trials<<"\n";
   };
   out("phase",baseline_top1,baseline_top3,baseline_micros);
-  out("edit_only",edit_top1,edit_top3,edit_micros);
+  out("edit_full_scan",scan_top1,scan_top3,scan_micros);
+  out("edit_trigram_index",edit_top1,edit_top3,edit_micros);
   out("edit_triad_hotspot",triad_top1,triad_top3,triad_micros);
+  std::cout<<"ASSOCIATIVE_INDEX_STATS scanned="<<scanned
+           <<" postings_candidates="<<pruned
+           <<" ratio="<<double(pruned)/double(scanned)<<"\n";
   cleanup();
   std::cout<<"PASS: fixed-seed 128-source 512-typo phase/edit/triad "
               "retrieval ranks and zero unsupported exact-copy\n";
