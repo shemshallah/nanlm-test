@@ -61,8 +61,8 @@ class FabricTeacher {
   std::memcpy(&bits,u_.root().h[h].data+4,2);
   return bits;
  }
- double score(uint8_t previous,uint8_t candidate,const Vector& src,const Vector& dst,const Vec3& rot)const{
-  if((gates(previous)&static_cast<uint16_t>(1u<<(candidate&15)))==0)return -30.;
+ double score(uint8_t previous,uint8_t candidate,const Vector& src,const Vector& dst,const Vec3& rot,bool bypass_gate=false)const{
+  if(!bypass_gate && (gates(previous)&static_cast<uint16_t>(1u<<(candidate&15)))==0)return -30.;
   const double coupling=DOT_GAIN*dot(src,dst);
   const double phase=previous==candidate?0.:u_.covariant_phase(previous,candidate);
   const double angle=norm_angle(src,dst);
@@ -130,6 +130,31 @@ class FabricTeacher {
   if(next>=VOCAB)throw std::invalid_argument("nannet head is not a language symbol");
   const auto p=predict(previous);
   return -std::log(std::max(p.probability[next],1e-300));
+ }
+ // The 16 Boolean selector bits are themselves self-modifying,
+ // but only after evaluating the full normalized predictive objective
+ // against a scratch version of the mask (never mutating the live head).
+ bool trial_gate(uint8_t head,uint8_t nibble_group,bool enable,uint8_t expected,
+                 double required_gain=1e-5){
+  if(head>=VOCAB||expected>=VOCAB||nibble_group>=16)
+   throw std::invalid_argument("invalid Boolean head trial");
+  const uint16_t old_mask=gates(head);
+  const uint16_t bit=static_cast<uint16_t>(1u<<nibble_group);
+  const uint16_t new_mask=enable?static_cast<uint16_t>(old_mask|bit):
+                                 static_cast<uint16_t>(old_mask&~bit);
+  if(new_mask==old_mask)return false;
+  const auto before=predict(head);
+  const auto src=get(u_.root().h[head],32);
+  const Vec3 rotor=u_.transformed(head);
+  auto logits=before.logit; // scratch copied logits, no live-head write
+  for(unsigned j=0;j<VOCAB;++j)if((j&15u)==nibble_group){
+   const auto dst=get(u_.root().h[j],48);
+   logits[j]=enable?score(head,static_cast<uint8_t>(j),src,dst,rotor,true):-30.;
+  }
+  const double before_loss=-std::log(std::max(before.probability[expected],1e-300));
+  if(logloss(logits,expected)+required_gain>=before_loss)return false;
+  std::memcpy(u_.root().h[head].data+4,&new_mask,2);
+  return true;
  }
  Update teach(uint8_t previous,uint8_t next,uint64_t time){
   if(previous>=VOCAB||next>=VOCAB)throw std::invalid_argument("nannet head is reserved");
