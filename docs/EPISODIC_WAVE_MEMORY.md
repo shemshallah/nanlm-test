@@ -253,3 +253,22 @@ full edit comparison regardless of postings. This prevents a repeated-key
 edge case that ordinary rare-gram screening would otherwise drop. The
 benchmark includes a repeated-character cue with two edits and compares
 indexed versus full scan. Exact-copy safety is unchanged.
+
+## Local transactional memory durability and stale-writer prevention
+
+Native sidecar writes now obtain an exclusive Linux/Termux `flock` lease
+on `ROOT.episodes.lock`, compare the latest checkpoint digest against
+the version loaded by this process, write a temporary replacement, fsync
+it, rename it atomically, fsync the parent directory and only then publish
+its derived in-memory indexes. Readers take a shared lock while opening
+an existing checkpoint. A process with stale state fails explicitly rather
+than replacing another writer's facts. A native regression opens two writers
+against the same blank source and verifies the second stale update is
+rejected while the first record survives a fresh reopen.
+
+The lease is **local-filesystem only**, not a network/cluster transaction.
+The digest is an optimistic revision check against accidental concurrent
+updates, not cryptographic authenticity. Process crash after rename but
+before directory fsync can leave a committed-on-disk update with an error
+returned to the caller; reopening is required to reconcile it. The lock
+file intentionally remains alongside the source memory.

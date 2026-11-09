@@ -5,6 +5,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -50,6 +54,49 @@ public:
 private:
  std::string path_;
  std::vector<Record> entries_;
+ uint64_t revision_=0;
+ // Cross-process local Linux/Termux write lease. It protects against
+ // stale writers, but does not implement distributed replica consensus.
+ class FileLock {
+  int fd_=-1;
+ public:
+  FileLock(const std::string& path,bool exclusive){
+   fd_=::open(path.c_str(),O_CREAT|O_RDWR,0600);
+   if(fd_<0)throw std::runtime_error("cannot open episodic lock");
+   if(::flock(fd_,exclusive?LOCK_EX:LOCK_SH)){
+    ::close(fd_);fd_=-1;
+    throw std::runtime_error("cannot acquire episodic lock");
+   }
+  }
+  FileLock(const FileLock&)=delete;
+  FileLock& operator=(const FileLock&)=delete;
+  ~FileLock(){if(fd_>=0){::flock(fd_,LOCK_UN);::close(fd_);}}
+ };
+ static uint64_t file_revision(const std::string& path){
+  if(!std::filesystem::exists(path))return 0;
+  std::ifstream in(path,std::ios::binary);
+  if(!in)throw std::runtime_error("cannot read episodic revision");
+  uint64_t hash=14695981039346656037ull;
+  std::array<char,8192> buffer{};
+  while(in.read(buffer.data(),static_cast<std::streamsize>(buffer.size()))||
+        in.gcount()>0){
+   const auto n=in.gcount();
+   for(std::streamsize i=0;i<n;++i){
+    hash^=static_cast<uint8_t>(buffer[static_cast<size_t>(i)]);
+    hash*=1099511628211ull;
+   }
+  }
+  if(in.bad())throw std::runtime_error("episodic revision read failed");
+  return hash;
+ }
+ static void sync_file(const std::string& path,bool directory=false){
+  const int fd=::open(path.c_str(),O_RDONLY|(directory?O_DIRECTORY:0));
+  if(fd<0)throw std::runtime_error("cannot open episodic fsync path");
+  const int status=::fsync(fd);
+  const int close_status=::close(fd);
+  if(status||close_status)
+   throw std::runtime_error("episodic fsync failed");
+ }
  // Derived addressing, never serialized; rebuilding it cannot modify
  // the 8MiB root or its source-attributed episodic records.
  std::array<std::unordered_map<uint64_t,std::vector<size_t>>,MAX_KEY+1>
@@ -245,16 +292,32 @@ private:
    if(!out)throw std::runtime_error("episodic checkpoint close failed");
    if(std::filesystem::file_size(temporary)>MAX_FILE_BYTES)
     throw std::runtime_error("episodic index exceeds storage cap");
+   sync_file(temporary);
    std::filesystem::rename(temporary,path_);
+   const auto parent=std::filesystem::path(path_).parent_path();
+   sync_file(parent.empty()?".":parent.string(),true);
   }catch(...){
    std::error_code ec;
    std::filesystem::remove(temporary,ec);
    throw;
   }
  }
+ // All source updates use the same lease, verify the previous complete
+ // checkpoint revision, sync the replacement and then republish indexes.
+ // A stale process must reopen rather than overwrite another importer.
+ void commit(std::vector<Record> next){
+  FileLock lock(path_+".lock",true);
+  if(file_revision(path_)!=revision_)
+   throw std::runtime_error("stale episodic checkpoint: reopen before writing");
+  save(next);
+  entries_=std::move(next);
+  rebuild_index();
+  revision_=file_revision(path_);
+ }
 public:
  explicit ExactEpisodicMemory(std::string path):path_(std::move(path)){
   if(!std::filesystem::exists(path_))return;
+  FileLock lock(path_+".lock",false);
   if(std::filesystem::file_size(path_)>MAX_FILE_BYTES)
    throw std::runtime_error("episodic checkpoint exceeds storage cap");
   std::ifstream in(path_,std::ios::binary);
@@ -285,6 +348,7 @@ public:
   if(in.peek()!=std::char_traits<char>::eof())
    throw std::runtime_error("unexpected episodic checkpoint trailing data");
   rebuild_index();
+  revision_=file_revision(path_);
  }
  size_t size()const{return entries_.size();}
  // Multiple independent sources may make the SAME claim. Divergent
@@ -309,9 +373,7 @@ public:
                const std::string& source){
   auto next=entries_;
   upsert(next,{cue,value,source});
-  save(next);
-  entries_=std::move(next);
-  rebuild_index();
+  commit(std::move(next));
  }
  size_t import_tsv(std::istream& input,const std::string& source){
   auto next=entries_;
@@ -327,7 +389,7 @@ public:
    ++loaded;
   }
   if(!input.eof()&&input.fail())throw std::runtime_error("episodic input read failed");
-  if(loaded){save(next);entries_=std::move(next);rebuild_index();}
+  if(loaded)commit(std::move(next));
   return loaded;
  }
  // Explicit source-document indexing: each sufficiently long UTF-8 line
@@ -354,7 +416,7 @@ public:
   }
   if(!input.eof()&&input.fail())
    throw std::runtime_error("document indexing input read failed");
-  if(accepted){save(next);entries_=std::move(next);rebuild_index();}
+  if(accepted)commit(std::move(next));
   return accepted;
  }
  // Optional phase-resonant ranking. Candidate ranking is advisory:

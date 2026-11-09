@@ -27,7 +27,7 @@ int main(){
  const std::string source="trusted-test-fixture-v1";
  auto cleanup=[&](){
   for(const char* suffix:{"",".episodes",".episodes.tmp",
-                                 ".so3",".overlay",".overlay.tmp"}){
+                                 ".episodes.lock",".so3",".overlay",".overlay.tmp"}){
    std::error_code ec;std::filesystem::remove(root+suffix,ec);
   }
  };
@@ -39,6 +39,30 @@ int main(){
    std::memcpy(ingress.data(),u.root().h[255].data,128);
    UnifiedWaveLanguage mind(u);
    require(mind.episodic_records()==0,"blank checkpoint has records");
+   // Old writers must not silently overwrite newer checkpoint content,
+   // even when both instances opened before the first insert.
+   {
+    const std::string leasepath=root+"-lease.episodes";
+    ExactEpisodicMemory writer_a(leasepath),writer_b(leasepath);
+    writer_a.remember("Primary record: ","FIRST","writer-a");
+    bool stale_rejected=false;
+    try{
+     writer_b.remember("Secondary record: ","SECOND","writer-b");
+    }catch(const std::runtime_error&){
+     stale_rejected=true;
+    }
+    require(stale_rejected,
+            "stale writer overwrote another source checkpoint");
+    ExactEpisodicMemory authoritative(leasepath);
+    require(authoritative.exact("Primary record: ")!=nullptr&&
+            authoritative.exact("Secondary record: ")==nullptr,
+            "stale update changed authoritative source records");
+    std::error_code ignored;
+    std::filesystem::remove(leasepath,ignored);
+    std::filesystem::remove(leasepath+".tmp",ignored);
+    std::filesystem::remove(leasepath+".lock",ignored);
+   }
+
    mind.memorize(cue,value,source);
    require(mind.episodic_records()==1,"record not inserted");
    const auto* record=mind.exact_recall(cue);
