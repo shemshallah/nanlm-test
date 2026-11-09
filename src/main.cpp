@@ -117,6 +117,24 @@ int main(int argc,char** argv){
     chosen[mode]=best_scale;
     mind.set_global_scales(chosen);
    }
+   // Fit CP-tensor and inverse-wave factors only to development text.
+   // Signed proposals allow anti-alignment without deleting geometry.
+   auto tensor=mind.tensor_scales();
+   const double tensor_choices[]={-2.,-1.5,-1.,-0.5,0.,0.5,1.,1.5,2.};
+   for(size_t mode=0;mode<tensor.size();++mode){
+    double best_loss=measure().ce();
+    double best_scale=tensor[mode];
+    for(double candidate:tensor_choices){
+     if(candidate==tensor[mode])continue;
+     auto trial=tensor;
+     trial[mode]=candidate;
+     mind.set_tensor_scales(trial);
+     const double loss=measure().ce();
+     if(loss+1e-6<best_loss){best_loss=loss;best_scale=candidate;}
+    }
+    tensor[mode]=best_scale;
+    mind.set_tensor_scales(tensor);
+   }
    const auto after=measure();
    if(after.ce()>before.ce()+1e-7)
     throw std::runtime_error("development calibration worsened loss");
@@ -124,7 +142,9 @@ int main(int argc,char** argv){
    std::cout<<std::setprecision(9)<<"UNIFIED_CALIBRATE dev_tokens="<<after.tokens
             <<" ce_before="<<before.ce()<<" ce_after="<<after.ce()
             <<" wave_scale="<<chosen[0]<<" attention_scale="<<chosen[1]
-            <<" spectral_scale="<<chosen[2]<<" cycle_scale="<<chosen[3]<<"\n";
+            <<" spectral_scale="<<chosen[2]<<" cycle_scale="<<chosen[3]
+            <<" cp_scale="<<tensor[0]
+            <<" inverse_wave_tensor_scale="<<tensor[1]<<"\n";
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);
