@@ -5,6 +5,8 @@ CPPFLAGS ?= -Iinclude
 all: nanlm
 nanlm: src/main.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/main.cpp -o $@
+nanlm-diagnostics: src/diagnostics_main.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/diagnostics_main.cpp -o $@
 test_universe: tests/test_universe.cpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_universe.cpp -o $@
 test_wordnet: tests/test_wordnet.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp
@@ -28,7 +30,7 @@ test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nan
 test_nan16: tests/test_nan16.c include/nanlm/nan16.h
 	$(CC) $(CPPFLAGS) -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror $< -lm -o $@
 
-test: test_byte_model test_recurrent_byte test_unified test_nan16 test_harmony test_universe test_wordnet test_teacher test_quaternion test_multiloss
+test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_hybrid_byte test_nan16 test_harmony test_universe test_wordnet test_teacher test_quaternion test_multiloss
 	./test_nan16
 	./test_harmony
 	python3 tests/test_context_lm.py
@@ -40,8 +42,10 @@ test: test_byte_model test_recurrent_byte test_unified test_nan16 test_harmony t
 	./test_byte_model
 	./test_recurrent_byte
 	./test_unified
+	./test_hybrid_byte
+	./test_unified_wave
 clean:
-	rm -f test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+	rm -f nanlm-diagnostics test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
 
 validate_harmony: tests/validate_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
@@ -52,4 +56,10 @@ test_recurrent_byte: tests/test_recurrent_byte.cpp $(wildcard include/nanlm/*.hp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 test_unified: tests/test_unified.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_unified_wave: tests/test_unified_wave.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_hybrid_byte: tests/test_hybrid_byte.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
