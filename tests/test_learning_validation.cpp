@@ -19,7 +19,7 @@ constexpr unsigned EPOCHS=8;
 constexpr double ALPHA=1.0;
 
 uint8_t target(unsigned source) {
- return static_cast<uint8_t>((source+19u)%192u);
+ return static_cast<uint8_t>((source+19u)%FabricTeacher::VOCAB);
 }
 bool unseen_source(unsigned source) {
  return ((source-FIRST)%4u)==0;
@@ -78,6 +78,7 @@ struct Configuration {
  const char* name;
  double angle,quaternion,dot_gain;
  bool shuffled=false;
+ double rule_gain=0;
 };
 struct Outcome {
  Metrics before_seen{},before_unseen{},after_seen{},after_unseen{};
@@ -92,7 +93,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  Outcome o;
  {
   Universe universe(path);
-  FabricTeacher model(universe,0.055,config.angle,0.09,config.quaternion,config.dot_gain);
+  FabricTeacher model(universe,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain);
   o.before_seen=evaluate(model,false);
   o.before_unseen=evaluate(model,true);
   std::vector<uint8_t> sources;
@@ -106,7 +107,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
     std::swap(sources[i-1],sources[next_random(rng)%i]);
    for(uint8_t src:sources) {
     uint8_t label=target(src);
-    if(config.shuffled)label=static_cast<uint8_t>((unsigned(label)+79u)%192u);
+    if(config.shuffled)label=static_cast<uint8_t>((unsigned(label)+79u)%FabricTeacher::VOCAB);
     const double before=model.loss(src,label);
     const auto update=model.teach(src,label,++o.attempted);
     if(counts)counts->add(src,label);
@@ -126,7 +127,7 @@ Outcome experiment(uint32_t seed,Configuration config,CountBaseline* counts) {
  }
  {
   Universe restored(path);
-  FabricTeacher reloaded(restored,0.055,config.angle,0.09,config.quaternion,config.dot_gain);
+  FabricTeacher reloaded(restored,0.055,config.angle,0.09,config.quaternion,config.dot_gain,config.rule_gain);
   if(std::fabs(evaluate(reloaded,false).mean_ce()-o.after_seen.mean_ce())>1e-7 ||
      std::fabs(evaluate(reloaded,true).mean_ce()-o.after_unseen.mean_ce())>1e-7)
    throw std::runtime_error("restart changed held-out predictions");
@@ -148,11 +149,13 @@ int main() {
            "unseen_source_CE_after,seen_accuracy,unseen_source_accuracy,"
            "accepted,attempted,post_commit_regressions,max_actual_vs_scratch_gap\n";
  constexpr std::array<uint32_t,3> seeds{11,29,47};
- constexpr std::array<Configuration,4> arms{{
-  {"flat",0.0,0.0,4.45,false},
-  {"u1",0.08,0.0,4.45,false},
-  {"so3",0.0,0.45,4.0,false},
-  {"hybrid",0.08,0.45,4.0,false}
+ constexpr std::array<Configuration,6> arms{{
+  {"flat",0.0,0.0,4.45,false,0.0},
+  {"u1",0.08,0.0,4.45,false,0.0},
+  {"so3",0.0,0.45,4.0,false,0.0},
+  {"hybrid",0.08,0.45,4.0,false,0.0},
+  {"rule",0.0,0.0,4.45,false,12.0},
+  {"hybrid_rule",0.08,0.45,4.0,false,12.0}
  }};
  for(uint32_t seed:seeds) {
   CountBaseline counts;
@@ -164,11 +167,11 @@ int main() {
   std::cout<<seed<<",count,,"<<counts.mean_ce(false)
     <<",,"<<counts.mean_ce(true)<<",,,,,,\n";
   if(seed==seeds[0]) {
-   constexpr Configuration negative{"shuffled_labels",0.08,0.45,4.0,true};
+   constexpr Configuration negative{"shuffled_labels",0.08,0.45,4.0,true,12.0};
    report(seed,negative,experiment(seed,negative,nullptr));
   }
  }
  std::cout<<"PASS: deterministic source-disjoint held-out audit, matched training budgets, "
-            "count-only baseline, scalar and quaternion ablations, shuffled-label control, "
+            "count-only baseline, scalar, quaternion and shared-relation ablations, shuffled-label control, "
             "committed-loss audit and persistence.\n";
 }
