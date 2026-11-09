@@ -63,6 +63,13 @@ public:
  static constexpr uint8_t HYPER_LOCAL_MAGIC=0xB6;
  static constexpr uint8_t HYPER_GROUP_MAGIC=0xB7;
  static constexpr uint8_t HYPER_FIELD_MAGIC=0xB8;
+ // Optional calibration of rank-three CP and wave tensor modulations.
+ // Two float32 scales + marker use h0 [96..104], disjoint from its
+ // four-output Q8.8 scales, its gauge, and the teacher's vectors.
+ static constexpr size_t TENSOR_SCALE_OFFSET=96;
+ static constexpr size_t TENSOR_SCALE_MAGIC_OFFSET=104;
+ static constexpr uint8_t TENSOR_SCALE_MAGIC=0xC9;
+ using TensorScales=std::array<double,2>;
  using GlobalScales=std::array<double,4>;
  struct State {
   std::array<double,N> wave{};
@@ -308,7 +315,24 @@ private:
   const double bc=pair_score(b,candidate);
   const double ac=pair_score(a,candidate);
   const double holonomy=0.65+0.35*std::cos(universe_.triangle(a,b,candidate));
-  const double factor=1.25*ab*(0.7*bc+0.3*ac)*holonomy;
+  // CP-rank-three multilinear interaction is directly tied to the
+  // trainable 3-vectors in palindromic head registers. This is not
+  // another embedding table: the teacher and attention update/read
+  // these exact head bytes.
+  const auto& root=universe_.root();
+  const auto first=vector(root.h[a],32);
+  const auto middle=vector(root.h[b],48);
+  const auto last=vector(root.h[candidate],48);
+  double cp=0;
+  for(size_t k=0;k<3;++k)
+   cp+=double(first[k])*middle[k]*last[k];
+  const auto tensor=tensor_scales();
+  const double head_tensor=1.0+0.35*tensor[0]*std::tanh(12.0*cp);
+  // The third-order readout also shares the existing forward/inverse
+  // standing-wave state. It is not a third recurrent model.
+  const double temporal=1.0+0.08*tensor[1]*std::tanh(
+      0.5*(s.wave[a]*s.wave[b]+s.inverse_wave[b]*s.inverse_wave[candidate]));
+  const double factor=1.25*ab*(0.7*bc+0.3*ac)*holonomy*head_tensor*temporal;
   // Constant-time signed sparse hyperedge residual, exact address order.
   const auto residual=universe_.hyper_query(a,b,candidate,PRECEDES);
   const double exact=2.0*(residual.support-residual.refute)/
@@ -478,6 +502,27 @@ public:
  }
  uint64_t trained()const{return trained_;}
  const Spectral& spectral()const{return eigen_;}
+ TensorScales tensor_scales()const{
+  const auto& h=universe_.root().h[0];
+  if(h.data[TENSOR_SCALE_MAGIC_OFFSET]!=TENSOR_SCALE_MAGIC)
+   return {1.0,1.0};
+  std::array<float,2> raw{};
+  std::memcpy(raw.data(),h.data+TENSOR_SCALE_OFFSET,sizeof(raw));
+  if(!std::isfinite(raw[0])||!std::isfinite(raw[1])||
+     std::fabs(raw[0])>2||std::fabs(raw[1])>2)
+   throw std::runtime_error("invalid persisted hypermatrix calibration");
+  return {raw[0],raw[1]};
+ }
+ void set_tensor_scales(const TensorScales& scales){
+  for(double v:scales)
+   if(!std::isfinite(v)||v< -2||v>2)
+    throw std::invalid_argument("hypermatrix scale must be finite in [-2,2]");
+  std::array<float,2> raw{
+   static_cast<float>(scales[0]),static_cast<float>(scales[1])};
+  auto& h=universe_.root().h[0];
+  std::memcpy(h.data+TENSOR_SCALE_OFFSET,raw.data(),sizeof(raw));
+  h.data[TENSOR_SCALE_MAGIC_OFFSET]=TENSOR_SCALE_MAGIC;
+ }
  GlobalScales global_scales()const{
   const auto& bytes=universe_.root().h[0].data;
   if(bytes[CALIBRATION_MAGIC_OFFSET]!=CALIBRATION_MAGIC)
