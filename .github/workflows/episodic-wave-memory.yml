@@ -1,0 +1,74 @@
+name: HW0 long-distance episodic memory and optional wave readout
+on:
+  push:
+    branches: ['feat/hw0-episodic-wave-memory']
+  pull_request:
+    paths:
+      - 'include/nanlm/episodic_memory.hpp'
+      - 'include/nanlm/unified_wave.hpp'
+      - 'src/main.cpp'
+      - 'tests/test_episodic_memory.cpp'
+      - '.github/workflows/episodic-wave-memory.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact long-term memory and current native triad tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test_episodic_memory test_triad_waveformer test_wave_bptt test_frequency_bptt CXX="${{ matrix.compiler }}"
+          ./test_episodic_memory | tee episodic-tests.log
+          ./test_triad_waveformer | tee triad-tests.log
+          ./test_wave_bptt | tee wave-adjoint-tests.log
+          ./test_frequency_bptt | tee frequency-tests.log
+      - name: Persist evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episodic-native-${{ matrix.compiler }}
+          path: |
+            episodic-tests.log
+            triad-tests.log
+            wave-adjoint-tests.log
+            frequency-tests.log
+          if-no-files-found: warn
+  cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual production command-line engine
+        run: make nanlm CXX=clang++
+      - name: Check source-tagged checkpoint and exact byte recall
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/nanlm-episodic"
+          printf 'Beacon code: \tAURORA-8273\n' > "${RUNNER_TEMP}/memory.tsv"
+          ./nanlm "$root" memorize "${RUNNER_TEMP}/memory.tsv" fixture-v1 | tee episodic-cli.log
+          ./nanlm "$root" recall 'Beacon code: ' | tee -a episodic-cli.log
+          test "$(./nanlm "$root" generate 'Beacon code: ' 11 79 0.85 0.92)" = 'Beacon code: AURORA-8273'
+          python3 - "$root" <<'PY' | tee -a episodic-cli.log
+          import os, sys
+          root = sys.argv[1]
+          assert os.stat(root).st_size == 8388608
+          assert os.path.isfile(root+'.episodes')
+          print('EPISODIC_CLI_PASS unchanged_root_bytes=8388608')
+          PY
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episodic-cli
+          path: episodic-cli.log
+          if-no-files-found: warn
