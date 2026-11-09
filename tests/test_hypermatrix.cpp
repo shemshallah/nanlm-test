@@ -52,10 +52,40 @@ int main(){
    context.reset();
    mind.observe(context,'x');
    mind.observe(context,'y');
+   const auto coords=u.hypermatrix_address('x','y','z');
+   const std::array<uint8_t,3> vertices{'x','y','z'};
+   for(size_t i=0;i<3;++i){
+    require(coords.directed[i]==address(vertices[i],vertices[(i+1)%3]),
+            "hypermatrix leg is not a NaN16 directed address");
+    require(coords.inverse[i]==mirror(coords.directed[i]),
+            "hypermatrix direction lacks inverse address");
+    require(coords.pair_offsets[i]==u.leaf(coords.inverse[i]).physical_offset,
+            "hypermatrix mirror pair is not the same physical cell");
+    require(coords.head_offsets[i]==offsetof(Root,h)+size_t(vertices[i])*sizeof(Head),
+            "hypermatrix register is not physically mapped");
+   }
    const auto factor=mind.predict(context);
    const auto without=mind.predict(context,UnifiedWaveLanguage::ABLATE_HYPEREDGE);
    require(std::fabs(factor.p['z']-without.p['z'])>1e-7,
            "factorized third-order mirror coupling ablates to zero");
+   // Perturb one EXISTING trained head vector while keeping all pair
+   // evidence fixed. Difference-of-log-odds isolates the hypermatrix
+   // readout even though attention also consumes this same vector.
+   auto impact=[&](const UnifiedWaveLanguage::Prediction& full,
+                   const UnifiedWaveLanguage::Prediction& ablated){
+    return std::log(full.p['z']/full.p['q'])-
+           std::log(ablated.p['z']/ablated.p['q']);
+   };
+   float initial=0;
+   std::memcpy(&initial,u.root().h['x'].data+32,sizeof(initial));
+   const float perturbed=initial+2.f;
+   std::memcpy(u.root().h['x'].data+32,&perturbed,sizeof(perturbed));
+   const auto changed=mind.predict(context);
+   const auto changed_ablated=mind.predict(context,UnifiedWaveLanguage::ABLATE_HYPEREDGE);
+   require(std::fabs(impact(changed,changed_ablated)-
+                     impact(factor,without))>1e-6,
+           "head-vector rank-three tensor does not affect hyperedge output");
+   std::memcpy(u.root().h['x'].data+32,&initial,sizeof(initial));
    // Sparse residuals are ordered, typed, signed and indexed.
    u.add_hyper('x','y','z',PRECEDES,false,0.5f,4);
    u.add_hyper('x','y','z',PRECEDES,true,0.2f,5);
