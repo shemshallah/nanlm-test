@@ -45,6 +45,13 @@ public:
  static constexpr size_t HEAD_GAIN_OFFSET=80;
  static constexpr size_t HEAD_GAIN_MAGIC_OFFSET=60;
  static constexpr uint8_t HEAD_GAIN_MAGIC=0xC7;
+ // Four shared calibration multipliers fit in *unused* bytes 64..71 of
+ // palindrome head 0, as unsigned little-endian Q8.8. The gauge potential
+ // at 72..79 and per-head gains at 80..95 remain completely untouched.
+ static constexpr size_t CALIBRATION_MAGIC_OFFSET=61;
+ static constexpr size_t CALIBRATION_OFFSET=64;
+ static constexpr uint8_t CALIBRATION_MAGIC=0xD3;
+ using GlobalScales=std::array<double,4>;
  struct State {
   std::array<double,N> wave{};
   std::array<double,N> old_wave{};
@@ -283,6 +290,7 @@ private:
   if(!s.length)return false;
   const auto distribution=predict(s);
   const double old_loss=-std::log(std::max(distribution.p[label],1e-300));
+  const auto scales=global_scales();
   std::array<Features,N> field{};
   std::array<GainVector,N> old_weights{},proposal{};
   for(size_t i=0;i<N;++i){
@@ -298,9 +306,9 @@ private:
     double change=0;
     for(size_t k=0;k<4;++k){
      const double old=old_weights[i][k];
-     const double updated=std::clamp(old-rate*error*field[i].at(k),-1.0,1.0);
+     const double updated=std::clamp(old-rate*error*field[i].at(k)*scales[k],-1.0,1.0);
      proposal[i][k]=static_cast<float>(updated);
-     change+=(updated-old)*field[i].at(k);
+     change+=(updated-old)*field[i].at(k)*scales[k];
     }
     logits[i]=std::log(std::max(distribution.p[i],1e-300))+change;
     largest=std::max(largest,logits[i]);
@@ -328,6 +336,31 @@ public:
  }
  uint64_t trained()const{return trained_;}
  const Spectral& spectral()const{return eigen_;}
+ GlobalScales global_scales()const{
+  const auto& bytes=universe_.root().h[0].data;
+  if(bytes[CALIBRATION_MAGIC_OFFSET]!=CALIBRATION_MAGIC)
+   return {1.0,1.0,1.0,1.0};
+  GlobalScales result{};
+  for(size_t k=0;k<result.size();++k){
+   const unsigned raw=unsigned(bytes[CALIBRATION_OFFSET+2*k])|
+                      (unsigned(bytes[CALIBRATION_OFFSET+2*k+1])<<8);
+   if(raw>512u)throw std::runtime_error("invalid Q8.8 shared head calibration");
+   result[k]=double(raw)/256.0;
+  }
+  return result;
+ }
+ void set_global_scales(const GlobalScales& scales){
+  for(double s:scales)
+   if(!std::isfinite(s)||s<0||s>2)
+    throw std::invalid_argument("calibration scale must be finite in [0,2]");
+  auto& bytes=universe_.root().h[0].data;
+  for(size_t k=0;k<scales.size();++k){
+   const auto raw=static_cast<unsigned>(std::lround(scales[k]*256.0));
+   bytes[CALIBRATION_OFFSET+2*k]=static_cast<uint8_t>(raw&255u);
+   bytes[CALIBRATION_OFFSET+2*k+1]=static_cast<uint8_t>(raw>>8);
+  }
+  bytes[CALIBRATION_MAGIC_OFFSET]=CALIBRATION_MAGIC;
+ }
  void refresh_spectrum(){rebuild_spectrum();}
  void observe(State& s,uint8_t c)const{
   if(c==255){s.reset();return;}
@@ -379,6 +412,7 @@ public:
   }
   const uint8_t last=s.history[s.length-1];
   const auto baseline=teacher_.predict(last);
+  const auto scales=global_scales();
   std::array<double,N> logits{};
   double largest=-std::numeric_limits<double>::infinity();
   for(size_t c=0;c<N;++c){
@@ -396,10 +430,10 @@ public:
       (forward.support+inverse.support-forward.refute-inverse.refute)/
       (2.0+forward.support+inverse.support+forward.refute+inverse.refute);
    logits[c]=baseline.logit[c]+
-      ((disabled&ABLATE_WAVE)?0.0:double(g[0])*f.wave)+
-      ((disabled&ABLATE_ATTENTION)?0.0:double(g[1])*f.attention)+
-      ((disabled&ABLATE_SPECTRAL)?0.0:double(g[2])*f.spectral)+
-      ((disabled&ABLATE_CYCLE)?0.0:double(g[3])*f.cycle)+
+      ((disabled&ABLATE_WAVE)?0.0:double(g[0])*scales[0]*f.wave)+
+      ((disabled&ABLATE_ATTENTION)?0.0:double(g[1])*scales[1]*f.attention)+
+      ((disabled&ABLATE_SPECTRAL)?0.0:double(g[2])*scales[2]*f.spectral)+
+      ((disabled&ABLATE_CYCLE)?0.0:double(g[3])*scales[3]*f.cycle)+
       ((disabled&ABLATE_INVERSE_EVIDENCE)?0.0:evidence_gain_*inverse_consensus)+
       ((disabled&ABLATE_HYPEREDGE)?0.0:0.03*hyperedge_signal(s,target));
    largest=std::max(largest,logits[c]);

@@ -26,6 +26,8 @@ jobs:
           sha256sum tests/fixtures/unified_quality_train.txt tests/fixtures/unified_quality_heldout.txt | tee corpus-sha256.txt
           ./nanlm "$root" audit tests/fixtures/unified_quality_heldout.txt | tee before.log
           ./nanlm "$root" train tests/fixtures/unified_quality_train.txt 2 | tee train.log
+          ./nanlm "$root" audit tests/fixtures/unified_quality_heldout.txt | tee after-uncalibrated.log
+          ./nanlm "$root" calibrate tests/fixtures/unified_quality_dev.txt | tee calibration.log
           ./nanlm "$root" audit tests/fixtures/unified_quality_heldout.txt | tee after.log
           ./nanlm "$root" generate 'The lantern in ' 160 29 0.85 0.92 > sample-a.txt
           ./nanlm "$root" generate 'The lantern in ' 160 29 0.85 0.92 > sample-b.txt
@@ -52,10 +54,12 @@ jobs:
               assert entries["full"][0] > 200
               return entries
           before, after = load("before.log"), load("after.log")
+          uncalibrated = load("after-uncalibrated.log")
           assert before["full"][0] == after["full"][0]
           b, a = before["full"][1], after["full"][1]
           print(f"QUALITY_SENTINEL tokens={after['full'][0]} before_ce={b:.9f} after_ce={a:.9f} delta_nats={a-b:+.9f}")
           print(f"ABLATION_SENTINEL trained_full_ce={a:.9f} teacher_only_ce={after['teacher_only'][1]:.9f}")
+          print(f"CALIBRATION_TEST_DELTA uncalibrated_test_ce={uncalibrated['full'][1]:.9f} calibrated_test_ce={a:.9f} delta_nats={a-uncalibrated['full'][1]:+.9f}")
           # The sentinel is observational: it does not assert improvement.
           PY
       - name: Save measurements and free generation
@@ -66,6 +70,8 @@ jobs:
           path: |
             before.log
             train.log
+            after-uncalibrated.log
+            calibration.log
             after.log
             sample-a.txt
             corpus-sha256.txt

@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS]|eval TEXT|audit TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -89,6 +89,42 @@ int main(int argc,char** argv){
              <<" tokens="<<result.tokens<<" ce_nats="<<result.ce()
              <<" accuracy="<<result.accuracy()<<"\n";
    }
+  }else if(operation=="calibrate"){
+   if(argc!=4)throw std::invalid_argument("calibrate requires separate development text");
+   UnifiedWaveLanguage mind(universe);
+   const auto measure=[&](){
+    std::ifstream file(argv[3],std::ios::binary);
+    if(!file)throw std::runtime_error("development file unavailable");
+    const auto result=mind.evaluate(file);
+    if(result.tokens==0||!std::isfinite(result.ce()))
+     throw std::runtime_error("invalid development loss");
+    return result;
+   };
+   const auto before=measure();
+   auto chosen=mind.global_scales();
+   const double choices[]={0.,0.5,1.,1.5,2.};
+   for(size_t mode=0;mode<chosen.size();++mode){
+    double best_loss=measure().ce();
+    double best_scale=chosen[mode];
+    for(double candidate:choices){
+     if(candidate==chosen[mode])continue;
+     auto trial=chosen;
+     trial[mode]=candidate;
+     mind.set_global_scales(trial);
+     const double loss=measure().ce();
+     if(loss+1e-6<best_loss){best_loss=loss;best_scale=candidate;}
+    }
+    chosen[mode]=best_scale;
+    mind.set_global_scales(chosen);
+   }
+   const auto after=measure();
+   if(after.ce()>before.ce()+1e-7)
+    throw std::runtime_error("development calibration worsened loss");
+   universe.sync();
+   std::cout<<std::setprecision(9)<<"UNIFIED_CALIBRATE dev_tokens="<<after.tokens
+            <<" ce_before="<<before.ce()<<" ce_after="<<after.ce()
+            <<" wave_scale="<<chosen[0]<<" attention_scale="<<chosen[1]
+            <<" spectral_scale="<<chosen[2]<<" cycle_scale="<<chosen[3]<<"\n";
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);

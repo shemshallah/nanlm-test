@@ -21,6 +21,7 @@ make nanlm CXX=clang++
 ./nanlm /tmp/hw0 spectrum
 ./nanlm /tmp/hw0 eval unseen.txt
 ./nanlm /tmp/hw0 audit unseen.txt
+./nanlm /tmp/hw0 calibrate development.txt  # do not calibrate on the held-out test file
 ./nanlm /tmp/hw0 generate 'the future of ' 120 11 0.85 0.92
 ```
 
@@ -110,6 +111,12 @@ for the full predictor, each of its six removed feature families, and a
 head/pair teacher projection from that exact same root and checkpoint.
 No audit pass updates trainable state. A change in cross-entropy is evidence
 of a feature's contribution on this file, **not** proof of generalization.
+
+A separate `calibrate development.txt` command can search four Q8.8
+shared gain scales inside unused bytes 64–71 of palindrome head 0,
+without overwriting its gauge potential at bytes 72–79. It minimizes
+development-only CE and freezes the result for later test evaluation;
+calibration does not instantiate another model or another root.
 
 ### Research and correctness gates
 

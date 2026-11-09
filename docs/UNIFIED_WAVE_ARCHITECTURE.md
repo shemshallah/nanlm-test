@@ -74,3 +74,16 @@ samples, and SHA-256 corpus hashes without declaring improvement by fiat.
 The authored fixtures are tiny and do not establish transfer to new topics,
 styles or languages; the sentinel is an instrumentation gate only. No new
 production model, root, or expert ensemble is constructed.
+
+## Development-calibrated shared readout strengths
+
+The `calibrate DEV_TEXT` CLI command performs deterministic coordinate
+search over four gain scales in {0, 0.5, 1, 1.5, 2}. It measures each
+candidate on an independent development text, never on the final held-out
+test. Four unsigned Q8.8 values occupy previously unused bytes 64–71 of
+palindrome head 0; byte 61 marks the schema. Its gauge potential remains
+at 72–79 and existing head-local expert gains remain at 80–95. A scale
+is one shared readout multiplier applied across 255 heads of the **same**
+model. Subsequent online learning includes that multiplier in its gate
+gradients. Calibration minimizes development CE by construction and is
+not guaranteed to improve held-out CE; both outcomes must be reported.
