@@ -51,8 +51,11 @@ public:
  static constexpr size_t BPTT_STEPS=8;
  static constexpr size_t BPTT_INTERVAL=16;
  static constexpr size_t BPTT_INPUT_OFFSET=112;
+ static constexpr size_t BPTT_FREQUENCY_OFFSET=116;
  static constexpr size_t BPTT_MAGIC_OFFSET=120;
+ static constexpr size_t BPTT_FREQUENCY_MAGIC_OFFSET=121;
  static constexpr uint8_t BPTT_MAGIC=0xEB;
+ static constexpr uint8_t BPTT_FREQUENCY_MAGIC=0xEC;
  static constexpr double BPTT_READOUT=0.10;
  static constexpr size_t HEAD_GAIN_OFFSET=80;
  static constexpr size_t HEAD_GAIN_MAGIC_OFFSET=60;
@@ -118,7 +121,7 @@ public:
   uint8_t best=0;
  };
  struct BpttGradient {
-  std::array<double,N> input{};
+  std::array<double,N> input{},frequency{};
   double loss=0,norm=0;
   size_t steps=0;
  };
@@ -136,6 +139,7 @@ private:
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
  bool bptt_enabled_=true;
+ bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -176,6 +180,22 @@ private:
   auto& h=universe_.root().h[head];
   write_scalar(h,BPTT_INPUT_OFFSET,value);
   h.data[BPTT_MAGIC_OFFSET]=BPTT_MAGIC;
+ }
+ double recurrent_frequency(uint8_t head)const{
+  if(head>=N)throw std::out_of_range("ingress is not a wave head");
+  const auto& h=universe_.root().h[head];
+  if(h.data[BPTT_FREQUENCY_MAGIC_OFFSET]!=BPTT_FREQUENCY_MAGIC)return 0.0;
+  const float value=read_scalar(h,BPTT_FREQUENCY_OFFSET);
+  if(!std::isfinite(value)||value< -0.15f||value>0.15f)
+   throw std::runtime_error("invalid recurrent frequency shift");
+  return value;
+ }
+ void write_frequency(uint8_t head,float value){
+  if(head>=N||!std::isfinite(value)||value< -0.15f||value>0.15f)
+   throw std::invalid_argument("frequency shift outside [-0.15,0.15]");
+  auto& h=universe_.root().h[head];
+  write_scalar(h,BPTT_FREQUENCY_OFFSET,value);
+  h.data[BPTT_FREQUENCY_MAGIC_OFFSET]=BPTT_FREQUENCY_MAGIC;
  }
  float local_hyper(uint8_t head)const{
   return read_scalar(universe_.root().h[head],HYPER_LOCAL_OFFSET);
@@ -629,9 +649,17 @@ public:
  uint64_t trained()const{return trained_;}
  void set_bptt_enabled(bool enabled){bptt_enabled_=enabled;}
  bool bptt_enabled()const{return bptt_enabled_;}
+ void set_frequency_learning_enabled(bool enabled){frequency_learning_enabled_=enabled;}
+ bool frequency_learning_enabled()const{return frequency_learning_enabled_;}
  uint64_t bptt_accepted()const{return bptt_accepted_;}
  uint64_t bptt_attempted()const{return bptt_attempted_;}
  double recurrent_input_gain(uint8_t head)const{return input_gain(head);}
+ double recurrent_frequency_shift(uint8_t head)const{return recurrent_frequency(head);}
+ void set_recurrent_frequency_shift(uint8_t head,double value){
+  if(!std::isfinite(value)||value< -0.15||value>0.15)
+   throw std::invalid_argument("recurrent frequency outside [-0.15,0.15]");
+  write_frequency(head,static_cast<float>(value));
+ }
  void set_recurrent_input_gain(uint8_t head,double value){
   if(!std::isfinite(value)||value<0.6||value>1.4)
    throw std::invalid_argument("recurrent input gain out of range");
@@ -806,17 +834,21 @@ public:
   result.steps=symbols.size();
   result.loss=bptt_window_loss(states,symbols,label,sequence);
   WaveAdjoint adj=output_wave_adjoint(states.back(),label);
-  std::array<double,N> oscillator{},in_degree{},out_degree{};
+  std::array<double,N> oscillator{},omega_slope{},in_degree{},out_degree{};
   for(size_t i=0;i<N;++i){
    double modal=0;
    for(size_t m=0;m<MODES;++m)
     modal+=eigen_.eigenvalues[m]*eigen_.vectors[m][i]*eigen_.vectors[m][i];
-   oscillator[i]=2.0*damping_*std::cos(omega_+0.1*std::tanh(modal));
+   const double theta=omega_+0.1*std::tanh(modal)+
+                  recurrent_frequency(static_cast<uint8_t>(i));
+   oscillator[i]=2.0*damping_*std::cos(theta);
+   omega_slope[i]=-2.0*damping_*std::sin(theta);
    in_degree[i]=in_degree_[i];
    out_degree[i]=out_degree_[i];
   }
   for(size_t step=symbols.size();step>0;--step){
    const auto& after=states[step];
+   const auto& before=states[step-1];
    const uint8_t byte=symbols[step-1];
    WaveAdjoint prev{};
    for(size_t i=0;i<N;++i){
@@ -829,6 +861,8 @@ public:
     prev.xp[i]-=damping_*damping_*dx;
     prev.yp[i]-=damping_*damping_*dy;
     if(i==byte)result.input[i]+=dx+dy;
+    result.frequency[i]+=omega_slope[i]*(dx*before.wave[i]+
+                                    dy*before.inverse_wave[i]);
     for(const auto& arc:incoming_[i])
      prev.x[arc.head]+=0.08*arc.weight*dx/in_degree[i];
     for(const auto& arc:outgoing_[i])
@@ -851,8 +885,11 @@ public:
    for(size_t k=0;k<symbols.size();++k)
     if(states[k].length)++targets;
    for(double& value:result.input)value/=double(targets);
+   for(double& value:result.frequency)value/=double(targets);
   }
   for(double v:result.input)result.norm+=v*v;
+  if(frequency_learning_enabled_)
+   for(double v:result.frequency)result.norm+=v*v;
   result.norm=std::sqrt(result.norm);
   if(!std::isfinite(result.norm))
    throw std::runtime_error("nonfinite truncated wave gradient");
@@ -866,27 +903,35 @@ public:
   ++bptt_attempted_;
   const auto grad=bptt_gradient(states,symbols,label,true);
   if(grad.norm<1e-12)return false;
-  std::array<float,N> old{};
-  std::array<std::array<uint8_t,5>,N> original{};
+  std::array<float,N> old{},old_frequency{};
+  std::array<std::array<uint8_t,10>,N> original{};
   for(size_t i=0;i<N;++i){
    old[i]=static_cast<float>(input_gain(static_cast<uint8_t>(i)));
+   old_frequency[i]=static_cast<float>(recurrent_frequency(static_cast<uint8_t>(i)));
    const auto& head=universe_.root().h[i];
-   std::memcpy(original[i].data(),head.data+BPTT_INPUT_OFFSET,4);
-   original[i][4]=head.data[BPTT_MAGIC_OFFSET];
+   std::memcpy(original[i].data(),head.data+BPTT_INPUT_OFFSET,8);
+   original[i][8]=head.data[BPTT_MAGIC_OFFSET];
+   original[i][9]=head.data[BPTT_FREQUENCY_MAGIC_OFFSET];
   }
   const auto restore=[&](){
    for(size_t i=0;i<N;++i){
     auto& head=universe_.root().h[i];
-    std::memcpy(head.data+BPTT_INPUT_OFFSET,original[i].data(),4);
-    head.data[BPTT_MAGIC_OFFSET]=original[i][4];
+    std::memcpy(head.data+BPTT_INPUT_OFFSET,original[i].data(),8);
+    head.data[BPTT_MAGIC_OFFSET]=original[i][8];
+    head.data[BPTT_FREQUENCY_MAGIC_OFFSET]=original[i][9];
    }
   };
   const double clipped=std::max(1.0,grad.norm);
   for(int retry=0;retry<8;++retry){
    const double rate=std::ldexp(0.08,-retry)/clipped;
-   for(size_t i=0;i<N;++i)if(std::fabs(grad.input[i])>1e-12)
-    write_input_gain(static_cast<uint8_t>(i),static_cast<float>(
-       std::clamp(old[i]-rate*grad.input[i],0.6,1.4)));
+   for(size_t i=0;i<N;++i){
+    if(std::fabs(grad.input[i])>1e-12)
+     write_input_gain(static_cast<uint8_t>(i),static_cast<float>(
+        std::clamp(old[i]-rate*grad.input[i],0.6,1.4)));
+    if(frequency_learning_enabled_&&std::fabs(grad.frequency[i])>1e-12)
+     write_frequency(static_cast<uint8_t>(i),static_cast<float>(
+        std::clamp(old_frequency[i]-rate*grad.frequency[i],-0.15,0.15)));
+   }
    std::deque<State> replay{states.front()};
    for(uint8_t byte:symbols){
     State next=replay.back();
@@ -939,7 +984,8 @@ public:
     modal_frequency+=eigen_.eigenvalues[m]*
       eigen_.vectors[m][i]*eigen_.vectors[m][i];
    }
-   const double local_omega=omega_+0.1*std::tanh(modal_frequency);
+   const double local_omega=omega_+0.1*std::tanh(modal_frequency)+
+        recurrent_frequency(static_cast<uint8_t>(i));
    const double local_oscillation=2.0*damping_*std::cos(local_omega);
    const double input=(i==c?input_gain(c):0.0);
    next[i]=clamp(local_oscillation*s.wave[i]-decay*s.old_wave[i]+
