@@ -28,7 +28,8 @@ PATTERN = re.compile(
 )
 REQUIRED = {
     "full", "no_wave", "no_attention", "no_spectral", "no_cycle",
-    "no_inverse_evidence", "no_hyperedge", "teacher_only",
+    "no_inverse_evidence", "no_hyperedge", "no_long_context",
+    "no_tbptt_readout", "no_triad", "no_global_field", "teacher_only",
 }
 
 def run(root: Path, *args: str) -> str:
@@ -52,9 +53,8 @@ def audit(root: Path, fixture: Path) -> dict:
         assert math.isfinite(row["ce"]) and row["ce"] > 0
         assert 0 <= row["accuracy"] <= 1
         rows[mode] = row
-    # Support both current 8-mode main and the experimental temporal track
-    # which adds no_long_context; record whichever was actually run.
-    assert REQUIRED.issubset(rows) and len(rows) in (9, 10), sorted(rows)
+    # Exact mode contract: missing or unknown audit modes must fail CI.
+    assert set(rows) == REQUIRED, sorted(rows)
     assert len({row["tokens"] for row in rows.values()}) == 1
     return rows
 
