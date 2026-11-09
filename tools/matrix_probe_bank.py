@@ -190,6 +190,8 @@ class Specialist:
             os.close(fd)
         self.x, self.old = [0.] * ACTIVE, [0.] * ACTIVE
         self.counts = [0.] * ACTIVE
+        self.count_total = 0.
+        self.count_log_sum = 0.
         self.pairs = set()
         self.clock = 0
         self.collisions = 0
@@ -226,7 +228,14 @@ class Specialist:
         if h==255:
             self.ingress_hits += 1
         else:
+            prior_count = self.counts[h]
             self.counts[h] += 1.
+            if self.profile == "information":
+                new_count = self.counts[h]
+                self.count_total += 1.
+                self.count_log_sum += new_count*math.log(new_count)
+                if prior_count:
+                    self.count_log_sum -= prior_count*math.log(prior_count)
             if self.profile == "topology":
                 self.x[h] += 0.1
             elif self.profile == "geometry":
@@ -320,10 +329,11 @@ class Specialist:
         # Report at every input tick; full diagnostic anchors each N ticks.
         groups = [(self.x[3*g]+self.x[3*g+1]+self.x[3*g+2])/3.
                   for g in range(TRIADS)]
-        energy = sum(x*x for x in self.x)
+        energy = sum(x*x for x in self.x) if self.profile in ("wave","triadic") else 0.
         active_groups = {h//3 for h in changed if h<ACTIVE}
         for g in active_groups:
             self.writer.emit(tick, 3*g+2, "triad", groups[g])
+        # A bounded hotspot selection avoids sorting all 85 triads on every tick.
         hot = sorted(range(TRIADS), key=lambda g:(-abs(groups[g]),g))[:self.hotspots]
         for g in hot:
             self.writer.emit(tick, 3*g+2, "hottriad", groups[g])
@@ -338,9 +348,10 @@ class Specialist:
                 curvature = math.atan2(math.sin(sum(phases)), math.cos(sum(phases)))
                 self.writer.emit(tick, pair_cell(aa,cc), "curvature", curvature)
         elif self.profile == "information":
-            total = sum(self.counts)
+            total = self.count_total
             if total:
-                entropy = -sum((c/total)*math.log(c/total) for c in self.counts if c)
+                # Exact O(1) update of Shannon entropy from sum(c * log(c)).
+                entropy = math.log(total) - self.count_log_sum/total
                 self.writer.emit(tick, 255, "entropy", entropy)
                 for g in hot:
                     p = sum(self.counts[g*3:g*3+3])/total
