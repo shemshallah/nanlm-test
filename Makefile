@@ -3,7 +3,7 @@ CXXFLAGS ?= -O3 -std=c++20 -Wall -Wextra -Wpedantic -Werror
 CPPFLAGS ?= -Iinclude
 .PHONY: all test validate clean
 all: nanlm
-nanlm: src/main.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp include/nanlm/byte_model.hpp include/nanlm/recurrent_byte.hpp include/nanlm/hybrid_byte.hpp
+nanlm: src/main.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp include/nanlm/byte_model.hpp include/nanlm/recurrent_byte.hpp include/nanlm/hybrid_byte.hpp include/nanlm/unified_wave.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/main.cpp -o $@
 test_universe: tests/test_universe.cpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_universe.cpp -o $@
@@ -24,9 +24,11 @@ test_recurrent_byte: tests/test_recurrent_byte.cpp include/nanlm/recurrent_byte.
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_recurrent_byte.cpp -o $@
 test_hybrid_byte: tests/test_hybrid_byte.cpp include/nanlm/hybrid_byte.hpp include/nanlm/recurrent_byte.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_hybrid_byte.cpp -o $@
+test_unified_wave: tests/test_unified_wave.cpp include/nanlm/unified_wave.hpp include/nanlm/teacher.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_unified_wave.cpp -o $@
 validate: test_learning_validation
 	./test_learning_validation
-test: test_universe test_wordnet test_teacher test_quaternion test_multiloss test_byte_model test_recurrent_byte test_hybrid_byte
+test: test_universe test_wordnet test_teacher test_quaternion test_multiloss test_byte_model test_recurrent_byte test_hybrid_byte test_unified_wave
 	./test_universe
 	./test_wordnet
 	./test_teacher
@@ -35,5 +37,6 @@ test: test_universe test_wordnet test_teacher test_quaternion test_multiloss tes
 	./test_byte_model
 	./test_recurrent_byte
 	./test_hybrid_byte
+	./test_unified_wave
 clean:
 	rm -f nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation test_byte_model test_recurrent_byte test_hybrid_byte
