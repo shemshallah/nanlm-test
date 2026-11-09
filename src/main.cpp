@@ -2,6 +2,7 @@
 #include "nanlm/wordnet.hpp"
 #include "nanlm/teacher.hpp"
 #include "nanlm/byte_model.hpp"
+#include "nanlm/recurrent_byte.hpp"
 #include <memory>
 #include <cmath>
 #include <fstream>
@@ -48,6 +49,37 @@ int main(int argc,char**argv){
      continue;
     }
     std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
+   }
+  }else if(op=="train-rnn"||op=="eval-rnn"||op=="generate-rnn"){
+   RecurrentByteModel rnn(u,path);
+   if(op=="train-rnn"){
+    if(argc<4)throw std::invalid_argument("need corpus file");
+    const unsigned epochs=argc>4?static_cast<unsigned>(std::stoul(argv[4])):1u;
+    if(epochs==0||epochs>1000)throw std::invalid_argument("epochs must be 1..1000");
+    RecurrentByteModel::Metrics last{};
+    for(unsigned epoch=0;epoch<epochs;++epoch){
+     std::ifstream file(argv[3],std::ios::binary);
+     if(!file)throw std::runtime_error("training corpus not found");
+     last=rnn.train(file);
+    }
+    rnn.save();u.sync();
+    std::cout<<std::setprecision(9)<<"RNN_TRAIN updates="<<rnn.updates()
+             <<" last_epoch_ce="<<last.ce()<<" accuracy="<<last.accuracy()<<"\n";
+   }else if(op=="eval-rnn"){
+    if(argc<4)throw std::invalid_argument("need evaluation corpus");
+    std::ifstream file(argv[3],std::ios::binary);
+    if(!file)throw std::runtime_error("evaluation corpus not found");
+    auto result=rnn.evaluate(file);
+    std::cout<<std::setprecision(9)<<"RNN_EVAL tokens="<<result.tokens
+             <<" ce_nats="<<result.ce()<<" accuracy="<<result.accuracy()<<"\n";
+   }else{
+    if(argc<5)throw std::invalid_argument("need prompt and byte count");
+    const auto length=std::stoull(argv[4]);
+    const auto seed=argc>5?std::stoull(argv[5]):11ull;
+    const auto temperature=argc>6?std::stod(argv[6]):0.9;
+    const auto top_p=argc>7?std::stod(argv[7]):0.9;
+    std::cout<<argv[3]<<rnn.generate(argv[3],length,seed,temperature,top_p);
+    std::cout.flush();
    }
   }else if(op=="train-text"||op=="eval-text"||op=="generate"){
    ByteModel model(u,path);
