@@ -190,13 +190,20 @@ class Specialist:
             os.close(fd)
         self.x, self.old = [0.] * ACTIVE, [0.] * ACTIVE
         self.counts = [0.] * ACTIVE
-        self.trajectories = [0.] * ACTIVE
         self.pairs = set()
         self.clock = 0
         self.collisions = 0
         self.ingress_hits = 0
         self.pair_updates = 0
         self.total = 0
+        self.mode_cos = [
+            [math.cos(2*math.pi*(k+1)*i/ACTIVE) for i in range(ACTIVE)]
+            for k in range(4)
+        ] if profile == "wave" else ()
+        self.mode_sin = [
+            [math.sin(2*math.pi*(k+1)*i/ACTIVE) for i in range(ACTIVE)]
+            for k in range(4)
+        ] if profile == "wave" else ()
 
     def get(self, a: int, b: int):
         off = DIM*HEAD_BYTES + PAIR_BYTES*pair_index(a,b)
@@ -340,8 +347,8 @@ class Specialist:
                     self.writer.emit(tick, 3*g+2, "probability", p)
         elif self.profile == "wave":
             for k in range(4):
-                real = sum(x*math.cos(2*math.pi*(k+1)*i/ACTIVE) for i,x in enumerate(self.x))
-                imag = sum(x*math.sin(2*math.pi*(k+1)*i/ACTIVE) for i,x in enumerate(self.x))
+                real = sum(x*c for x,c in zip(self.x,self.mode_cos[k]))
+                imag = sum(x*c for x,c in zip(self.x,self.mode_sin[k]))
                 self.writer.emit(tick, 255, "mode_"+str(k), math.hypot(real,imag)/ACTIVE)
             self.writer.emit(tick, 255, "metric_aux", energy/ACTIVE)
         elif self.profile == "triadic":
@@ -412,6 +419,15 @@ def run(data_noun: Path, directory: Path, *, epochs: int = 1,
                   "profiles": measurements}
         (directory/"summary.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
         return result
+    except Exception:
+        # Unsuccessful/no-input runs must not publish half-written tensor files.
+        for instance in instances:
+            if not instance.mm.closed:
+                instance.mm.close()
+            if not instance.writer.f.closed:
+                instance.writer.f.close()
+            instance.writer.path.unlink(missing_ok=True)
+        raise
     finally:
         temp.cleanup()
 
