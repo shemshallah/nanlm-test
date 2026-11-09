@@ -4,6 +4,7 @@
 #include "nanlm/byte_model.hpp"
 #include "nanlm/recurrent_byte.hpp"
 #include "nanlm/hybrid_byte.hpp"
+#include "nanlm/unified_wave.hpp"
 #include <memory>
 #include <filesystem>
 #include <limits>
@@ -172,6 +173,53 @@ int main(int argc,char**argv){
     const auto top_p=argc>7?std::stod(argv[7]):0.9;
     std::cout<<argv[3]<<rnn.generate(argv[3],length,seed,temperature,top_p);
     std::cout.flush();
+   }
+  }else if(op=="unified-train"||op=="unified-eval"||
+             op=="unified-generate"||op=="unified-spectrum"){
+   UnifiedWaveLanguage mind(u);
+   if(op=="unified-train"){
+    if(argc<4)throw std::invalid_argument("need corpus filename");
+    const unsigned epochs=argc>4?static_cast<unsigned>(std::stoul(argv[4])):1u;
+    if(epochs<1||epochs>1000)throw std::invalid_argument("epochs must be 1..1000");
+    UnifiedWaveLanguage::Metrics last{};
+    uint64_t clock=1;
+    for(unsigned e=0;e<epochs;++e){
+     std::ifstream source(argv[3],std::ios::binary);
+     if(!source)throw std::runtime_error("training file missing");
+     last=mind.train(source,clock);
+     clock+=mind.trained()+1;
+    }
+    u.sync();
+    const auto& spectrum=mind.spectral();
+    std::cout<<std::setprecision(9)<<"UNIFIED_TRAIN epochs="<<epochs
+             <<" tokens="<<mind.trained()
+             <<" ce_online="<<last.ce()<<" accuracy="<<last.accuracy()
+             <<" standing_wave_eigenvalue="<<spectrum.eigenvalue
+             <<" eigen_residual="<<spectrum.residual
+             <<" edge_mass="<<spectrum.edge_mass
+             <<" root_bytes="<<ROOT_BYTES
+             <<" heads=255\n";
+   }else if(op=="unified-eval"){
+    if(argc<4)throw std::invalid_argument("need held-out file");
+    std::ifstream source(argv[3],std::ios::binary);
+    if(!source)throw std::runtime_error("held-out file missing");
+    const auto result=mind.evaluate(source);
+    std::cout<<std::setprecision(9)<<"UNIFIED_EVAL tokens="<<result.tokens
+             <<" ce_nats="<<result.ce()<<" accuracy="<<result.accuracy()
+             <<" heads=255\n";
+   }else if(op=="unified-generate"){
+    if(argc<5)throw std::invalid_argument("need prompt and byte count");
+    const size_t length=std::stoull(argv[4]);
+    const uint64_t seed=argc>5?std::stoull(argv[5]):11ull;
+    const double temperature=argc>6?std::stod(argv[6]):0.85;
+    const double top_p=argc>7?std::stod(argv[7]):0.92;
+    std::cout<<argv[3]<<mind.generate(argv[3],length,seed,temperature,top_p);
+    std::cout.flush();
+   }else{
+    const auto& spectrum=mind.spectral();
+    std::cout<<std::setprecision(9)<<"UNIFIED_SPECTRUM eigenvalue="
+             <<spectrum.eigenvalue<<" residual="<<spectrum.residual
+             <<" edge_mass="<<spectrum.edge_mass<<" heads=255\n";
    }
   }else if(op=="train-text"||op=="eval-text"||op=="generate"){
    ByteModel model(u,path);
