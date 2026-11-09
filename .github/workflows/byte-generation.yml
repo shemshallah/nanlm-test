@@ -61,6 +61,11 @@ jobs:
           grep 'BENCH model=ngram order=0' comparison.log
           grep 'BENCH model=ngram order=5' comparison.log
           grep 'BENCH model=rnn32' comparison.log
+          ./nanlm /tmp/hw0-causal-root eval-hybrid /tmp/hw0-rnn-holdout.txt 0.25 | tee hybrid-eval.log
+          ./nanlm /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-1.txt
+          ./nanlm /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-2.txt
+          cmp hybrid-1.txt hybrid-2.txt
+          test "$(wc -c < hybrid-1.txt)" = 132
           ./nanlm /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-1.txt
           ./nanlm /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-2.txt
           cmp rnn-1.txt rnn-2.txt
@@ -78,4 +83,6 @@ jobs:
             comparison.log
             rnn-train.log
             rnn-1.txt
+            hybrid-eval.log
+            hybrid-1.txt
           if-no-files-found: warn
