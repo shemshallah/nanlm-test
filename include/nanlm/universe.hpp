@@ -250,9 +250,25 @@ class Universe {
  double phase(uint8_t a,uint8_t b)const{
   return a==b?0.0:(a<b?1.0:-1.0)*phase_[pair_index(a,b)];
  }
+ double gauge_potential(uint8_t head)const{
+  double out=0;std::memcpy(&out,root_->h[head].data+72,8);return out;
+ }
+ double covariant_phase(uint8_t a,uint8_t b)const{
+  return phase(a,b)-gauge_potential(a)+gauge_potential(b);
+ }
+ void set_covariant_phase(uint8_t a,uint8_t b,double angle){
+  set_phase(a,b,angle+gauge_potential(a)-gauge_potential(b));
+ }
  void gauge(const std::array<double,HEADS>& shifts){
+  for(unsigned a=0;a<HEADS;++a){
+   if(!std::isfinite(shifts[a]))throw std::invalid_argument("nonfinite gauge");
+  }
   for(unsigned a=0;a<HEADS;++a)for(unsigned b=a+1;b<HEADS;++b)
    phase_[pair_index(a,b)]+=shifts[a]-shifts[b];
+  for(unsigned a=0;a<HEADS;++a){
+   double new_potential=gauge_potential(static_cast<uint8_t>(a))+shifts[a];
+   std::memcpy(root_->h[a].data+72,&new_potential,8);
+  }
  }
  double triangle(uint8_t a,uint8_t b,uint8_t c)const{
   if(a==b||b==c||a==c)throw std::invalid_argument("degenerate triangle");
