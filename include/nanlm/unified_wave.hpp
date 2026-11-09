@@ -33,6 +33,7 @@ class UnifiedWaveLanguage {
 public:
  static constexpr size_t N=FabricTeacher::VOCAB;
  static constexpr size_t WINDOW=16;
+ static constexpr size_t MODES=4;
  struct State {
   std::array<double,N> wave{};
   std::array<double,N> old_wave{};
@@ -56,7 +57,9 @@ public:
   double accuracy()const{return tokens?double(correct)/tokens:0.0;}
  };
  struct Spectral {
-  std::array<double,N> vector{};
+  std::array<std::array<double,N>,MODES> vectors{};
+  std::array<double,MODES> eigenvalues{},residuals{};
+  std::array<double,N> vector{}; // first spectral mode compatibility
   double eigenvalue=0,residual=0,edge_mass=0;
  };
  struct Prediction {
@@ -128,31 +131,49 @@ private:
    adjacency_[i][i]=0;
   }
   if(eigen_.edge_mass<1e-12)return;
-  std::array<double,N> v{};
-  // Deterministic full-support initialization, not a seeded random solver.
-  for(size_t i=0;i<N;++i)
-   v[i]=std::cos((i+0.5)*TAU/N)+0.3*std::sin((i+0.5)*3*TAU/N);
-  const double vnorm=norm(v);
-  for(double& a:v)a/=vnorm;
-  for(int iteration=0;iteration<48;++iteration){
-   std::array<double,N> next{};
+  for(size_t mode=0;mode<MODES;++mode){
+   std::array<double,N> v{};
+   for(size_t i=0;i<N;++i)
+    v[i]=std::cos((mode+1)*(i+0.5)*TAU/N)+
+         0.13*std::sin((mode+2)*(i+0.5)*TAU/N);
+   auto orthogonalize=[&](std::array<double,N>& target){
+    for(size_t prior=0;prior<mode;++prior){
+     double projection=0;
+     for(size_t i=0;i<N;++i)
+      projection+=target[i]*eigen_.vectors[prior][i];
+     for(size_t i=0;i<N;++i)
+      target[i]-=projection*eigen_.vectors[prior][i];
+    }
+   };
+   orthogonalize(v);
+   const double initial=norm(v);
+   if(initial<1e-13)continue;
+   for(double& x:v)x/=initial;
+   for(int iteration=0;iteration<64;++iteration){
+    std::array<double,N> next{};
+    for(size_t i=0;i<N;++i)
+     for(size_t j=0;j<N;++j)
+      next[i]+=adjacency_[i][j]*v[j];
+    orthogonalize(next);
+    const double length=norm(next);
+    if(length<1e-13)break;
+    for(size_t i=0;i<N;++i)v[i]=next[i]/length;
+   }
+   std::array<double,N> av{};
    for(size_t i=0;i<N;++i)
     for(size_t j=0;j<N;++j)
-     next[i]+=adjacency_[i][j]*v[j];
-   const double length=norm(next);
-   if(length<1e-14)break;
-   for(size_t i=0;i<N;++i)v[i]=next[i]/length;
+     av[i]+=adjacency_[i][j]*v[j];
+   double lambda=0,residual=0;
+   for(size_t i=0;i<N;++i)lambda+=v[i]*av[i];
+   for(size_t i=0;i<N;++i)
+    residual+=(av[i]-lambda*v[i])*(av[i]-lambda*v[i]);
+   eigen_.vectors[mode]=v;
+   eigen_.eigenvalues[mode]=lambda;
+   eigen_.residuals[mode]=std::sqrt(residual);
   }
-  std::array<double,N> av{};
-  for(size_t i=0;i<N;++i)
-   for(size_t j=0;j<N;++j)
-    av[i]+=adjacency_[i][j]*v[j];
-  double lambda=0,residual=0;
-  for(size_t i=0;i<N;++i)lambda+=v[i]*av[i];
-  for(size_t i=0;i<N;++i)residual+=(av[i]-lambda*v[i])*(av[i]-lambda*v[i]);
-  eigen_.vector=v;
-  eigen_.eigenvalue=lambda;
-  eigen_.residual=std::sqrt(residual);
+  eigen_.vector=eigen_.vectors[0];
+  eigen_.eigenvalue=eigen_.eigenvalues[0];
+  eigen_.residual=eigen_.residuals[0];
  }
  double attention(const State& s,uint8_t candidate)const{
   if(s.length==0)return 0;
@@ -219,13 +240,10 @@ public:
  void observe(State& s,uint8_t c)const{
   if(c==255){s.reset();return;}
   std::array<double,N> next{};
-  const double oscillation=2.0*damping_*std::cos(omega_);
   const double decay=damping_*damping_;
   // All 255 heads participate in each temporal transition. Opposing
   // mirror directions contribute through the symmetric scattering
   // operator while the second-order recurrence preserves wave history.
-  double vmax=1.0;
-  for(size_t i=0;i<N;++i)vmax=std::max(vmax,std::fabs(s.wave[i]));
   for(size_t i=0;i<N;++i){
    double scattering=0,degree=1;
    for(size_t j=0;j<N;++j){
@@ -233,8 +251,15 @@ public:
     degree+=std::fabs(adjacency_[i][j]);
    }
    const double input=(i==c?1.0:0.0);
-   const double modulation=eigen_.vector[i]*eigen_.vector[c];
-   next[i]=clamp(oscillation*s.wave[i]-decay*s.old_wave[i]+
+   double modulation=0,modal_frequency=0;
+   for(size_t m=0;m<MODES;++m){
+    modulation+=eigen_.vectors[m][i]*eigen_.vectors[m][c]/(1.0+m);
+    modal_frequency+=eigen_.eigenvalues[m]*
+      eigen_.vectors[m][i]*eigen_.vectors[m][i];
+   }
+   const double local_omega=omega_+0.1*std::tanh(modal_frequency);
+   const double local_oscillation=2.0*damping_*std::cos(local_omega);
+   next[i]=clamp(local_oscillation*s.wave[i]-decay*s.old_wave[i]+
         0.08*scattering/degree+0.05*modulation+input,3.0);
   }
   s.old_wave=s.wave;
@@ -256,8 +281,10 @@ public:
    const uint8_t target=static_cast<uint8_t>(c);
    const double attention_term=attention(s,target);
    const double wave_term=clamp(s.wave[c]-0.5*s.old_wave[c],3.0);
-   const double spectral_term=eigen_.vector[c]*eigen_.vector[last]*
-                              eigen_.eigenvalue;
+   double spectral_term=0;
+   for(size_t m=0;m<MODES;++m)
+    spectral_term+=eigen_.eigenvalues[m]*eigen_.vectors[m][c]*
+                   eigen_.vectors[m][last]/(1.0+m);
    const double cycle_term=s.length>=2?
       cycle(s.history[s.length-2],last,target):0.0;
    const auto forward=universe_.query(last,target,PRECEDES);
