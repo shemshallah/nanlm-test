@@ -175,3 +175,40 @@ small recurrent/attention model, and byte-level free-run diversity,
 UTF-8 validity and repetition checks before making any claims of language
 generalization or of the geometry's utility. The current sampler is
 byte-level; UTF-8 validity of generated text is not guaranteed.
+
+## Experimental neural and hybrid pathways
+
+The parallel recurrent baseline stores 255 input embeddings, 255 output
+vectors, a 32x32 trainable recurrent matrix and 255 output biases in
+`.rnn-lm`. Training uses bounded eight-step online TBPTT. The checkpoint
+is checksum-verified and independently restartable. These trainable
+parameters are an **overlay of the same logical HW0 space** and do not
+instantiate a second Root.
+
+```sh
+./nanlm /tmp/hw0 train-rnn train.txt 8
+./nanlm /tmp/hw0 eval-rnn holdout.txt
+./nanlm /tmp/hw0 generate-rnn "The " 128 17 0.9 0.9
+./nanlm /tmp/hw0 benchmark-text holdout.txt
+./nanlm /tmp/hw0 eval-hybrid holdout.txt 0.25
+./nanlm /tmp/hw0 generate-hybrid "The " 128 17 0.25
+./nanlm /tmp/hw0 select-hybrid development.txt untouched-test.txt
+```
+
+The hybrid is a convex mixture of recurrent and contextual softmax
+probabilities. Mixture weights of 0 and 1 exactly recover the separate
+count and recurrent pathways. The `select-hybrid` command chooses among
+fixed orders 0..5 and mixture weights {0, 0.1, 0.25, 0.5, 0.75, 1}
+**only on development text**, then evaluates the locked selection once
+against the separately provided test text. Its count-only comparator
+is selected on development data and evaluated with identical
+one-symbol-delayed scoring. Users must keep train/development/test
+content independently sourced; different filenames alone do not rule
+out duplicated content.
+
+Small Actions test cases demonstrate the execution and scientific
+protocol, not open-domain language competence. `rnn-lm` weights have
+no transformer attention, no large training corpus, and no proven
+held-out advantage against strong conventional models. Free generation
+may be incoherent or invalid UTF-8. See
+`docs/GENERATION_ROADMAP.md` for the evidence-gated next stages.
