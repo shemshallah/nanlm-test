@@ -85,13 +85,18 @@ class SpecialistTests(unittest.TestCase):
                 # The backward mirror register stores the PREVIOUS pair value,
                 # not an arbitrary second independently trained relation.
                 prior = {}
+                pending = {}
                 for tick,cell,ch,orient,_,val in records:
-                    if ch == m.C["mirror_lag"]:
-                        self.assertEqual(orient,-1)
-                        self.assertAlmostEqual(val, prior.get(cell,0.),places=5)
                     if ch == m.C["mirror_now"]:
                         self.assertEqual(orient,1)
-                        prior[cell] = val
+                        self.assertNotIn(cell,pending)
+                        pending[cell] = val
+                    if ch == m.C["mirror_lag"]:
+                        self.assertEqual(orient,-1)
+                        self.assertIn(cell,pending)
+                        self.assertAlmostEqual(val, prior.get(cell,0.),places=5)
+                        prior[cell] = pending.pop(cell)
+                self.assertFalse(pending)
                 self.assertEqual(report["profiles"][m.PROFILES.index(profile)]["events"],27)
             self.assertGreater(len({str(t) for t in all_metric_traces}),1,
                                "specialists cannot all emit the same matrix")
