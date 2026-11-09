@@ -191,6 +191,33 @@ public:
   if(loaded){save(next);entries_=std::move(next);}
   return loaded;
  }
+ // Explicit source-document indexing: each sufficiently long UTF-8 line
+ // becomes a literal continuation keyed by its opening phrase, not a
+ // semantic fact inferred by the network. Full source/line attribution
+ // prevents distinct quotations from overwriting one another.
+ size_t import_text_lines(std::istream& input,const std::string& source){
+  auto next=entries_;
+  std::string line;
+  size_t accepted=0,line_no=0;
+  while(std::getline(input,line)){
+   ++line_no;
+   if(!line.empty()&&line.back()=='\r')line.pop_back();
+   if(!valid_utf8(line))
+    throw std::invalid_argument("document contains invalid UTF-8");
+   if(line.size()<20)continue;
+   const auto ending=line.find(' ',16);
+   if(ending==std::string::npos||ending+1>MAX_KEY||
+      ending+1>=line.size())continue;
+   Record r{line.substr(0,ending+1),line.substr(ending+1),
+            source+"#L"+std::to_string(line_no)};
+   upsert(next,std::move(r));
+   ++accepted;
+  }
+  if(!input.eof()&&input.fail())
+   throw std::runtime_error("document indexing input read failed");
+  if(accepted){save(next);entries_=std::move(next);}
+  return accepted;
+ }
  // A caller streams one symbol at a time. Once a cue matches, the active
  // record ID/offset survives truncation of the 64-byte attention window.
  // A wrong byte aborts the copy instead of silently rewriting a fact.
