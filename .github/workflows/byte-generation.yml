@@ -40,6 +40,31 @@ jobs:
           test "$(wc -c < sample-1.txt)" = 117
           test "$(stat -c%s /tmp/hw0-causal-root)" = 8388608
           cat sample-1.txt
+      - name: Compare order ablations against neural recurrence on document-disjoint text
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/hw0-rnn-train.txt <<'TEXT'
+          Orbiting planets reflect sunlight across distant oceans.
+          The mechanical clock measures a quiet afternoon.
+          An engineer watches the river while machines turn.
+          Every lantern flickers when the northern wind rises.
+          A small observatory records the seasons and stars.
+          TEXT
+          cat > /tmp/hw0-rnn-holdout.txt <<'TEXT'
+          The painter notices shifting clouds beyond the orchard.
+          A distant melody echoes through an unfamiliar corridor.
+          TEXT
+          ./nanlm /tmp/hw0-causal-root train-text /tmp/hw0-rnn-train.txt 2
+          ./nanlm /tmp/hw0-causal-root train-rnn /tmp/hw0-rnn-train.txt 8 | tee rnn-train.log
+          ./nanlm /tmp/hw0-causal-root benchmark-text /tmp/hw0-rnn-holdout.txt | tee comparison.log
+          grep 'BENCH model=ngram order=0' comparison.log
+          grep 'BENCH model=ngram order=5' comparison.log
+          grep 'BENCH model=rnn32' comparison.log
+          ./nanlm /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-1.txt
+          ./nanlm /tmp/hw0-causal-root generate-rnn 'The ' 128 17 0.9 0.9 > rnn-2.txt
+          cmp rnn-1.txt rnn-2.txt
+          test "$(wc -c < rnn-1.txt)" = 132
       - name: Save audit logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -50,4 +75,7 @@ jobs:
             train.log
             eval.log
             sample-1.txt
+            comparison.log
+            rnn-train.log
+            rnn-1.txt
           if-no-files-found: warn
