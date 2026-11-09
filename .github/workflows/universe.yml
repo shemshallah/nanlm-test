@@ -1,0 +1,27 @@
+name: HW0 Universe native verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and exhaustive test with GCC
+        run: make clean test CXX=g++
+      - name: Build and exhaustive test with Clang
+        run: make clean test CXX=clang++
+      - name: CLI persistence smoke
+        shell: bash
+        run: |
+          make nanlm CXX=clang++
+          ./nanlm /tmp/nanlm-ci-root init
+          ./nanlm /tmp/nanlm-ci-root write 1 2 0 0 1 10
+          ./nanlm /tmp/nanlm-ci-root query 2 1 1 15 | tee query.txt
+          grep 'state=1' query.txt
+          ./nanlm /tmp/nanlm-ci-root import-wordnet tests/fixtures/data.noun
+          test "$(stat -c%s /tmp/nanlm-ci-root)" = 8388608
+          rm -f /tmp/nanlm-ci-root /tmp/nanlm-ci-root.overlay /tmp/nanlm-ci-root.wordnet.tsv
