@@ -80,6 +80,7 @@ int main(int argc,char** argv){
     {"no_inverse_evidence",UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE},
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
     {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
+    {"no_fourth_order",UnifiedWaveLanguage::ABLATE_FOURTH_ORDER},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
    };
    for(const auto& run:runs){
