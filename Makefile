@@ -1,7 +1,7 @@
 CXX ?= c++
 CXXFLAGS ?= -O3 -std=c++20 -Wall -Wextra -Wpedantic -Werror
 CPPFLAGS ?= -Iinclude
-.PHONY: all test clean
+.PHONY: all test validate clean
 all: nanlm
 nanlm: src/main.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/main.cpp -o $@
@@ -16,7 +16,11 @@ test_quaternion: tests/test_quaternion.cpp include/nanlm/quaternion.hpp include/
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_quaternion.cpp -o $@
 test_multiloss: tests/test_multiloss.cpp include/nanlm/multiloss.hpp include/nanlm/teacher.hpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_multiloss.cpp -o $@
-test: test_universe test_wordnet test_teacher test_quaternion test_multiloss
+test_learning_validation: tests/test_learning_validation.cpp include/nanlm/teacher.hpp include/nanlm/universe.hpp include/nanlm/quaternion.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_learning_validation.cpp -o $@
+validate: test_learning_validation
+	./test_learning_validation
+test: test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
 	./test_universe
 	./test_wordnet
 	./test_teacher
