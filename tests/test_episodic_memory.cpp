@@ -24,7 +24,7 @@ int main(){
  const std::string long_gap(1200,'x');
  const std::string source="trusted-test-fixture-v1";
  auto cleanup=[&](){
-  for(const std::string& suffix:{"",".episodes",".episodes.tmp",
+  for(const char* suffix:{"",".episodes",".episodes.tmp",
                                  ".so3",".overlay",".overlay.tmp"}){
    std::error_code ec;std::filesystem::remove(root+suffix,ec);
   }
