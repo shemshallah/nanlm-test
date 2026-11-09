@@ -779,16 +779,32 @@ public:
  // True reverse-mode truncated BPTT through both SECOND-ORDER recurrences,
  // including T and T* scattering, old-wave links and clamp masks.
  // Detach only the oldest state (explicit 8-transition truncation).
+ double bptt_window_loss(const std::deque<State>& states,
+                         const std::deque<uint8_t>& symbols,
+                         uint8_t label,bool sequence=true)const{
+  if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
+     states.size()!=symbols.size()+1)
+   throw std::invalid_argument("invalid BPTT sequence objective");
+  const auto last=predict(states.back());
+  double objective=-std::log(std::max(last.p[label],1e-300));
+  size_t count=1;
+  if(sequence)for(size_t k=0;k<symbols.size();++k){
+   if(states[k].length==0)continue;
+   const auto p=predict(states[k]);
+   objective-=std::log(std::max(p.p[symbols[k]],1e-300));
+   ++count;
+  }
+  return objective/double(count);
+ }
  BpttGradient bptt_gradient(const std::deque<State>& states,
                            const std::deque<uint8_t>& symbols,
-                           uint8_t label)const{
+                           uint8_t label,bool sequence=false)const{
   if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
      states.size()!=symbols.size()+1)
    throw std::invalid_argument("invalid truncated wave tape");
   BpttGradient result{};
   result.steps=symbols.size();
-  const auto prediction=predict(states.back());
-  result.loss=-std::log(std::max(prediction.p[label],1e-300));
+  result.loss=bptt_window_loss(states,symbols,label,sequence);
   WaveAdjoint adj=output_wave_adjoint(states.back(),label);
   std::array<double,N> oscillator{},in_degree{},out_degree{};
   for(size_t i=0;i<N;++i){
@@ -818,7 +834,23 @@ public:
     for(const auto& arc:outgoing_[i])
      prev.y[arc.head]+=0.08*arc.weight*dy/out_degree[i];
    }
+   // Every earlier next-byte target contributes its OWN causal
+   // cross-entropy gradient before that state's adjoint is propagated
+   // through earlier temporal transitions.
+   if(sequence&&states[step-1].length){
+    const auto early=output_wave_adjoint(states[step-1],symbols[step-1]);
+    for(size_t i=0;i<N;++i){
+     prev.x[i]+=early.x[i];prev.xp[i]+=early.xp[i];
+     prev.y[i]+=early.y[i];prev.yp[i]+=early.yp[i];
+    }
+   }
    adj=prev;
+  }
+  if(sequence){
+   size_t targets=1;
+   for(size_t k=0;k<symbols.size();++k)
+    if(states[k].length)++targets;
+   for(double& value:result.input)value/=double(targets);
   }
   for(double v:result.input)result.norm+=v*v;
   result.norm=std::sqrt(result.norm);
@@ -832,7 +864,7 @@ public:
  bool learn_bptt(State& state,std::deque<State>& states,
                  const std::deque<uint8_t>& symbols,uint8_t label){
   ++bptt_attempted_;
-  const auto grad=bptt_gradient(states,symbols,label);
+  const auto grad=bptt_gradient(states,symbols,label,true);
   if(grad.norm<1e-12)return false;
   std::array<float,N> old{};
   std::array<std::array<uint8_t,5>,N> original{};
@@ -861,8 +893,7 @@ public:
     observe(next,byte);
     replay.push_back(std::move(next));
    }
-   const auto updated=predict(replay.back());
-   const double loss=-std::log(std::max(updated.p[label],1e-300));
+   const double loss=bptt_window_loss(replay,symbols,label,true);
    if(loss+1e-10<grad.loss){
     states=std::move(replay);
     state=states.back();
