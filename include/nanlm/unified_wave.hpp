@@ -63,6 +63,9 @@ public:
  static constexpr uint8_t HYPER_LOCAL_MAGIC=0xB6;
  static constexpr uint8_t HYPER_GROUP_MAGIC=0xB7;
  static constexpr uint8_t HYPER_FIELD_MAGIC=0xB8;
+ static constexpr size_t TRIAD_ID_OFFSET=64; // heads 1..254 only
+ static constexpr size_t TRIAD_MAGIC_OFFSET=65; // head 0 keeps calibration
+ static constexpr uint8_t TRIAD_MAGIC=0xE5;
  // Optional calibration of rank-three CP and wave tensor modulations.
  // Two float32 scales + marker use h0 [96..104], disjoint from its
  // four-output Q8.8 scales, its gauge, and the teacher's vectors.
@@ -142,6 +145,15 @@ private:
  float local_hyper(uint8_t head)const{
   return read_scalar(universe_.root().h[head],HYPER_LOCAL_OFFSET);
  }
+ size_t triad_of(uint8_t head)const{
+  if(head>=N)throw std::out_of_range("ingress has no cognitive triad");
+  if(head==0)return 0; // global calibration occupies head 0 byte 64
+  const auto& h=universe_.root().h[head];
+  if(h.data[TRIAD_MAGIC_OFFSET]!=TRIAD_MAGIC)return head/GROUP_SIZE;
+  const size_t group=h.data[TRIAD_ID_OFFSET];
+  if(group>=GROUPS)throw std::runtime_error("invalid persistent triad");
+  return group;
+ }
  float group_hyper(size_t group)const{
   return read_scalar(universe_.root().h[group_register(group)],HYPER_SHARED_OFFSET);
  }
@@ -149,7 +161,7 @@ private:
   return read_scalar(universe_.root().h[0],HYPER_SHARED_OFFSET);
  }
  double hyper_gain(uint8_t head)const{
-  return double(local_hyper(head))+group_hyper(head/GROUP_SIZE)+field_hyper();
+  return double(local_hyper(head))+group_hyper(triad_of(head))+field_hyper();
  }
  struct Features {
   double wave=0,attention=0,spectral=0,cycle=0;
@@ -408,7 +420,7 @@ private:
    signals[c]=hyperedge_signal(s,static_cast<uint8_t>(c));
    old_local[c]=local_hyper(static_cast<uint8_t>(c));
    grad[c]=(p.p[c]-(c==label?1.0:0.0))*signals[c];
-   group_grad[c/GROUP_SIZE]+=grad[c];
+   group_grad[triad_of(static_cast<uint8_t>(c))]+=grad[c];
    field_grad+=grad[c];
   }
   for(size_t group=0;group<GROUPS;++group)
@@ -430,7 +442,8 @@ private:
       std::clamp(old_local[c]-rate*grad[c],-1.0,1.0));
     const double delta=signals[c]*
       (double(next_local[c])-old_local[c]+
-       double(next_group[c/GROUP_SIZE])-old_group[c/GROUP_SIZE]+
+       double(next_group[triad_of(static_cast<uint8_t>(c))])-
+       old_group[triad_of(static_cast<uint8_t>(c))]+
        double(next_field)-old_field);
     logits[c]=std::log(std::max(p.p[c],1e-300))+delta;
     largest=std::max(largest,logits[c]);
@@ -457,7 +470,7 @@ private:
   const uint8_t a=s.history[s.length-2],b=s.history[s.length-1];
   if(a==b||a==label||b==label)return false;
   const double head=local_hyper(label);
-  const double group=group_hyper(label/GROUP_SIZE);
+  const double group=group_hyper(triad_of(label));
   const double field=field_hyper();
   const unsigned votes=unsigned(head>0)+unsigned(group>0)+unsigned(field>0);
   const double gain=head+group+field;
@@ -485,7 +498,15 @@ public:
     write_scalar(head,HYPER_LOCAL_OFFSET,0.14f);
     head.data[HYPER_LOCAL_MAGIC_OFFSET]=HYPER_LOCAL_MAGIC;
    }
+   if(h>0&&head.data[TRIAD_MAGIC_OFFSET]!=TRIAD_MAGIC){
+    head.data[TRIAD_ID_OFFSET]=static_cast<uint8_t>(h/GROUP_SIZE);
+    head.data[TRIAD_MAGIC_OFFSET]=TRIAD_MAGIC;
+   }
   }
+  std::array<size_t,GROUPS> counts{};
+  for(size_t h=0;h<N;++h)++counts[triad_of(static_cast<uint8_t>(h))];
+  for(size_t count:counts)
+   if(count!=GROUP_SIZE)throw std::runtime_error("invalid triad cardinality");
   for(size_t group=0;group<GROUPS;++group){
    auto& head=universe_.root().h[group_register(group)];
    if(head.data[HYPER_SHARED_MAGIC_OFFSET]!=HYPER_GROUP_MAGIC){
@@ -549,6 +570,22 @@ public:
   bytes[CALIBRATION_MAGIC_OFFSET]=CALIBRATION_MAGIC;
  }
  void refresh_spectrum(){rebuild_spectrum();}
+ size_t head_triad(uint8_t head)const{return triad_of(head);}
+ // Only an exact improvement in the complete single-model normalized
+ // probability is allowed to commit a topology self-modification.
+ bool trial_swap_triads(uint8_t a,uint8_t b,const State& s,uint8_t label){
+  if(a==0||b==0||a>=N||b>=N||a==b||label>=N||s.length==0)return false;
+  const size_t ga=triad_of(a),gb=triad_of(b);
+  if(ga==gb)return false;
+  auto& ha=universe_.root().h[a].data[TRIAD_ID_OFFSET];
+  auto& hb=universe_.root().h[b].data[TRIAD_ID_OFFSET];
+  const double before=predict(s).p[label];
+  ha=static_cast<uint8_t>(gb);hb=static_cast<uint8_t>(ga);
+  const double after=predict(s).p[label];
+  if(std::isfinite(after)&&after>before+1e-10)return true;
+  ha=static_cast<uint8_t>(ga);hb=static_cast<uint8_t>(gb);
+  return false;
+ }
  void observe(State& s,uint8_t c)const{
   if(c==255){s.reset();return;}
   std::array<double,N> next{};
@@ -674,6 +711,8 @@ public:
     learn_head_gains(state,symbol);
     learn_hyper_gains(state,symbol);
     learn_hyper_residual(state,symbol,initial_time+trained_);
+    if(trained_%128==0)
+     trial_swap_triads(prev,symbol,state,symbol);
    }
    observe(state,symbol);
    ++trained_;
