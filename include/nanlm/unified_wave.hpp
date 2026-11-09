@@ -1441,6 +1441,16 @@ public:
   result.reserve(count);
   uint64_t random=seed;
   for(size_t step=0;step<count;++step){
+   uint8_t copied=0;
+   if(episodic_.next(state.recall_record,state.recall_offset,copied)&&
+      utf8.permits(copied,count-step)){
+    // Exact, grounded continuation is not sampled from neural logits.
+    if(!utf8.push(copied,count-step))
+     throw std::runtime_error("invalid episodic UTF-8 continuation");
+    result.push_back(static_cast<char>(copied));
+    observe(state,copied);
+    continue;
+   }
    auto p=predict(state);
    if(state.recall_record!=ExactEpisodicMemory::NONE&&
       !utf8.permits(p.best,count-step))
