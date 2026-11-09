@@ -73,6 +73,25 @@ int main(){
    }
    require(mind.generate(long_gap+cue,value.size(),11,1.,1.)==value,
            "exact generation was randomized or truncated");
+   // This is an indexed-memory challenge, NOT unseen-language competence.
+   // The same fixed stream is evaluated with and without the source store.
+   std::istringstream with_stream(long_gap+cue+value);
+   std::istringstream without_stream(long_gap+cue+value);
+   const auto with_memory=mind.evaluate(with_stream);
+   const auto without_memory=mind.evaluate(
+      without_stream,UnifiedWaveLanguage::ABLATE_EPISODIC);
+   require(with_memory.tokens==without_memory.tokens&&
+           without_memory.nll-with_memory.nll>50.0,
+           "exact retrieval did not improve long-gap source-backed CE");
+   std::cout<<"EPISODIC_GAP_AUDIT gap_bytes="<<long_gap.size()
+            <<" value_bytes="<<value.size()
+            <<" remembered_ce="<<with_memory.ce()
+            <<" no_memory_ce="<<without_memory.ce()<<"\n";
+   UnifiedWaveLanguage::State wrong_cue{};
+   for(unsigned char c:std::string("Beacon archive coda: "))
+    mind.observe(wrong_cue,c);
+   require(wrong_cue.recall_record==ExactEpisodicMemory::NONE,
+           "wrong cue produced a false exact-memory hit");
    require(std::filesystem::file_size(root+".episodes")==checkpoint_bytes,
            "generation mutated episodic checkpoint");
    const auto scale=mind.wave_memory_scale();
@@ -83,6 +102,11 @@ int main(){
    mind.set_wave_memory_scale(0.);
    require(mind.wave_memory_scale()==0.,"wave gate zero cannot persist");
    const auto zero=mind.predict(unrelated);
+   const auto no_wave=mind.predict(
+      unrelated,UnifiedWaveLanguage::ABLATE_WAVE);
+   for(size_t i=0;i<UnifiedWaveLanguage::N;++i)
+    require(std::fabs(zero.p[i]-no_wave.p[i])<1e-12,
+            "zero wave gate does not equal no direct-wave ablation");
    mind.set_wave_memory_scale(2.);
    const auto doubled=mind.predict(unrelated);
    require(std::fabs(doubled.p['t']-zero.p['t'])>1e-12,
