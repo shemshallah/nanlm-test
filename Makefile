@@ -14,10 +14,13 @@ test_teacher: tests/test_teacher.cpp include/nanlm/teacher.hpp include/nanlm/uni
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_teacher.cpp -o $@
 test_quaternion: tests/test_quaternion.cpp include/nanlm/quaternion.hpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_quaternion.cpp -o $@
-test: test_universe test_wordnet test_teacher test_quaternion
+test_multiloss: tests/test_multiloss.cpp include/nanlm/multiloss.hpp include/nanlm/teacher.hpp include/nanlm/universe.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_multiloss.cpp -o $@
+test: test_universe test_wordnet test_teacher test_quaternion test_multiloss
 	./test_universe
 	./test_wordnet
 	./test_teacher
 	./test_quaternion
+	./test_multiloss
 clean:
-	rm -f nanlm test_universe test_wordnet test_teacher test_quaternion
+	rm -f nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss
