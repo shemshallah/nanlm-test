@@ -210,5 +210,7 @@ Small Actions test cases demonstrate the execution and scientific
 protocol, not open-domain language competence. `rnn-lm` weights have
 no transformer attention, no large training corpus, and no proven
 held-out advantage against strong conventional models. Free generation
-may be incoherent or invalid UTF-8. See
+may be incoherent. The **hybrid** sampler now rejects malformed UTF-8
+prefixes and restricts sampled continuations to completed Unicode byte
+sequences; the standalone count and RNN samplers still output raw bytes. See
 `docs/GENERATION_ROADMAP.md` for the evidence-gated next stages.
