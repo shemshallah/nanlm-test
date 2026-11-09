@@ -31,7 +31,7 @@ PROFILES = ("topology", "geometry", "wave", "information", "triadic")
 DIM, ACTIVE, TRIADS = 256, 255, 85
 PAIR_COUNT, ROOT_BYTES, HEAD_BYTES, PAIR_BYTES = 32640, 8388608, 128, 256
 MAGIC = b"MXS2561\0"
-RECORD = struct.Struct("<QIHBbf")  # tick, cell, channel, orientation, reserved, value
+RECORD = struct.Struct("<QIHbBf")  # tick, cell, channel, orientation, reserved, value
 CHANNELS = (
     "point", "triad", "hottriad", "global", "mirror_now", "mirror_lag",
     "metric", "metric_aux", "mode_0", "mode_1", "mode_2", "mode_3",
@@ -134,7 +134,7 @@ class TensorWriter:
         self.f = path.open("xb")
         h = {"schema": SCHEMA, "source": "local-wordnet-data.noun",
              "source_sha256": digest, "comparison_reference": ROUTE,
-             "profile": profile, "record_struct": "<QIHBbf",
+             "profile": profile, "record_struct": "<QIHbBf",
              "channels": list(CHANNELS), "sample_every_ticks": every,
              "active_heads": ACTIVE, "triads": TRIADS, "ingress_head": 255,
              "mirror_semantics": "forward_current_vs_same-cell_previous-tick",
@@ -248,8 +248,6 @@ class Specialist:
             if a != b:
                 current, _ = self.get(a,b)
                 polarity = stimulus * (1 if a < b else -1)
-                self.trajectories[a if active_a else 0] += polarity*0.05
-                self.trajectories[b if active_b else 0] -= polarity*0.05
                 if self.profile == "topology":
                     value = current + polarity
                 elif self.profile == "geometry":
@@ -297,6 +295,11 @@ class Specialist:
                 nxt[i] = max(-6., min(6., 1.48*self.x[i] - 0.64*self.old[i]
                                        + 0.035*(local-self.x[i]) + injection))
             self.old, self.x = self.x, nxt
+        # Wave propagation touches every head at every tick, not only event endpoints.
+        if self.profile == "wave":
+            for i, value in enumerate(self.x):
+                struct.pack_into("<f", self.mm, i*HEAD_BYTES+8,
+                                 float(max(-1e5, min(1e5, value))))
         # Independent head states are stored only in this specialist's own root.
         changed = set((a,b))
         for i in changed:
