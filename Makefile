@@ -1,7 +1,7 @@
 CXX ?= c++
 CXXFLAGS ?= -O3 -std=c++20 -Wall -Wextra -Wpedantic -Werror
 CPPFLAGS ?= -Iinclude
-.PHONY: all test validate validate-harmony test-independent-heads clean
+.PHONY: all test validate validate-harmony test-independent-heads test-sparse-shared clean
 all: nanlm
 nanlm: src/main.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/main.cpp -o $@
@@ -27,6 +27,9 @@ validate: test_learning_validation
 
 test-independent-heads:
 	python3 -m unittest tests.test_independent_heads
+
+test-sparse-shared:
+	python3 -m unittest tests.test_sparse_shared
 test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
