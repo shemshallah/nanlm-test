@@ -88,6 +88,9 @@ public:
  static constexpr size_t TRIAD_ADAPTER_OFFSET=100;
  static constexpr size_t TRIAD_KERNEL_MARKER_OFFSET=123;
  static constexpr uint8_t TRIAD_KERNEL_MAGIC=0xD6;
+ static constexpr size_t TRIAD_SCALE_OFFSET=109;
+ static constexpr size_t TRIAD_SCALE_MAGIC_OFFSET=111;
+ static constexpr uint8_t TRIAD_SCALE_MAGIC=0xD7;
  static constexpr size_t TRIAD_ID_OFFSET=64;
  static constexpr size_t TRIAD_MAGIC_OFFSET=65;
  static constexpr uint8_t TRIAD_MAGIC=0xE5;
@@ -696,6 +699,23 @@ public:
   load_triad_parameters();
   rebuild_spectrum();
  }
+ double triad_scale()const{
+  const auto& b=universe_.root().h[0].data;
+  if(b[TRIAD_SCALE_MAGIC_OFFSET]!=TRIAD_SCALE_MAGIC)return 1.0;
+  const unsigned v=unsigned(b[TRIAD_SCALE_OFFSET])|
+                    (unsigned(b[TRIAD_SCALE_OFFSET+1])<<8);
+  if(v>512)throw std::runtime_error("invalid shared triad readout scale");
+  return double(v)/256.0;
+ }
+ void set_triad_scale(double v){
+  if(!std::isfinite(v)||v<0||v>2)
+   throw std::invalid_argument("triad scale must be finite in [0,2]");
+  auto& b=universe_.root().h[0].data;
+  const unsigned x=static_cast<unsigned>(std::lround(256.0*v));
+  b[TRIAD_SCALE_OFFSET]=static_cast<uint8_t>(x&255);
+  b[TRIAD_SCALE_OFFSET+1]=static_cast<uint8_t>(x>>8);
+  b[TRIAD_SCALE_MAGIC_OFFSET]=TRIAD_SCALE_MAGIC;
+ }
  uint64_t trained()const{return trained_;}
  uint64_t triad_accepted()const{return triad_accepted_;}
  uint64_t projection_accepted()const{return projection_accepted_;}
@@ -1177,7 +1197,7 @@ public:
       0.28*(s.workspace.field[(c*7)%TriadWaveFormer::FIELD]-
             s.workspace.field[(c*7+17)%TriadWaveFormer::FIELD])+
       0.20*s.workspace.routing[group];
-    logits[c]+=triad_parameters_.head_gain[c]*
+    logits[c]+=triad_scale()*triad_parameters_.head_gain[c]*
         clamp(s.workspace.triad[group]+f,3.0);
    }
    largest=std::max(largest,logits[c]);
@@ -1205,7 +1225,7 @@ public:
    const double f=0.28*(s.workspace.field[(c*7)%TriadWaveFormer::FIELD]-
                 s.workspace.field[(c*7+17)%TriadWaveFormer::FIELD])+
                 0.2*s.workspace.routing[g];
-   feature[c]=clamp(s.workspace.triad[g]+f,3.0);
+   feature[c]=triad_scale()*clamp(s.workspace.triad[g]+f,3.0);
   }
   for(int retry=0;retry<7;++retry){
    const double rate=std::ldexp(0.12,-retry);
