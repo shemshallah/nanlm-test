@@ -667,6 +667,192 @@ public:
   bytes[CALIBRATION_MAGIC_OFFSET]=CALIBRATION_MAGIC;
  }
  void refresh_spectrum(){rebuild_spectrum();}
+ struct WaveAdjoint {
+  std::array<double,N> x{},xp{},y{},yp{};
+ };
+ // Reverse derivative of the COMPLETE conditional loss with respect to
+ // transient wave state. Teacher, pair evidence, spectral basis and head
+ // geometry are frozen for the truncated time window; wave, attention,
+ // and hypermatrix temporal readouts all contribute to the adjoints.
+ WaveAdjoint output_wave_adjoint(const State& s,uint8_t label)const{
+  WaveAdjoint adj{};
+  if(!s.length)return adj;
+  const auto distribution=predict(s);
+  const auto scales=global_scales();
+  const auto tensor=tensor_scales();
+  for(size_t c=0;c<N;++c){
+   const uint8_t head=static_cast<uint8_t>(c);
+   const double error=distribution.p[c]-(c==label?1.0:0.0);
+   const auto g=gains(head);
+   const double raw_wave=0.5*(s.wave[c]-0.5*s.old_wave[c])+
+                         0.5*(s.inverse_wave[c]-0.5*s.inverse_old_wave[c]);
+   if(std::fabs(raw_wave)<3.0){
+    const double dw=error*(double(g[0])*scales[0]+BPTT_READOUT);
+    adj.x[c]+=0.5*dw;adj.xp[c]-=0.25*dw;
+    adj.y[c]+=0.5*dw;adj.yp[c]-=0.25*dw;
+   }
+   // Softmax attention keys do not depend on wave state. Backpropagate
+   // through the weighted aggregation with the true clamp derivative.
+   const auto q=vector(universe_.root().h[c],48);
+   std::array<double,WINDOW> scores{},weights{};
+   const size_t start=s.length>ATTENTION_WINDOW?s.length-ATTENTION_WINDOW:0;
+   double maximum=-std::numeric_limits<double>::infinity();
+   for(size_t k=start;k<s.length;++k){
+    const uint8_t src=s.history[k];
+    const auto key=vector(universe_.root().h[src],32);
+    scores[k]=dot3(q,key)*2.0+
+      0.11*std::cos(universe_.covariant_phase(src,head))+
+      0.04*std::cos(omega_*double(s.length-k));
+    maximum=std::max(maximum,scores[k]);
+   }
+   double denom=0,aggregate=0;
+   for(size_t k=start;k<s.length;++k){
+    weights[k]=std::exp(scores[k]-maximum);
+    denom+=weights[k];
+   }
+   for(size_t k=start;k<s.length;++k){
+    const uint8_t src=s.history[k];
+    weights[k]/=denom;
+    const auto forward=universe_.query(src,head,PRECEDES);
+    const auto inverse=universe_.query(head,src,FOLLOWS);
+    const double evidence=(forward.support+inverse.support)/
+                    (2.0+forward.support+inverse.support);
+    const double phase=universe_.covariant_phase(src,head);
+    aggregate+=weights[k]*(s.wave[src]+0.4*evidence+
+                 0.12*std::sin(phase+omega_*(s.length-k)));
+   }
+   if(std::fabs(aggregate)<3.0){
+    const double da=error*double(g[1])*scales[1];
+    for(size_t k=start;k<s.length;++k)
+     adj.x[s.history[k]]+=da*weights[k];
+   }
+   // Factorized third-order temporal readout: differentiate its exact
+   // tanh product with respect to forward and inverse wave coordinates.
+   if(s.length>=2){
+    const uint8_t a=s.history[s.length-2],b=s.history[s.length-1];
+    if(a!=b&&a!=head&&b!=head){
+     const double value=hyperedge_signal(s,head);
+     if(std::fabs(value)<3.0){
+      const auto residual=universe_.hyper_query(a,b,head,PRECEDES);
+      const double exact=2.0*(residual.support-residual.refute)/
+                    (1.0+residual.support+residual.refute);
+      const double u=0.5*(s.wave[a]*s.wave[b]+
+                      s.inverse_wave[b]*s.inverse_wave[head]);
+      const double activation=std::tanh(u);
+      const double temporal=1.0+0.08*tensor[1]*activation;
+      const double base=(value-exact)/temporal;
+      const double d=error*hyper_gain(head)*base*0.08*tensor[1]*
+                    (1.0-activation*activation)*0.5;
+      adj.x[a]+=d*s.wave[b];
+      adj.x[b]+=d*s.wave[a];
+      adj.y[b]+=d*s.inverse_wave[head];
+      adj.y[c]+=d*s.inverse_wave[b];
+     }
+    }
+   }
+  }
+  return adj;
+ }
+ // True reverse-mode truncated BPTT through both SECOND-ORDER recurrences,
+ // including T and T* scattering, old-wave links and clamp masks.
+ // Detach only the oldest state (explicit 8-transition truncation).
+ BpttGradient bptt_gradient(const std::deque<State>& states,
+                           const std::deque<uint8_t>& symbols,
+                           uint8_t label)const{
+  if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
+     states.size()!=symbols.size()+1)
+   throw std::invalid_argument("invalid truncated wave tape");
+  BpttGradient result{};
+  result.steps=symbols.size();
+  const auto prediction=predict(states.back());
+  result.loss=-std::log(std::max(prediction.p[label],1e-300));
+  WaveAdjoint adj=output_wave_adjoint(states.back(),label);
+  std::array<double,N> oscillator{},in_degree{},out_degree{};
+  for(size_t i=0;i<N;++i){
+   double modal=0;
+   for(size_t m=0;m<MODES;++m)
+    modal+=eigen_.eigenvalues[m]*eigen_.vectors[m][i]*eigen_.vectors[m][i];
+   oscillator[i]=2.0*damping_*std::cos(omega_+0.1*std::tanh(modal));
+   in_degree[i]=1;out_degree[i]=1;
+   for(size_t j=0;j<N;++j){
+    in_degree[i]+=std::fabs(directed_[j][i]);
+    out_degree[i]+=std::fabs(directed_[i][j]);
+   }
+  }
+  for(size_t step=symbols.size();step>0;--step){
+   const auto& after=states[step];
+   const uint8_t byte=symbols[step-1];
+   WaveAdjoint prev{};
+   for(size_t i=0;i<N;++i){
+    // after.old_wave = before.wave, and inverse analogously
+    prev.x[i]+=adj.xp[i];prev.y[i]+=adj.yp[i];
+    const double dx=std::fabs(after.wave[i])<3.0?adj.x[i]:0.0;
+    const double dy=std::fabs(after.inverse_wave[i])<3.0?adj.y[i]:0.0;
+    prev.x[i]+=oscillator[i]*dx;
+    prev.y[i]+=oscillator[i]*dy;
+    prev.xp[i]-=damping_*damping_*dx;
+    prev.yp[i]-=damping_*damping_*dy;
+    if(i==byte)result.input[i]+=dx+dy;
+    for(size_t j=0;j<N;++j){
+     prev.x[j]+=0.08*directed_[j][i]*dx/in_degree[i];
+     prev.y[j]+=0.08*directed_[i][j]*dy/out_degree[i];
+    }
+   }
+   adj=prev;
+  }
+  for(double v:result.input)result.norm+=v*v;
+  result.norm=std::sqrt(result.norm);
+  if(!std::isfinite(result.norm))
+   throw std::runtime_error("nonfinite truncated wave gradient");
+  return result;
+ }
+ // Transactional gradient step: replay the exact causal tape under
+ // proposed native register gains and accept only if FULL softmax CE
+ // improves on the target (not a surrogate wave-only objective).
+ bool learn_bptt(State& state,std::deque<State>& states,
+                 const std::deque<uint8_t>& symbols,uint8_t label){
+  ++bptt_attempted_;
+  const auto grad=bptt_gradient(states,symbols,label);
+  if(grad.norm<1e-12)return false;
+  std::array<float,N> old{};
+  std::array<std::array<uint8_t,5>,N> original{};
+  for(size_t i=0;i<N;++i){
+   old[i]=static_cast<float>(input_gain(static_cast<uint8_t>(i)));
+   const auto& head=universe_.root().h[i];
+   std::memcpy(original[i].data(),head.data+BPTT_INPUT_OFFSET,4);
+   original[i][4]=head.data[BPTT_MAGIC_OFFSET];
+  }
+  const auto restore=[&](){
+   for(size_t i=0;i<N;++i){
+    auto& head=universe_.root().h[i];
+    std::memcpy(head.data+BPTT_INPUT_OFFSET,original[i].data(),4);
+    head.data[BPTT_MAGIC_OFFSET]=original[i][4];
+   }
+  };
+  const double clipped=std::max(1.0,grad.norm);
+  for(int retry=0;retry<8;++retry){
+   const double rate=std::ldexp(0.08,-retry)/clipped;
+   for(size_t i=0;i<N;++i)if(std::fabs(grad.input[i])>1e-12)
+    write_input_gain(static_cast<uint8_t>(i),static_cast<float>(
+       std::clamp(old[i]-rate*grad.input[i],0.6,1.4)));
+   std::deque<State> replay{states.front()};
+   for(uint8_t byte:symbols){
+    State next=replay.back();
+    observe(next,byte);
+    replay.push_back(std::move(next));
+   }
+   const auto updated=predict(replay.back());
+   const double loss=-std::log(std::max(updated.p[label],1e-300));
+   if(loss+1e-10<grad.loss){
+    states=std::move(replay);
+    state=states.back();
+    ++bptt_accepted_;
+    return true;
+   }
+   restore();
+  }
+  return false;
+ }
  size_t head_triad(uint8_t head)const{return triad_of(head);}
  bool trial_swap_triads(uint8_t a,uint8_t b,const State& s,uint8_t label){
   if(a==0||b==0||a>=N||b>=N||a==b||label>=N||s.length==0)return false;
