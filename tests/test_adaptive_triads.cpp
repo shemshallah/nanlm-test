@@ -37,6 +37,8 @@ int main(){
          "beneficial three-head vote swap not committed");
    check(mind.head_triad(1)==1&&mind.head_triad(4)==0,
          "swapped memberships wrong");
+   // A topology edit changes the recurrent field; replay before scoring.
+   state.reset();mind.observe(state,'x');mind.observe(state,'y');
    const double after=mind.predict(state).p[4];
    check(after>before+1e-7,"accepted topology swap did not improve exact prediction");
    check(!mind.trial_swap_triads(1,4,state,4),
