@@ -95,6 +95,10 @@ class Universe {
  std::array<double,PAIRS> phase_{};
  std::vector<Event> events_;
  std::vector<Hyperedge> hyper_;
+ // Sparse residual of the register-coupled factorized hypermatrix.
+ // The full 255^3 tensor is not allocated: head registers and mirror Pair
+ // cells supply its factorized representation.
+ std::unordered_map<uint64_t,size_t> hyper_index_;
  std::unordered_map<uint32_t,std::vector<size_t>> event_index_;
  static uint32_t key(uint8_t a,uint8_t b,uint8_t t){return (static_cast<uint32_t>(a)<<16)|(static_cast<uint32_t>(b)<<8)|t;}
  static constexpr char identity_[9]="HW0NAN01";
@@ -129,6 +133,14 @@ class Universe {
   if(h.events)in.read(reinterpret_cast<char*>(events_.data()),sizeof(Event)*events_.size());
   if(h.hyperedges)in.read(reinterpret_cast<char*>(hyper_.data()),sizeof(Hyperedge)*hyper_.size());
   if(!in)throw std::runtime_error("truncated overlay");
+  for(size_t i=0;i<hyper_.size();++i){
+   const auto& x=hyper_[i];
+   if(x.a==x.b||x.b==x.c||x.a==x.c||x.relation>=16||
+      x.refutes>1||x.arity!=3||!std::isfinite(x.strength)||
+      x.strength<=0||x.id!=hyper_id(x.a,x.b,x.c,x.relation,x.refutes!=0)||
+      !hyper_index_.emplace(x.id,i).second)
+    throw std::runtime_error("invalid hypermatrix overlay");
+  }
   for(size_t i=0;i<events_.size();++i){
    const auto& e=events_[i];
    if(e.type>=16||e.from==e.to||e.refutes>1||e.weight<0)throw std::runtime_error("invalid event");
@@ -309,14 +321,32 @@ class Universe {
  }
  uint64_t add_hyper(uint8_t a,uint8_t b,uint8_t c,uint8_t type,bool refutes,
                    float strength,uint64_t when,uint64_t provenance=0){
-  if(a==b||b==c||a==c||type>=16||strength<=0)throw std::invalid_argument("hyperedge");
+  if(a==b||b==c||a==c||type>=16||strength<=0||!std::isfinite(strength))
+   throw std::invalid_argument("hyperedge");
   const uint64_t id=hyper_id(a,b,c,type,refutes);
-  for(auto& x:hyper_)if(x.id==id){
-   x.strength+=strength;x.created=when;x.provenance=provenance;return id;
+  const auto found=hyper_index_.find(id);
+  if(found!=hyper_index_.end()){
+   auto& x=hyper_[found->second];
+   if(!std::isfinite(x.strength+strength))
+    throw std::overflow_error("hypermatrix strength overflow");
+   x.strength+=strength;x.created=when;x.provenance=provenance;
+   return id;
   }
+  hyper_index_.emplace(id,hyper_.size());
   hyper_.push_back(Hyperedge{id,when,provenance,strength,a,b,c,type,
                              static_cast<uint8_t>(refutes),3,0});
   return id;
+ }
+ // Constant-time access to sparse residuals of the logical H[a,b,c,type].
+ Evidence hyper_query(uint8_t a,uint8_t b,uint8_t c,uint8_t type)const{
+  if(type>=16)throw std::invalid_argument("hyperedge relation type");
+  if(a==b||b==c||a==c)return {};
+  Evidence out{};
+  const auto positive=hyper_index_.find(hyper_id(a,b,c,type,false));
+  const auto negative=hyper_index_.find(hyper_id(a,b,c,type,true));
+  if(positive!=hyper_index_.end())out.support=hyper_[positive->second].strength;
+  if(negative!=hyper_index_.end())out.refute=hyper_[negative->second].strength;
+  return out;
  }
  std::vector<Hyperedge> routes(uint8_t vertex)const{
   std::vector<Hyperedge> result;
