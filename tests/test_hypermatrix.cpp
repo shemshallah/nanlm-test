@@ -44,6 +44,9 @@ int main(){
    u.write('x','z',PRECEDES,false,1.f,3);
    require(u.hyper_query('x','y','z',PRECEDES).state()==0,
            "fabric factor accidentally constructed an exact hyperedge");
+   // Refresh the derived eigensystem after direct writes so the pre-
+   // and post-restart predictors use identical persistent graph state.
+   mind.refresh_spectrum();
    const auto factor=mind.predict(context);
    const auto without=mind.predict(context,UnifiedWaveLanguage::ABLATE_HYPEREDGE);
    require(std::fabs(factor.p['z']-without.p['z'])>1e-7,
