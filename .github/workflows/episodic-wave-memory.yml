@@ -58,6 +58,34 @@ jobs:
           ./nanlm "$root" memorize "${RUNNER_TEMP}/memory.tsv" fixture-v1 | tee episodic-cli.log
           ./nanlm "$root" recall 'Beacon code: ' | tee -a episodic-cli.log
           test "$(./nanlm "$root" generate 'Beacon code: ' 11 79 0.85 0.92)" = 'Beacon code: AURORA-8273'
+          printf 'The silver spacecraft settled softly by the east laboratory.\n' > "${RUNNER_TEMP}/quotes.txt"
+          ./nanlm "$root" memorize-lines "${RUNNER_TEMP}/quotes.txt" book-fixture | tee -a episodic-cli.log
+          expected='settled softly by the east laboratory.'
+          test "$(./nanlm "$root" generate 'The silver spacecraft ' "${#expected}" 51)" = "The silver spacecraft $expected"
+          printf 'Beacon code: \tNEPTUNE-0001\n' > "${RUNNER_TEMP}/contested.tsv"
+          ./nanlm "$root" memorize "${RUNNER_TEMP}/contested.tsv" independent-source | tee -a episodic-cli.log
+          if ./nanlm "$root" recall 'Beacon code: ' > contested.txt; then
+            echo 'conflicting source was incorrectly auto-accepted' >&2
+            exit 1
+          else
+            grep -q '^UNIFIED_EPISODIC_CONTESTED
+          python3 - "$root" <<'PY' | tee -a episodic-cli.log
+          import os, sys
+          root = sys.argv[1]
+          assert os.stat(root).st_size == 8388608
+          assert os.path.isfile(root+'.episodes')
+          print('EPISODIC_CLI_PASS unchanged_root_bytes=8388608')
+          PY
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episodic-cli
+          path: episodic-cli.log
+          if-no-files-found: warn
+ contested.txt
+            cat contested.txt | tee -a episodic-cli.log
+          fi
           python3 - "$root" <<'PY' | tee -a episodic-cli.log
           import os, sys
           root = sys.argv[1]
