@@ -130,6 +130,7 @@ private:
  std::array<std::uint8_t,HEAD_COUNT> reverse_position_{};
  std::map<StatementKey,SupportSet> graph_{};
  std::vector<Assertion> journal_{};
+ std::vector<std::uint64_t> event_ticks_{};
  std::set<std::tuple<std::string,std::string,std::string,std::string,bool>> seen_{};
  std::set<std::string> sources_{};
  CurvatureSampler curvature_;
@@ -375,7 +376,7 @@ public:
   if(journal_.size()>=statement_limit_)throw std::length_error("journal budget exceeded");
   if(clock_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("clock overflow");
   tick();
-  seen_.insert(id);journal_.push_back(a);sources_.insert(a.source);
+  seen_.insert(id);journal_.push_back(a);event_ticks_.push_back(clock_);sources_.insert(a.source);
   const StatementKey key{a.subject,a.predicate,a.object};
   auto& e=graph_[key];
   (a.refutes?e.refuting_sources:e.supporting_sources).insert(a.source);
@@ -461,14 +462,42 @@ public:
   }
   return out;
  }
+ // Preserve NaNclock ordering of evidence, not merely the list of claims.
+ // For large clock jumps, analytical decay avoids replaying every empty tick.
+ // For small jumps, preserve the ordinary per-tick floating arithmetic.
+ void advance_to(std::uint64_t target){
+  if(target<clock_)throw std::invalid_argument("nanclock cannot run backwards");
+  const auto steps=target-clock_;
+  if(steps<=32){for(std::uint64_t i=0;i<steps;++i)tick();return;}
+  const double factor=std::pow(leak_,double(steps));
+  const double before_last=std::pow(leak_,double(steps-1));
+  for(auto& x:head_state_)x*=factor;
+  for(auto& x:head_support_)x*=factor;
+  for(auto& x:head_refute_)x*=factor;
+  for(auto& v:head_vectors_)for(auto& x:v)x*=factor;
+  for(auto& t:head_tensors_)for(auto& x:t)x*=factor;
+  for(std::size_t g=0;g<TRIAD_COUNT;++g){
+   auto& t=triads_[g];
+   previous_triad_activity_[g]=t.activation*before_last;
+   t.support*=factor;t.refute*=factor;t.activation*=factor;
+   for(auto& x:t.vector)x*=factor;
+   for(auto& x:t.tensor)x*=factor;
+  }
+  clock_=target;
+  recalc_global();
+ }
  void save(const std::filesystem::path& path)const {
   const auto tmp=std::filesystem::path(path.string()+".tmp");
   std::ofstream file(tmp,std::ios::binary|std::ios::trunc);
   if(!file)throw std::runtime_error("cannot open sensor snapshot");
-  file<<"NANLM_SENSOR_V1\n";
-  for(const auto& a:journal_)
+  if(journal_.size()!=event_ticks_.size())throw std::logic_error("sensor journal tick map corrupted");
+  file<<"NANLM_SENSOR_V2\t"<<clock_<<"\n";
+  for(std::size_t i=0;i<journal_.size();++i){
+   const auto& a=journal_[i];
    file<<a.source<<'\t'<<(a.refutes?'-':'+')<<'\t'<<a.subject<<'\t'
-       <<a.predicate<<'\t'<<a.object<<'\t'<<std::hexfloat<<a.confidence<<std::defaultfloat<<'\n';
+       <<a.predicate<<'\t'<<a.object<<'\t'<<std::hexfloat<<a.confidence
+       <<std::defaultfloat<<'\t'<<event_ticks_[i]<<'\n';
+  }
   file.close();if(!file)throw std::runtime_error("sensor snapshot incomplete");
   std::filesystem::rename(tmp,path);
  }
@@ -477,18 +506,36 @@ public:
   std::ifstream file(path,std::ios::binary);
   if(!file)throw std::runtime_error("cannot read sensor snapshot");
   std::string line;
-  if(!std::getline(file,line)||line!="NANLM_SENSOR_V1")
-   throw std::runtime_error("unknown sensor snapshot schema");
+  if(!std::getline(file,line))throw std::runtime_error("missing sensor snapshot header");
+  const bool v1=line=="NANLM_SENSOR_V1";
+  std::uint64_t final_tick=0;
+  if(!v1){
+   const std::string prefix="NANLM_SENSOR_V2\t";
+   if(line.rfind(prefix,0)!=0)throw std::runtime_error("unknown sensor snapshot schema");
+   const auto t=line.substr(prefix.size());
+   std::size_t position=0;
+   final_tick=std::stoull(t,&position);
+   if(position!=t.size())throw std::runtime_error("invalid snapshot nanclock");
+  }
   while(std::getline(file,line)){
    std::istringstream in(line);std::vector<std::string> fields;std::string token;
    while(std::getline(in,token,'\t'))fields.push_back(token);
-   if(fields.size()!=6||(fields[1]!="+"&&fields[1]!="-"))
+   if(fields.size()!=(v1?6u:7u)||(fields[1]!="+"&&fields[1]!="-"))
     throw std::runtime_error("malformed sensor record");
    std::size_t pos=0;
    const double conf=std::stod(fields[5],&pos);
    if(pos!=fields[5].size())throw std::runtime_error("bad confidence field");
-   ingest({fields[0],fields[2],fields[3],fields[4],fields[1]=="-",conf});
+   if(!v1){
+    std::size_t tick_offset=0;
+    const auto event_tick=std::stoull(fields[6],&tick_offset);
+    if(tick_offset!=fields[6].size()||event_tick<=clock_||event_tick>final_tick)
+     throw std::runtime_error("invalid/out-of-order journal nanclock timestamp");
+    advance_to(event_tick-1);
+   }
+   if(!ingest({fields[0],fields[2],fields[3],fields[4],fields[1]=="-",conf}))
+    throw std::runtime_error("duplicate sensor event in snapshot");
   }
+  if(!v1)advance_to(final_tick);
   if(!file.eof())throw std::runtime_error("incomplete sensor snapshot read");
  }
  std::size_t ingest_tsv(std::istream& text) {
