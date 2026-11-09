@@ -1,0 +1,41 @@
+# NaNLM 48-step causal eligibility learning
+
+The production predictor remains one native `UnifiedWaveLanguage`, one mapped
+8 MiB NaN16 root, and 255 coupled cognitive heads. No recurrent model has
+been replicated.
+
+## Memory and causal contract
+
+The causal input history grows from 16 to **48** bytes; ordinary attention
+continues to attend to the most recent 16. Earlier symbols contribute to a
+decayed, signed PRECEDES/FOLLOWS evidence trace for each candidate output
+head. This uses the SAME directed mirror pairs as the teacher, standing
+wave, and factorized hypermatrix.
+
+The trace's trainable readout coefficient is a `float32` in bytes 44–47
+of each of the 255 existing head records. This slot sits between the
+teacher source vector (32–43) and target vector (48–59). Zero is a
+backward-compatible initial value, and the reserved ingress head 255 is
+never updated.
+
+A teacher-forced supervised label generates softmax errors for all 255
+candidates. Exact scratch normalization checks trial gradient steps,
+accepting a new set of coefficients only when the immediate training
+loss strictly decreases. This is **truncated feature-gradient temporal
+credit assignment**, not full backpropagation through recurrent time.
+
+## Falsifiable test
+
+`no_long_context` is a readout ablation using the identical stored
+parameters. It should have exactly zero effect for inputs of length 16
+or less, and may have a measurable effect after the tail has historical
+evidence and training has changed the register coefficient.
+
+`tests/test_temporal_credit.cpp` checks both cases, accepted gains,
+byte-255 preservation, and restart determinism. This track deliberately
+does not assert that 48 bytes are sufficient for prose-level dependency
+modeling or that local gradient acceptance implies held-out improvement.
+
+For the 974-byte authored prose fixture, calibrated CE in the branch
+was 2.647527 versus 2.656093 with long-context readout disabled. This
+is a regression sentinel, not independent language-quality evidence.
