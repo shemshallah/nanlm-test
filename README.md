@@ -131,3 +131,86 @@ external persistent storage.
 4. Compare scalar U(1) vs noncommuting SO(3) geometry with controlled
    three-body tasks, temporal generalization and uncertainty calibration.
 5. Only then integrate Nannet transport to HW4:0.
+
+## Causal byte-language milestone (experimental branch)
+
+The byte model uses **the same HW0:0 Universe** plus a bounded, checksum-verified
+sparse `.byte-lm` context overlay. It is not a second 256-head universe.
+The legacy 8,388,608-byte mmap layout and Nannet head 255 remain unchanged.
+
+Build: `make nanlm test_byte_model CXX=g++` (or `CXX=clang++`).
+
+- `./nanlm /tmp/hw0 train-text train.txt 3` learns three passes of causal
+  byte statistics, preserving a bounded context up to five prior bytes.
+- `./nanlm /tmp/hw0 eval-text independent.txt` computes prequential
+  next-byte held-out cross-entropy in nats, bits/byte, accuracy and unseen
+  context count, without modifying the model.
+- `./nanlm /tmp/hw0 generate "the tiny " 200 11 0.85 0.92` generates
+  200 continuation bytes with deterministic seed 11, temperature 0.85 and
+  top-p 0.92. The output contains the prompt followed by new bytes.
+- Optional `train-text corpus.txt 1 32` enables a slow existing
+  geometric teacher update every 32 bytes. The default deliberately
+  excludes teacher training to isolate the contextual baseline.
+
+Implementation: each observed symbol increments the root unigram and up
+to five suffix-context nodes. Predict interpolates longer suffixes with a
+strictly positive shorter-context distribution, with more shrinkage for
+rare contexts. Memory is capped at 500,000 sparse nodes; once full, new
+contexts fall back to their existing shorter suffixes. This means
+**bounded representation**, not bounded compute or bounded complete
+storage footprint: the full physical universe plus indexes, journals,
+maps and overlay may consume additional memory. A 128 MiB read cap is
+enforced for the overlay.
+
+The format has an eight-byte versioned magic, order, token count, sorted
+records and an FNV-1a checksum with atomic rename on save. Writes across
+the root, temporal journal and this overlay are not jointly transactional.
+Do not share one checkpoint between uncoordinated writer processes.
+
+**Research honesty:** the model is a count-based autoregressive reference,
+not yet a fluent generative neural model. Simple, repetitive held-out
+sentences are not genuinely out-of-domain. Run paragraph- and
+document-disjoint tests, a matched order-5 n-gram baseline, a conventional
+small recurrent/attention model, and byte-level free-run diversity,
+UTF-8 validity and repetition checks before making any claims of language
+generalization or of the geometry's utility. The current sampler is
+byte-level; UTF-8 validity of generated text is not guaranteed.
+
+## Experimental neural and hybrid pathways
+
+The parallel recurrent baseline stores 255 input embeddings, 255 output
+vectors, a 32x32 trainable recurrent matrix and 255 output biases in
+`.rnn-lm`. Training uses bounded eight-step online TBPTT. The checkpoint
+is checksum-verified and independently restartable. These trainable
+parameters are an **overlay of the same logical HW0 space** and do not
+instantiate a second Root.
+
+```sh
+./nanlm /tmp/hw0 train-rnn train.txt 8
+./nanlm /tmp/hw0 eval-rnn holdout.txt
+./nanlm /tmp/hw0 generate-rnn "The " 128 17 0.9 0.9
+./nanlm /tmp/hw0 benchmark-text holdout.txt
+./nanlm /tmp/hw0 eval-hybrid holdout.txt 0.25
+./nanlm /tmp/hw0 generate-hybrid "The " 128 17 0.25
+./nanlm /tmp/hw0 select-hybrid development.txt untouched-test.txt
+```
+
+The hybrid is a convex mixture of recurrent and contextual softmax
+probabilities. Mixture weights of 0 and 1 exactly recover the separate
+count and recurrent pathways. The `select-hybrid` command chooses among
+fixed orders 0..5 and mixture weights {0, 0.1, 0.25, 0.5, 0.75, 1}
+**only on development text**, then evaluates the locked selection once
+against the separately provided test text. Its count-only comparator
+is selected on development data and evaluated with identical
+one-symbol-delayed scoring. Users must keep train/development/test
+content independently sourced; different filenames alone do not rule
+out duplicated content.
+
+Small Actions test cases demonstrate the execution and scientific
+protocol, not open-domain language competence. `rnn-lm` weights have
+no transformer attention, no large training corpus, and no proven
+held-out advantage against strong conventional models. Free generation
+may be incoherent. The **hybrid** sampler now rejects malformed UTF-8
+prefixes and restricts sampled continuations to completed Unicode byte
+sequences; the standalone count and RNN samplers still output raw bytes. See
+`docs/GENERATION_ROADMAP.md` for the evidence-gated next stages.

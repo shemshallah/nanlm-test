@@ -1,6 +1,13 @@
 #include "nanlm/universe.hpp"
 #include "nanlm/wordnet.hpp"
 #include "nanlm/teacher.hpp"
+#include "nanlm/byte_model.hpp"
+#include "nanlm/recurrent_byte.hpp"
+#include "nanlm/hybrid_byte.hpp"
+#include <memory>
+#include <filesystem>
+#include <limits>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -10,7 +17,7 @@ using namespace nanlm;
 int main(int argc,char**argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|resident|teach-stream FILE|eval-stream FILE|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|resident|teach-stream FILE|eval-stream FILE|train-text FILE [EPOCHS] [TEACHER_STRIDE]|eval-text FILE|generate PROMPT N [SEED] [TEMP] [TOP_P]|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],op=argv[2];
@@ -45,6 +52,163 @@ int main(int argc,char**argv){
      continue;
     }
     std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
+   }
+  }else if(op=="select-hybrid"){
+   if(argc<5)throw std::invalid_argument("need development and separate test corpus");
+   if(std::filesystem::equivalent(argv[3],argv[4]))
+    throw std::invalid_argument("development and test paths must differ");
+   ByteModel count(u,path);
+   RecurrentByteModel rnn(u,path);
+   if(count.tokens()==0||rnn.updates()==0)
+    throw std::runtime_error("train both predictors before selection");
+   const std::array<double,6> weights{{0.0,0.1,0.25,0.5,0.75,1.0}};
+   double best_nll=std::numeric_limits<double>::infinity();
+   double baseline_nll=std::numeric_limits<double>::infinity();
+   unsigned selected_order=0,baseline_order=0;
+   double selected_weight=0;
+   for(unsigned order=0;order<=ByteModel::ORDER;++order){
+    for(double weight:weights){
+     HybridByteInference candidate(count,rnn,weight,order);
+     std::ifstream dev(argv[3],std::ios::binary);
+     if(!dev)throw std::runtime_error("development corpus not found");
+     const auto m=candidate.evaluate(dev);
+     if(m.tokens==0)throw std::runtime_error("development corpus is empty");
+     if(weight==0&&m.ce()<baseline_nll){
+      baseline_nll=m.ce();baseline_order=order;
+     }
+     if(m.ce()<best_nll){
+      best_nll=m.ce();selected_order=order;selected_weight=weight;
+     }
+    }
+   }
+   auto final_score=[&](unsigned order,double weight){
+    HybridByteInference candidate(count,rnn,weight,order);
+    std::ifstream test(argv[4],std::ios::binary);
+    if(!test)throw std::runtime_error("test corpus not found");
+    const auto metrics=candidate.evaluate(test);
+    if(metrics.tokens==0)throw std::runtime_error("test corpus is empty");
+    return metrics;
+   };
+   const auto best=final_score(selected_order,selected_weight);
+   const auto baseline=final_score(baseline_order,0.0);
+   std::cout<<std::setprecision(9)
+            <<"SELECT development_baseline_ce="<<baseline_nll
+            <<" development_hybrid_ce="<<best_nll
+            <<" selected_order="<<selected_order
+            <<" selected_neural_weight="<<selected_weight
+            <<" baseline_order="<<baseline_order<<"\n"
+            <<"TEST selected_ce="<<best.ce()<<" baseline_ce="<<baseline.ce()
+            <<" selected_accuracy="<<best.accuracy()
+            <<" baseline_accuracy="<<baseline.accuracy()
+            <<" tokens="<<best.tokens<<"\n";
+  }else if(op=="eval-hybrid"||op=="generate-hybrid"){
+   ByteModel counts(u,path);
+   RecurrentByteModel rnn(u,path);
+   if(op=="eval-hybrid"){
+    if(argc<4)throw std::invalid_argument("need held-out corpus");
+    const double weight=argc>4?std::stod(argv[4]):0.25;
+    HybridByteInference hybrid(counts,rnn,weight);
+    std::ifstream validation(argv[3],std::ios::binary);
+    if(!validation)throw std::runtime_error("held-out corpus not found");
+    const auto m=hybrid.evaluate(validation);
+    std::cout<<std::setprecision(9)<<"HYBRID_EVAL weight="<<weight
+             <<" tokens="<<m.tokens<<" ce_nats="<<m.ce()
+             <<" accuracy="<<m.accuracy()<<"\n";
+   }else{
+    if(argc<5)throw std::invalid_argument("need prompt and output length");
+    const auto length=std::stoull(argv[4]);
+    const auto seed=argc>5?std::stoull(argv[5]):11ull;
+    const double weight=argc>6?std::stod(argv[6]):0.25;
+    HybridByteInference hybrid(counts,rnn,weight);
+    std::cout<<argv[3]<<hybrid.generate(argv[3],length,seed);
+    std::cout.flush();
+   }
+  }else if(op=="benchmark-text"){
+   if(argc<4)throw std::invalid_argument("need independent held-out corpus");
+   ByteModel count(u,path);
+   RecurrentByteModel rnn(u,path);
+   std::cout<<std::setprecision(9);
+   for(unsigned order=0;order<=ByteModel::ORDER;++order){
+    std::ifstream validation(argv[3],std::ios::binary);
+    if(!validation)throw std::runtime_error("validation file not found");
+    const auto m=count.evaluate(validation,order);
+    std::cout<<"BENCH model=ngram order="<<order<<" tokens="<<m.bytes
+             <<" ce_nats="<<m.mean_ce()<<" accuracy="<<m.accuracy()
+             <<" unseen_contexts="<<m.novel_contexts<<"\n";
+   }
+   std::ifstream validation(argv[3],std::ios::binary);
+   if(!validation)throw std::runtime_error("validation file not found");
+   const auto n=rnn.evaluate(validation);
+   std::cout<<"BENCH model=rnn32 order=recurrent tokens="<<n.tokens
+            <<" ce_nats="<<n.ce()<<" accuracy="<<n.accuracy()
+            <<" trained_updates="<<rnn.updates()<<"\n";
+  }else if(op=="train-rnn"||op=="eval-rnn"||op=="generate-rnn"){
+   RecurrentByteModel rnn(u,path);
+   if(op=="train-rnn"){
+    if(argc<4)throw std::invalid_argument("need corpus file");
+    const unsigned epochs=argc>4?static_cast<unsigned>(std::stoul(argv[4])):1u;
+    if(epochs==0||epochs>1000)throw std::invalid_argument("epochs must be 1..1000");
+    RecurrentByteModel::Metrics last{};
+    for(unsigned epoch=0;epoch<epochs;++epoch){
+     std::ifstream file(argv[3],std::ios::binary);
+     if(!file)throw std::runtime_error("training corpus not found");
+     last=rnn.train(file);
+    }
+    rnn.save();u.sync();
+    std::cout<<std::setprecision(9)<<"RNN_TRAIN updates="<<rnn.updates()
+             <<" last_epoch_ce="<<last.ce()<<" accuracy="<<last.accuracy()<<"\n";
+   }else if(op=="eval-rnn"){
+    if(argc<4)throw std::invalid_argument("need evaluation corpus");
+    std::ifstream file(argv[3],std::ios::binary);
+    if(!file)throw std::runtime_error("evaluation corpus not found");
+    auto result=rnn.evaluate(file);
+    std::cout<<std::setprecision(9)<<"RNN_EVAL tokens="<<result.tokens
+             <<" ce_nats="<<result.ce()<<" accuracy="<<result.accuracy()<<"\n";
+   }else{
+    if(argc<5)throw std::invalid_argument("need prompt and byte count");
+    const auto length=std::stoull(argv[4]);
+    const auto seed=argc>5?std::stoull(argv[5]):11ull;
+    const auto temperature=argc>6?std::stod(argv[6]):0.9;
+    const auto top_p=argc>7?std::stod(argv[7]):0.9;
+    std::cout<<argv[3]<<rnn.generate(argv[3],length,seed,temperature,top_p);
+    std::cout.flush();
+   }
+  }else if(op=="train-text"||op=="eval-text"||op=="generate"){
+   ByteModel model(u,path);
+   if(op=="train-text"){
+    if(argc<4)throw std::invalid_argument("need corpus file");
+    const unsigned epochs=argc>4?static_cast<unsigned>(std::stoul(argv[4])):1u;
+    const uint64_t stride=argc>5?std::stoull(argv[5]):0ull;
+    if(epochs<1||epochs>1000)throw std::invalid_argument("epochs must be 1..1000");
+    std::unique_ptr<FabricTeacher> teacher;
+    if(stride)teacher=std::make_unique<FabricTeacher>(u);
+    uint64_t count=0;
+    for(unsigned epoch=0;epoch<epochs;++epoch){
+     std::ifstream corpus(argv[3],std::ios::binary);
+     if(!corpus)throw std::runtime_error("corpus not found");
+     count+=model.train(corpus,teacher.get(),stride,count);
+    }
+    model.save();u.sync();
+    std::cout<<"TRAINED bytes="<<count<<" cumulative="<<model.tokens()
+             <<" contexts="<<model.contexts()<<" order="<<ByteModel::ORDER
+             <<" teacher_stride="<<stride<<" root_bytes="<<ROOT_BYTES<<"\n";
+   }else if(op=="eval-text"){
+    if(argc<4)throw std::invalid_argument("need evaluation file");
+    std::ifstream corpus(argv[3],std::ios::binary);
+    if(!corpus)throw std::runtime_error("evaluation corpus not found");
+    const auto m=model.evaluate(corpus);
+    std::cout<<std::setprecision(9)<<"EVAL bytes="<<m.bytes
+             <<" ce_nats="<<m.mean_ce()<<" bits_per_byte="
+             <<m.mean_ce()/std::log(2.0)<<" accuracy="<<m.accuracy()
+             <<" novel_contexts="<<m.novel_contexts<<"\n";
+   }else{
+    if(argc<5)throw std::invalid_argument("need quoted prompt and byte count");
+    const size_t length=std::stoull(argv[4]);
+    const uint64_t seed=argc>5?std::stoull(argv[5]):11ull;
+    const double temperature=argc>6?std::stod(argv[6]):0.85;
+    const double top_p=argc>7?std::stod(argv[7]):0.92;
+    std::cout<<argv[3]<<model.generate(argv[3],length,seed,temperature,top_p);
+    std::cout.flush();
    }
   }else if(op=="teach-stream"||op=="eval-stream"){
    if(argc<4)throw std::invalid_argument("need corpus file");
