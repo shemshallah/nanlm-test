@@ -5,6 +5,8 @@
 #include "nanlm/recurrent_byte.hpp"
 #include "nanlm/hybrid_byte.hpp"
 #include <memory>
+#include <filesystem>
+#include <limits>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -51,6 +53,54 @@ int main(int argc,char**argv){
     }
     std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
    }
+  }else if(op=="select-hybrid"){
+   if(argc<5)throw std::invalid_argument("need development and separate test corpus");
+   if(std::filesystem::equivalent(argv[3],argv[4]))
+    throw std::invalid_argument("development and test paths must differ");
+   ByteModel count(u,path);
+   RecurrentByteModel rnn(u,path);
+   if(count.tokens()==0||rnn.updates()==0)
+    throw std::runtime_error("train both predictors before selection");
+   const std::array<double,6> weights{{0.0,0.1,0.25,0.5,0.75,1.0}};
+   double best_nll=std::numeric_limits<double>::infinity();
+   double baseline_nll=std::numeric_limits<double>::infinity();
+   unsigned selected_order=0,baseline_order=0;
+   double selected_weight=0;
+   for(unsigned order=0;order<=ByteModel::ORDER;++order){
+    for(double weight:weights){
+     HybridByteInference candidate(count,rnn,weight,order);
+     std::ifstream dev(argv[3],std::ios::binary);
+     if(!dev)throw std::runtime_error("development corpus not found");
+     const auto m=candidate.evaluate(dev);
+     if(m.tokens==0)throw std::runtime_error("development corpus is empty");
+     if(weight==0&&m.ce()<baseline_nll){
+      baseline_nll=m.ce();baseline_order=order;
+     }
+     if(m.ce()<best_nll){
+      best_nll=m.ce();selected_order=order;selected_weight=weight;
+     }
+    }
+   }
+   auto final_score=[&](unsigned order,double weight){
+    HybridByteInference candidate(count,rnn,weight,order);
+    std::ifstream test(argv[4],std::ios::binary);
+    if(!test)throw std::runtime_error("test corpus not found");
+    const auto metrics=candidate.evaluate(test);
+    if(metrics.tokens==0)throw std::runtime_error("test corpus is empty");
+    return metrics;
+   };
+   const auto best=final_score(selected_order,selected_weight);
+   const auto baseline=final_score(baseline_order,0.0);
+   std::cout<<std::setprecision(9)
+            <<"SELECT development_baseline_ce="<<baseline_nll
+            <<" development_hybrid_ce="<<best_nll
+            <<" selected_order="<<selected_order
+            <<" selected_neural_weight="<<selected_weight
+            <<" baseline_order="<<baseline_order<<"\n"
+            <<"TEST selected_ce="<<best.ce()<<" baseline_ce="<<baseline.ce()
+            <<" selected_accuracy="<<best.accuracy()
+            <<" baseline_accuracy="<<baseline.accuracy()
+            <<" tokens="<<best.tokens<<"\n";
   }else if(op=="eval-hybrid"||op=="generate-hybrid"){
    ByteModel counts(u,path);
    RecurrentByteModel rnn(u,path);
