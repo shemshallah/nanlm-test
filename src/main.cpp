@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -46,6 +46,12 @@ int main(int argc,char** argv){
    const unsigned epochs=argc>4?static_cast<unsigned>(std::stoul(argv[4])):1u;
    if(epochs==0||epochs>1000)throw std::invalid_argument("epochs must be 1..1000");
    UnifiedWaveLanguage mind(universe);
+   if(argc>5){
+    const int flag=number(5);
+    if(flag!=0&&flag!=1)
+     throw std::invalid_argument("training BPTT flag must be 0 or 1");
+    mind.set_bptt_enabled(flag==1);
+   }
    UnifiedWaveLanguage::Metrics last{};
    for(unsigned e=0;e<epochs;++e){
     std::ifstream file(argv[3],std::ios::binary);
@@ -58,6 +64,7 @@ int main(int argc,char** argv){
             <<" eigenvalue="<<mind.spectral().eigenvalue
             <<" eigen_residual="<<mind.spectral().residual
             <<" mirror_mass="<<mind.spectral().edge_mass
+            <<" bptt_enabled="<<int(mind.bptt_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
             <<" bptt_accepted="<<mind.bptt_accepted()<<"\n";
   }else if(operation=="eval"){
