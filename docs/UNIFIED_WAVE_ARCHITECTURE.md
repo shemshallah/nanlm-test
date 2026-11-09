@@ -10,8 +10,10 @@ ordered lanes of 16 typed relation weights each. The full 65,536-address
 space maps to 32,896 canonical cells. No 255-model ensemble is created.
 
 Persistent language parameters include the teacher's vectors, phases,
-typed evidence, quaternion transports and four gating gains per
-palindromic head. All four gains live inside that head's existing
+typed evidence, quaternion transports, four gating gains per
+palindromic head, and one additional hyperedge gain per head. Group
+consensus is held in 85 head-register slots and the field vote in a
+single head-0 slot. All four gains live inside that head's existing
 128-byte record; the causal wavefront and spectral decomposition are
 derived activations. Root and overlay writes are not crash-atomic.
 
@@ -22,8 +24,8 @@ its adjoint T* respectively, with damped second-order recurrence and
 shared input. This is a forward-time causal adjoint, not access to
 future labels. Four approximate symmetric eigenmodes modulate the
 oscillator and output. U(1) cycles, ordered SO(3) quaternion products,
-16-step context attention and native sparse hyperedges contribute
-additional features. The eigensolver is currently an approximation,
+16-step context attention and a factorized third-order hypermatrix
+contribute additional features. The eigensolver is currently an approximation,
 not a differentiable neural attention layer.
 
 ## Falsifiable ablation gates
@@ -43,7 +45,9 @@ stored weights, seed-independent inference and initial causal state:
 - `no_spectral`: removes the spectral readout, not wave frequency modulation.
 - `no_cycle`: removes the gauge-cycle readout.
 - `no_inverse_evidence`: removes the extra inverse-consensus logit.
-- `no_hyperedge`: removes the sparse hyperedge logit.
+- `no_hyperedge`: removes both the factorized third-order interaction
+  and its explicit signed sparse residual, leaving the single teacher
+  and all other shared readouts unchanged.
 - `teacher_only`: ablates all six additive logit terms; this is one
   existing native teacher's projection, not another production model.
 
@@ -87,3 +91,64 @@ is one shared readout multiplier applied across 255 heads of the **same**
 model. Subsequent online learning includes that multiplier in its gate
 gradients. Calibration minimizes development CE by construction and is
 not guaranteed to improve held-out CE; both outcomes must be reported.
+
+## Register-coupled hypermatrix and three-level self-modification
+
+A hypermatrix is a **logical view** on the resident NaN16 memory, not an
+extra 255³ array or a second production model. For distinct heads
+`a,b,c`, the predicted third-order term uses the ordered PRECEDES /
+FOLLOWS mirror-lane evidence on `a→b`, `b→c`, and `a→c` and a
+gauge-invariant U(1) triangle holonomy. The product of pair operators
+is non-additive: evidence for one leg conditions the others. These
+terms are derived directly from the same 8 MiB memory-mapped `Root`.
+
+There is an additional **signed sparse correction** for explicitly
+observed `(a,b,c,relation)` tuples. The persistent overlay maintains
+the previous `Hyperedge` binary representation, with a rebuilt hash
+index for constant-time ordered-triple reads. Support and refutation
+remain independent. Unlike the old exact-triple-only readout,
+`no_hyperedge` can now change predictions for a triple that has **no
+exact sparse entry** if its constituent pair legs have evidence.
+
+All trainable hyperedge readout gains occupy previously unused bytes
+of the **existing** 128-byte palindromic register records:
+
+| Layer | Physical location | Parameterization |
+|---|---|---|
+| Individual | Each of heads 0–254, bytes 28–31 | 255 local float32 gains |
+| Triad | Head 2, 5, …, 254, bytes 12–15 | 85 group float32 gains, three adjacent heads per group |
+| Field | Head 0, bytes 12–15 | 1 shared float32 gain |
+| Markers | Byte 62 (local), byte 63 (triad/field) | Layout and restart validation |
+
+The selected head, its three-head group, and the field contribute to
+**one** hyperedge logit. Individual gradients, three-head aggregated
+gradients, and the field-wide aggregate propose a coupled change.
+The candidate is evaluated against the exact normalized softmax
+cross-entropy, and only a strictly improving step is committed. Sparse
+observed-triple writes additionally require at least two positive
+voters among head/group/field and cap positive residual strength;
+they no longer depend on every-eighth-step scheduling or an unrelated
+teacher update. These acceptance rules are **single-token local
+optimization**, not proof of corpus-scale generalization.
+
+**Important limitations:** the 85 groups currently use static
+consecutive head addresses, not learned semantic group assignments.
+The 255³ hypermatrix remains *factorized*, not a dense arbitrary
+third-order tensor. Sparse records remain in a separate on-disk overlay
+and can grow beyond the mapped 8 MiB root; the full resident working
+set is therefore larger than 8 MiB. The learner does not yet provide
+multi-step backpropagation through time. These distinctions should
+remain explicit in performance reports.
+
+### Regressions and ablation interpretation
+
+`make test_hypermatrix && ./test_hypermatrix` checks a never-stored
+ordered triple receiving a third-order signal via native pair legs,
+signed residual independence, restart determinism, and all three
+learnable voter levels. `make test_unified_wave && ./test_unified_wave`
+checks the full standing-wave system. Both are required under GCC and
+Clang in `.github/workflows/unified-wave.yml`.
+
+Report *both* `full` and `no_hyperedge` held-out CE with identical
+model state. A nonzero difference proves the feature is active on that
+sample; only source-disjoint evaluation can show generalization.
