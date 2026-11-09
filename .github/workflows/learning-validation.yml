@@ -1,0 +1,33 @@
+name: HW0 held-out learning validation
+on:
+  push:
+    branches:
+      - feat/hw0-learning-validation
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  learning:
+    name: "Learning audit (${{ matrix.compiler }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and execute held-out learning audit
+        shell: bash
+        run: |
+          set -o pipefail
+          make validate CXX="${{ matrix.compiler }}" | tee learning-audit.log
+          grep 'PASS: deterministic source-disjoint held-out audit' learning-audit.log
+      - name: Save reproducibility log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-audit-${{ matrix.compiler }}
+          path: learning-audit.log
+          if-no-files-found: warn
