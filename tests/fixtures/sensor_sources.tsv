@@ -1,0 +1,6 @@
+# source<TAB>polarity<TAB>subject<TAB>relation<TAB>object
+source_A	+	penguin	ISA	bird
+source_B	+	bird	ISA	animal
+source_C	-	penguin	ISA	animal
+source_D	+	penguin	CAN_FLY	yes
+source_E	-	penguin	CAN_FLY	yes
