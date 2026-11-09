@@ -1,0 +1,32 @@
+name: NaNLM public-domain cross-author held-out benchmark
+on:
+  push:
+    branches:
+      - main
+      - 'feat/hw0-public-domain-corpus'
+      - 'feat/hw0-real-bptt'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  external-corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build one native NaNLM predictor
+        run: make nanlm CXX=clang++
+      - name: Download transient Project Gutenberg sources, train, and evaluate
+        run: |
+          set -euo pipefail
+          python3 tools/public_domain_benchmark.py | tee public-domain.log
+      - name: Preserve source hashes and full metrics, not copyrighted file copies
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-domain-benchmark
+          path: |
+            public-domain-report.json
+            public-domain.log
+          if-no-files-found: warn
