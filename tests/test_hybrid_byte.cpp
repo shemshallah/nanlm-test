@@ -44,8 +44,19 @@ int main(){
    if(metrics.tokens!=held.size()-1||!std::isfinite(metrics.ce()))
     throw std::runtime_error("hybrid held-out evaluation invalid");
    const auto a=mixture.generate("echoes in ",128,19);
-   if(a.size()!=128||a!=mixture.generate("echoes in ",128,19))
+   if(a.size()!=128||!valid_utf8(a)||a!=mixture.generate("echoes in ",128,19))
     throw std::runtime_error("hybrid generation not deterministic");
+  }
+  {
+   Utf8Prefix decoder;
+   if(!valid_utf8("caf\xc3\xa9")||!valid_utf8("\xf0\x9f\x8c\x8d")||
+      valid_utf8("\xc0\x80")||valid_utf8("\xed\xa0\x80")||
+      valid_utf8("\xf4\x90\x80\x80")||valid_utf8("\xf0\x9f"))
+    throw std::runtime_error("strict UTF-8 verification failed");
+   if(!decoder.consume_prefix("\xf0\x9f")||decoder.complete())
+    throw std::runtime_error("UTF-8 incomplete-prefix handling failed");
+   if(!decoder.push(0x8c)||!decoder.push(0x8d)||!decoder.complete())
+    throw std::runtime_error("UTF-8 completion failed");
   }
   for(const auto& suffix:{"",".so3",".overlay",".byte-lm",".rnn-lm"})
    std::filesystem::remove(root+suffix);
