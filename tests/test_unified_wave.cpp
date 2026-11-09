@@ -27,7 +27,8 @@ int main(){
    // Every head must contribute a causal activation, but 255 is reserved.
    UnifiedWaveLanguage::State state{};
    mind.observe(state,static_cast<uint8_t>('w'));
-   if(state.length!=1||state.wave['w']<=0||state.wave[254]!=0)
+   if(state.length!=1||state.wave['w']<=0||state.wave[254]!=0||
+      state.inverse_wave['w']<=0)
     throw std::runtime_error("standing wave excitation broken");
    const auto first=mind.predict(state);
    double total=0;
@@ -42,6 +43,23 @@ int main(){
    if(learned.edge_mass<=0||!std::isfinite(learned.eigenvalue)||
       !std::isfinite(learned.residual))
     throw std::runtime_error("mirror eigenmode was not established");
+   for(size_t mode=0;mode<UnifiedWaveLanguage::MODES;++mode){
+    if(!std::isfinite(learned.eigenvalues[mode])||
+       !std::isfinite(learned.residuals[mode]))
+     throw std::runtime_error("spectral modes invalid");
+   }
+   if(u.root().h['w'].data[UnifiedWaveLanguage::HEAD_GAIN_MAGIC_OFFSET]!=
+      UnifiedWaveLanguage::HEAD_GAIN_MAGIC)
+    throw std::runtime_error("palindrome expert gates not initialized");
+   {
+    UnifiedWaveLanguage::State temporal{};
+    mind.observe(temporal,static_cast<uint8_t>('w'));
+    mind.observe(temporal,static_cast<uint8_t>('i'));
+    double diff=0;
+    for(size_t i=0;i<UnifiedWaveLanguage::N;++i)
+     diff+=std::fabs(temporal.wave[i]-temporal.inverse_wave[i]);
+    if(!(diff>0))throw std::runtime_error("forward and inverse waves did not separate");
+   }
    if(u.query('w','i',PRECEDES).support<=0||
       u.query('i','w',FOLLOWS).support<=0)
     throw std::runtime_error("inverse temporal pair was not written");
