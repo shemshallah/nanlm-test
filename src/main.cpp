@@ -3,6 +3,7 @@
 #include "nanlm/teacher.hpp"
 #include "nanlm/byte_model.hpp"
 #include "nanlm/recurrent_byte.hpp"
+#include "nanlm/hybrid_byte.hpp"
 #include <memory>
 #include <cmath>
 #include <fstream>
@@ -49,6 +50,28 @@ int main(int argc,char**argv){
      continue;
     }
     std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
+   }
+  }else if(op=="eval-hybrid"||op=="generate-hybrid"){
+   ByteModel counts(u,path);
+   RecurrentByteModel rnn(u,path);
+   if(op=="eval-hybrid"){
+    if(argc<4)throw std::invalid_argument("need held-out corpus");
+    const double weight=argc>4?std::stod(argv[4]):0.25;
+    HybridByteInference hybrid(counts,rnn,weight);
+    std::ifstream validation(argv[3],std::ios::binary);
+    if(!validation)throw std::runtime_error("held-out corpus not found");
+    const auto m=hybrid.evaluate(validation);
+    std::cout<<std::setprecision(9)<<"HYBRID_EVAL weight="<<weight
+             <<" tokens="<<m.tokens<<" ce_nats="<<m.ce()
+             <<" accuracy="<<m.accuracy()<<"\n";
+   }else{
+    if(argc<5)throw std::invalid_argument("need prompt and output length");
+    const auto length=std::stoull(argv[4]);
+    const auto seed=argc>5?std::stoull(argv[5]):11ull;
+    const double weight=argc>6?std::stod(argv[6]):0.25;
+    HybridByteInference hybrid(counts,rnn,weight);
+    std::cout<<argv[3]<<hybrid.generate(argv[3],length,seed);
+    std::cout.flush();
    }
   }else if(op=="benchmark-text"){
    if(argc<4)throw std::invalid_argument("need independent held-out corpus");
