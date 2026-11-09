@@ -20,11 +20,11 @@ test_learning_validation: tests/test_learning_validation.cpp include/nanlm/teach
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_learning_validation.cpp -o $@
 validate: test_learning_validation
 	./test_learning_validation
-test: test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+test: test_universe test_wordnet test_teacher test_quaternion test_multiloss
 	./test_universe
 	./test_wordnet
 	./test_teacher
 	./test_quaternion
 	./test_multiloss
 clean:
-	rm -f nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss
+	rm -f nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
