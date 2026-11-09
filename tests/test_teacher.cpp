@@ -28,6 +28,7 @@ int main(){
   expect(!teach.trial_gate(23,8,false,40),"Boolean gate protects target nibble");
   expect(!teach.trial_gate(23,0,true,40),"Boolean gate rejects regression");
   expect(teach.loss(23,40)<old_mask_loss,"Boolean update really improves normalized CE");
+  expected=teach.loss(23,40); // committed gate change is part of persisted predictive state
   const double cv=u.covariant_phase(23,40);
   std::array<double,HEADS> shifts{};
   for(unsigned i=0;i<HEADS;++i)shifts[i]=5*std::sin(i*0.27);
