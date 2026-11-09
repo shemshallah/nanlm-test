@@ -37,7 +37,7 @@ def run(root: Path, *args: str) -> str:
         text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         check=True, timeout=400,
     )
-    return process.stdout.strip()
+    return process.stdout
 
 def audit(root: Path, fixture: Path) -> dict:
     rows = {}
