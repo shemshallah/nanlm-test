@@ -1,5 +1,6 @@
 #include "nanlm/unified_wave.hpp"
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -58,6 +59,14 @@ int main(){
    check(std::fabs(inverse-s.inverse_wave[i])<1e-11,
          "sparse inverse mirror recurrence diverged from dense oracle");
   }
+  // Observe latency diagnostic only; CI machines have variable clocks.
+  const auto clock_start=std::chrono::steady_clock::now();
+  for(int step=0;step<512;++step)
+   m.observe(s,static_cast<uint8_t>('a'+step%4));
+  const auto elapsed=std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now()-clock_start).count();
+  std::cout<<"SPARSE_MIRROR_BENCHMARK steps=512 elapsed_us="<<elapsed
+           <<" arcs="<<m.active_mirror_arcs()<<" root_bytes="<<ROOT_BYTES<<"\n";
   for(const auto ext:{"",".overlay",".overlay.tmp",".so3"})
    std::filesystem::remove(root+ext);
   std::cout<<"PASS: cached sparse T and T* equal dense native mirror recurrence\n";
