@@ -14,8 +14,8 @@ int main(){
   auto path=w.path(artifacts[0],entities[0]);
   if(path.size()!=4)throw std::runtime_error("exact three-hop inference");
   if(w.path(entities[0],artifacts[0]).size()!=0)throw std::runtime_error("incorrect inverse forward chain");
-  auto concept=w.concept(artifacts[0]);
-  if(!concept||w.concepts_at(concept->leaf).empty())throw std::runtime_error("leaf addressability");
+  auto node=w.get_concept(artifacts[0]);
+  if(!node||w.concepts_at(node->leaf).empty())throw std::runtime_error("leaf addressability");
   if(u.event_count()!=4)throw std::runtime_error("physical relation projection");
   w.save(root+".wordnet.tsv");u.sync();
  }
