@@ -139,6 +139,7 @@ private:
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
  bool bptt_enabled_=true;
+ bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -648,13 +649,15 @@ public:
  uint64_t trained()const{return trained_;}
  void set_bptt_enabled(bool enabled){bptt_enabled_=enabled;}
  bool bptt_enabled()const{return bptt_enabled_;}
+ void set_frequency_learning_enabled(bool enabled){frequency_learning_enabled_=enabled;}
+ bool frequency_learning_enabled()const{return frequency_learning_enabled_;}
  uint64_t bptt_accepted()const{return bptt_accepted_;}
  uint64_t bptt_attempted()const{return bptt_attempted_;}
  double recurrent_input_gain(uint8_t head)const{return input_gain(head);}
  double recurrent_frequency_shift(uint8_t head)const{return recurrent_frequency(head);}
  void set_recurrent_frequency_shift(uint8_t head,double value){
   if(!std::isfinite(value)||value< -0.15||value>0.15)
-   throw std::invalid_argument("recurrent frequency out of range");
+   throw std::invalid_argument("recurrent frequency outside [-0.15,0.15]");
   write_frequency(head,static_cast<float>(value));
  }
  void set_recurrent_input_gain(uint8_t head,double value){
@@ -804,16 +807,32 @@ public:
  // True reverse-mode truncated BPTT through both SECOND-ORDER recurrences,
  // including T and T* scattering, old-wave links and clamp masks.
  // Detach only the oldest state (explicit 8-transition truncation).
+ double bptt_window_loss(const std::deque<State>& states,
+                         const std::deque<uint8_t>& symbols,
+                         uint8_t label,bool sequence=true)const{
+  if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
+     states.size()!=symbols.size()+1)
+   throw std::invalid_argument("invalid BPTT sequence objective");
+  const auto last=predict(states.back());
+  double objective=-std::log(std::max(last.p[label],1e-300));
+  size_t count=1;
+  if(sequence)for(size_t k=0;k<symbols.size();++k){
+   if(states[k].length==0)continue;
+   const auto p=predict(states[k]);
+   objective-=std::log(std::max(p.p[symbols[k]],1e-300));
+   ++count;
+  }
+  return objective/double(count);
+ }
  BpttGradient bptt_gradient(const std::deque<State>& states,
                            const std::deque<uint8_t>& symbols,
-                           uint8_t label)const{
+                           uint8_t label,bool sequence=false)const{
   if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
      states.size()!=symbols.size()+1)
    throw std::invalid_argument("invalid truncated wave tape");
   BpttGradient result{};
   result.steps=symbols.size();
-  const auto prediction=predict(states.back());
-  result.loss=-std::log(std::max(prediction.p[label],1e-300));
+  result.loss=bptt_window_loss(states,symbols,label,sequence);
   WaveAdjoint adj=output_wave_adjoint(states.back(),label);
   std::array<double,N> oscillator{},omega_slope{},in_degree{},out_degree{};
   for(size_t i=0;i<N;++i){
@@ -821,7 +840,7 @@ public:
    for(size_t m=0;m<MODES;++m)
     modal+=eigen_.eigenvalues[m]*eigen_.vectors[m][i]*eigen_.vectors[m][i];
    const double theta=omega_+0.1*std::tanh(modal)+
-                 recurrent_frequency(static_cast<uint8_t>(i));
+                  recurrent_frequency(static_cast<uint8_t>(i));
    oscillator[i]=2.0*damping_*std::cos(theta);
    omega_slope[i]=-2.0*damping_*std::sin(theta);
    in_degree[i]=in_degree_[i];
@@ -843,16 +862,34 @@ public:
     prev.yp[i]-=damping_*damping_*dy;
     if(i==byte)result.input[i]+=dx+dy;
     result.frequency[i]+=omega_slope[i]*(dx*before.wave[i]+
-                                  dy*before.inverse_wave[i]);
+                                    dy*before.inverse_wave[i]);
     for(const auto& arc:incoming_[i])
      prev.x[arc.head]+=0.08*arc.weight*dx/in_degree[i];
     for(const auto& arc:outgoing_[i])
      prev.y[arc.head]+=0.08*arc.weight*dy/out_degree[i];
    }
+   // Every earlier next-byte target contributes its OWN causal
+   // cross-entropy gradient before that state's adjoint is propagated
+   // through earlier temporal transitions.
+   if(sequence&&states[step-1].length){
+    const auto early=output_wave_adjoint(states[step-1],symbols[step-1]);
+    for(size_t i=0;i<N;++i){
+     prev.x[i]+=early.x[i];prev.xp[i]+=early.xp[i];
+     prev.y[i]+=early.y[i];prev.yp[i]+=early.yp[i];
+    }
+   }
    adj=prev;
   }
+  if(sequence){
+   size_t targets=1;
+   for(size_t k=0;k<symbols.size();++k)
+    if(states[k].length)++targets;
+   for(double& value:result.input)value/=double(targets);
+   for(double& value:result.frequency)value/=double(targets);
+  }
   for(double v:result.input)result.norm+=v*v;
-  for(double v:result.frequency)result.norm+=v*v;
+  if(frequency_learning_enabled_)
+   for(double v:result.frequency)result.norm+=v*v;
   result.norm=std::sqrt(result.norm);
   if(!std::isfinite(result.norm))
    throw std::runtime_error("nonfinite truncated wave gradient");
@@ -864,7 +901,7 @@ public:
  bool learn_bptt(State& state,std::deque<State>& states,
                  const std::deque<uint8_t>& symbols,uint8_t label){
   ++bptt_attempted_;
-  const auto grad=bptt_gradient(states,symbols,label);
+  const auto grad=bptt_gradient(states,symbols,label,true);
   if(grad.norm<1e-12)return false;
   std::array<float,N> old{},old_frequency{};
   std::array<std::array<uint8_t,10>,N> original{};
@@ -891,7 +928,7 @@ public:
     if(std::fabs(grad.input[i])>1e-12)
      write_input_gain(static_cast<uint8_t>(i),static_cast<float>(
         std::clamp(old[i]-rate*grad.input[i],0.6,1.4)));
-    if(std::fabs(grad.frequency[i])>1e-12)
+    if(frequency_learning_enabled_&&std::fabs(grad.frequency[i])>1e-12)
      write_frequency(static_cast<uint8_t>(i),static_cast<float>(
         std::clamp(old_frequency[i]-rate*grad.frequency[i],-0.15,0.15)));
    }
@@ -901,8 +938,7 @@ public:
     observe(next,byte);
     replay.push_back(std::move(next));
    }
-   const auto updated=predict(replay.back());
-   const double loss=-std::log(std::max(updated.p[label],1e-300));
+   const double loss=bptt_window_loss(replay,symbols,label,true);
    if(loss+1e-10<grad.loss){
     states=std::move(replay);
     state=states.back();
@@ -949,7 +985,7 @@ public:
       eigen_.vectors[m][i]*eigen_.vectors[m][i];
    }
    const double local_omega=omega_+0.1*std::tanh(modal_frequency)+
-                  recurrent_frequency(static_cast<uint8_t>(i));
+        recurrent_frequency(static_cast<uint8_t>(i));
    const double local_oscillation=2.0*damping_*std::cos(local_omega);
    const double input=(i==c?input_gain(c):0.0);
    next[i]=clamp(local_oscillation*s.wave[i]-decay*s.old_wave[i]+

@@ -57,10 +57,11 @@ int main(){
     informative+=std::fabs(analytic)>1e-6;
    }
    check(informative>=2,"frequency gradients did not flow through recurrence");
-   const double initial=gradient.loss;
+   const double initial=mind.bptt_window_loss(history,tokens,label,true);
+   mind.set_frequency_learning_enabled(true);
    check(mind.learn_bptt(state,history,tokens,label),
          "joint phase and input gradient did not improve true softmax CE");
-   check(-std::log(std::max(mind.predict(state).p[label],1e-300))<initial-1e-10,
+   check(mind.bptt_window_loss(history,tokens,label,true)<initial-1e-10,
          "joint optimizer accepted an invalid update");
    persisted=mind.recurrent_frequency_shift('c');
    check(std::fabs(persisted)>1e-8,"frequency register never updated");

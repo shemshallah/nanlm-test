@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -52,6 +52,14 @@ int main(int argc,char** argv){
      throw std::invalid_argument("training BPTT flag must be 0 or 1");
     mind.set_bptt_enabled(flag==1);
    }
+   if(argc>6){
+    const int flag=number(6);
+    if(flag!=0&&flag!=1)
+     throw std::invalid_argument("frequency-learning flag must be 0 or 1");
+    if(flag&&!mind.bptt_enabled())
+     throw std::invalid_argument("frequency learning requires BPTT");
+    mind.set_frequency_learning_enabled(flag==1);
+   }
    UnifiedWaveLanguage::Metrics last{};
    for(unsigned e=0;e<epochs;++e){
     std::ifstream file(argv[3],std::ios::binary);
@@ -65,6 +73,7 @@ int main(int argc,char** argv){
             <<" eigen_residual="<<mind.spectral().residual
             <<" mirror_mass="<<mind.spectral().edge_mass
             <<" bptt_enabled="<<int(mind.bptt_enabled())
+            <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
             <<" bptt_accepted="<<mind.bptt_accepted()<<"\n";
   }else if(operation=="eval"){

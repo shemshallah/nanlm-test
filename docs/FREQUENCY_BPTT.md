@@ -37,3 +37,13 @@ byte-exact preservation of the 256th network ingress head.
 
 The feature remains experimental until the authored three-domain
 and pinned cross-author public-domain evaluations have been inspected.
+
+## Compatibility and experimental status
+
+Frequency shifts start at zero and frequency training is **disabled by
+default**. Enable it deliberately with
+`nanlm ROOT train TEXT EPOCHS BPTT_0_OR_1 FREQUENCY_0_OR_1`.
+The training experiment is opt-in pending an independently measured
+cross-author improvement; native gradient tests still exercise the
+feature explicitly. Accepted updates are checked against the full
+teacher-forced sequence objective. These are not fluency guarantees.

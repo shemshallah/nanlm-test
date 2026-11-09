@@ -64,13 +64,16 @@ int main(){
     require(std::fabs(finite-analytical)/scale<0.004,
             "reverse-mode gradient failed finite difference check");
    }
-   const double prior=grad.loss;
+   // Single-terminal BPTT gradients above remain independently checked.
+   // The sequence trainer now uses the AVERAGE of all teacher-forced
+   // next-token losses; an accepted step may trade away terminal loss.
+   const double prior=m.bptt_window_loss(states,symbols,label,true);
    require(m.learn_bptt(state,states,symbols,label),
-           "exact-loss BPTT step failed to accept on causal seven-step tape");
+           "sequence BPTT step failed to accept on causal seven-step tape");
    require(m.bptt_accepted()==1&&m.bptt_attempted()==1,
            "native BPTT counters wrong");
-   const auto after=-std::log(std::max(m.predict(state).p[label],1e-300));
-   require(after+1e-9<prior,"accepted BPTT failed true softmax objective");
+   const double after=m.bptt_window_loss(states,symbols,label,true);
+   require(after+1e-9<prior,"accepted BPTT failed teacher-forced sequence objective");
    require(std::fabs(m.recurrent_input_gain('a')-1.0)>1e-7,
            "remote input weight not trained");
    require(std::memcmp(u.root().h[255].data,ingress_initial.data(),128)==0,
