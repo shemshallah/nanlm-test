@@ -1,6 +1,9 @@
 #include "nanlm/universe.hpp"
 #include "nanlm/wordnet.hpp"
 #include "nanlm/teacher.hpp"
+#include "nanlm/byte_model.hpp"
+#include <memory>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -10,7 +13,7 @@ using namespace nanlm;
 int main(int argc,char**argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|resident|teach-stream FILE|eval-stream FILE|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|resident|teach-stream FILE|eval-stream FILE|train-text FILE [EPOCHS] [TEACHER_STRIDE]|eval-text FILE|generate PROMPT N [SEED] [TEMP] [TOP_P]|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],op=argv[2];
@@ -45,6 +48,43 @@ int main(int argc,char**argv){
      continue;
     }
     std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
+   }
+  }else if(op=="train-text"||op=="eval-text"||op=="generate"){
+   ByteModel model(u,path);
+   if(op=="train-text"){
+    if(argc<4)throw std::invalid_argument("need corpus file");
+    const unsigned epochs=argc>4?static_cast<unsigned>(std::stoul(argv[4])):1u;
+    const uint64_t stride=argc>5?std::stoull(argv[5]):0ull;
+    if(epochs<1||epochs>1000)throw std::invalid_argument("epochs must be 1..1000");
+    std::unique_ptr<FabricTeacher> teacher;
+    if(stride)teacher=std::make_unique<FabricTeacher>(u);
+    uint64_t count=0;
+    for(unsigned epoch=0;epoch<epochs;++epoch){
+     std::ifstream corpus(argv[3],std::ios::binary);
+     if(!corpus)throw std::runtime_error("corpus not found");
+     count+=model.train(corpus,teacher.get(),stride,count);
+    }
+    model.save();u.sync();
+    std::cout<<"TRAINED bytes="<<count<<" cumulative="<<model.tokens()
+             <<" contexts="<<model.contexts()<<" order="<<ByteModel::ORDER
+             <<" teacher_stride="<<stride<<" root_bytes="<<ROOT_BYTES<<"\n";
+   }else if(op=="eval-text"){
+    if(argc<4)throw std::invalid_argument("need evaluation file");
+    std::ifstream corpus(argv[3],std::ios::binary);
+    if(!corpus)throw std::runtime_error("evaluation corpus not found");
+    const auto m=model.evaluate(corpus);
+    std::cout<<std::setprecision(9)<<"EVAL bytes="<<m.bytes
+             <<" ce_nats="<<m.mean_ce()<<" bits_per_byte="
+             <<m.mean_ce()/std::log(2.0)<<" accuracy="<<m.accuracy()
+             <<" novel_contexts="<<m.novel_contexts<<"\n";
+   }else{
+    if(argc<5)throw std::invalid_argument("need quoted prompt and byte count");
+    const size_t length=std::stoull(argv[4]);
+    const uint64_t seed=argc>5?std::stoull(argv[5]):11ull;
+    const double temperature=argc>6?std::stod(argv[6]):0.85;
+    const double top_p=argc>7?std::stod(argv[7]):0.92;
+    std::cout<<argv[3]<<model.generate(argv[3],length,seed,temperature,top_p);
+    std::cout.flush();
    }
   }else if(op=="teach-stream"||op=="eval-stream"){
    if(argc<4)throw std::invalid_argument("need corpus file");
