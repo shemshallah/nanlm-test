@@ -32,8 +32,8 @@ class FabricTeacher {
  double lr_;
  double angular_weight_;
  double evidence_weight_;
- static constexpr double DOT_GAIN=4.0;
- static constexpr double Q_GAIN=0.45;
+ double dot_gain_;
+ double quaternion_weight_;
  using Vector=std::array<float,3>;
  using Matrix=std::array<Vector,VOCAB>;
  static Vector get(const Head& h,size_t offset){
@@ -64,7 +64,7 @@ class FabricTeacher {
  }
  double score(uint8_t previous,uint8_t candidate,const Vector& src,const Vector& dst,const Vec3& rot,bool bypass_gate=false)const{
   if(!bypass_gate && (gates(previous)&static_cast<uint16_t>(1u<<(candidate&15)))==0)return -30.;
-  const double coupling=DOT_GAIN*dot(src,dst);
+  const double coupling=dot_gain_*dot(src,dst);
   const double phase=previous==candidate?0.:u_.covariant_phase(previous,candidate);
   const double angle=norm_angle(src,dst);
   const double geometry=angular_weight_*std::cos(phase-angle);
@@ -74,7 +74,7 @@ class FabricTeacher {
   const double triply_rotated=0.12*(rot.x*dst[0]+rot.y*dst[1]+rot.z*dst[2]);
   const Vec3q shifted=u_.quaternion_field().get(previous,candidate).rotate(
     {dst[0],dst[1],dst[2]});
-  const double transported=Q_GAIN*(double(src[0])*shifted.x+
+  const double transported=quaternion_weight_*(double(src[0])*shifted.x+
                                    double(src[1])*shifted.y+
                                    double(src[2])*shifted.z);
   return coupling+geometry+triply_rotated+transported+
@@ -88,9 +88,14 @@ class FabricTeacher {
  }
  public:
  explicit FabricTeacher(Universe& u,double learning_rate=0.055,
-                        double angular_weight=0.08,double evidence_weight=0.09):
-  u_(u),lr_(learning_rate),angular_weight_(angular_weight),evidence_weight_(evidence_weight){
-  if(lr_<=0||lr_>1||angular_weight_<0||evidence_weight_<0)
+                        double angular_weight=0.08,double evidence_weight=0.09,
+                        double quaternion_weight=0.45,double dot_gain=4.0):
+  u_(u),lr_(learning_rate),angular_weight_(angular_weight),
+  evidence_weight_(evidence_weight),dot_gain_(dot_gain),quaternion_weight_(quaternion_weight){
+  if(!std::isfinite(lr_)||!std::isfinite(angular_weight_)||
+     !std::isfinite(evidence_weight_)||!std::isfinite(dot_gain_)||
+     !std::isfinite(quaternion_weight_)||lr_<=0||lr_>1||
+     angular_weight_<0||evidence_weight_<0||dot_gain_<=0||quaternion_weight_<0)
    throw std::invalid_argument("invalid learning rate or gain");
   // Fixed, reproducible, deterministic state for previously blank heads.
   for(unsigned i=0;i<VOCAB;++i){
@@ -182,8 +187,8 @@ class FabricTeacher {
    const std::array<double,3> move{moved.x,moved.y,moved.z};
    const std::array<double,3> back{backward.x,backward.y,backward.z};
    for(unsigned k=0;k<3;++k){
-    grad_src[k]+=static_cast<float>(residual*(DOT_GAIN*old_dst[j][k]+Q_GAIN*move[k]));
-    grad_dst[j][k]=static_cast<float>(residual*(DOT_GAIN*old_src[k]+0.12*rotor_vec[k]+Q_GAIN*back[k]));
+    grad_src[k]+=static_cast<float>(residual*(dot_gain_*old_dst[j][k]+quaternion_weight_*move[k]));
+    grad_dst[j][k]=static_cast<float>(residual*(dot_gain_*old_src[k]+0.12*rotor_vec[k]+quaternion_weight_*back[k]));
    }
   }
   // Evaluate proposed parameters in scratch, then commit atomically with respect
@@ -199,8 +204,8 @@ class FabricTeacher {
     for(unsigned k=0;k<3;++k)candidate_dst[j][k]=
       static_cast<float>(clip(old_dst[j][k]-rate*grad_dst[j][k]));
     const double base=prediction.logit[j];
-    const double old_dot=DOT_GAIN*dot(old_src,old_dst[j]);
-    const double new_dot=DOT_GAIN*dot(candidate_src,candidate_dst[j]);
+    const double old_dot=dot_gain_*dot(old_src,old_dst[j]);
+    const double new_dot=dot_gain_*dot(candidate_src,candidate_dst[j]);
     const double old_angle=norm_angle(old_src,old_dst[j]);
     const double new_angle=norm_angle(candidate_src,candidate_dst[j]);
     const Quat q=u_.quaternion_field().get(previous,static_cast<uint8_t>(j));
@@ -214,7 +219,7 @@ class FabricTeacher {
       0.12*(rotor_vec[0]*(candidate_dst[j][0]-old_dst[j][0])+
             rotor_vec[1]*(candidate_dst[j][1]-old_dst[j][1])+
             rotor_vec[2]*(candidate_dst[j][2]-old_dst[j][2]))+
-      Q_GAIN*(new_qdot-old_qdot);
+      quaternion_weight_*(new_qdot-old_qdot);
    }
    const double after=logloss(trial_logits,next);
    if(after+1e-12<before){
@@ -222,7 +227,7 @@ class FabricTeacher {
     for(unsigned j=0;j<VOCAB;++j)put(u_.root().h[j],48,candidate_dst[j]);
     // The quaternion proposal is a true scratch trial: we modify only the
     // candidate's logit off-heap and never temporarily mutate the live field.
-    if(previous!=next){
+    if(previous!=next && quaternion_weight_>0){
      const auto p=predict(previous);
      const auto& src_head=u_.root().h[previous];
      const auto& dst_head=u_.root().h[next];
@@ -232,7 +237,7 @@ class FabricTeacher {
      const Quat correction=Quat::from_to(old_moved,{s[0],s[1],s[2]});
      const Quat proposed=Quat::slerp(old_q,correction*old_q,0.20);
      const Vec3q new_moved=proposed.rotate({d[0],d[1],d[2]});
-     const double change=Q_GAIN*(s[0]*(new_moved.x-old_moved.x)+
+     const double change=quaternion_weight_*(s[0]*(new_moved.x-old_moved.x)+
                                  s[1]*(new_moved.y-old_moved.y)+
                                  s[2]*(new_moved.z-old_moved.z));
      auto logits=p.logit;logits[next]+=change;
