@@ -50,6 +50,25 @@ int main(int argc,char**argv){
     }
     std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
    }
+  }else if(op=="benchmark-text"){
+   if(argc<4)throw std::invalid_argument("need independent held-out corpus");
+   ByteModel count(u,path);
+   RecurrentByteModel rnn(u,path);
+   std::cout<<std::setprecision(9);
+   for(unsigned order=0;order<=ByteModel::ORDER;++order){
+    std::ifstream validation(argv[3],std::ios::binary);
+    if(!validation)throw std::runtime_error("validation file not found");
+    const auto m=count.evaluate(validation,order);
+    std::cout<<"BENCH model=ngram order="<<order<<" tokens="<<m.bytes
+             <<" ce_nats="<<m.mean_ce()<<" accuracy="<<m.accuracy()
+             <<" unseen_contexts="<<m.novel_contexts<<"\n";
+   }
+   std::ifstream validation(argv[3],std::ios::binary);
+   if(!validation)throw std::runtime_error("validation file not found");
+   const auto n=rnn.evaluate(validation);
+   std::cout<<"BENCH model=rnn32 order=recurrent tokens="<<n.tokens
+            <<" ce_nats="<<n.ce()<<" accuracy="<<n.accuracy()
+            <<" trained_updates="<<rnn.updates()<<"\n";
   }else if(op=="train-rnn"||op=="eval-rnn"||op=="generate-rnn"){
    RecurrentByteModel rnn(u,path);
    if(op=="train-rnn"){
