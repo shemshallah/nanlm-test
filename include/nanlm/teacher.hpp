@@ -36,7 +36,9 @@ class FabricTeacher {
  double quaternion_weight_;
  double rule_gain_;
  bool train_heads_;
+ double feature_rotor_gain_;
  static constexpr uint8_t RULE_HEAD=PRECEDES;
+ static constexpr uint8_t RULE_INVERSE_HEAD=FOLLOWS;
  static constexpr size_t RULE_QUAT_OFFSET=96;
  static constexpr size_t RULE_INIT_OFFSET=112;
  static constexpr uint8_t RULE_MAGIC=0xA5;
@@ -75,6 +77,9 @@ class FabricTeacher {
    if(logloss(logits,next)+1e-12<original) {
     std::memcpy(u_.root().h[RULE_HEAD].data+RULE_QUAT_OFFSET,
                 &candidate,sizeof(candidate));
+    const Quat inverse=candidate.conjugate();
+    std::memcpy(u_.root().h[RULE_INVERSE_HEAD].data+RULE_QUAT_OFFSET,
+                &inverse,sizeof(inverse));
     return true;
    }
   }
@@ -117,7 +122,7 @@ class FabricTeacher {
   const double evidence=previous==candidate?self_count(previous):
                           u_.query(previous,candidate,PRECEDES).support;
   // Formal refutations are NOT treated as negative language examples.
-  const double triply_rotated=0.12*(rot.x*dst[0]+rot.y*dst[1]+rot.z*dst[2]);
+  const double triply_rotated=feature_rotor_gain_*(rot.x*dst[0]+rot.y*dst[1]+rot.z*dst[2]);
   const Vec3q shifted=u_.quaternion_field().get(previous,candidate).rotate(
     {dst[0],dst[1],dst[2]});
   const double transported=quaternion_weight_*(double(src[0])*shifted.x+
@@ -138,16 +143,18 @@ class FabricTeacher {
  explicit FabricTeacher(Universe& u,double learning_rate=0.055,
                         double angular_weight=0.08,double evidence_weight=0.09,
                         double quaternion_weight=0.45,double dot_gain=4.0,
-                        double rule_gain=0.0,bool train_heads=true):
+                        double rule_gain=0.0,bool train_heads=true,
+                        double feature_rotor_gain=0.12):
   u_(u),lr_(learning_rate),angular_weight_(angular_weight),
   evidence_weight_(evidence_weight),dot_gain_(dot_gain),
   quaternion_weight_(quaternion_weight),rule_gain_(rule_gain),
-  train_heads_(train_heads){
+  train_heads_(train_heads),feature_rotor_gain_(feature_rotor_gain){
   if(!std::isfinite(lr_)||!std::isfinite(angular_weight_)||
      !std::isfinite(evidence_weight_)||!std::isfinite(dot_gain_)||
      !std::isfinite(quaternion_weight_)||!std::isfinite(rule_gain_)||
-     lr_<=0||lr_>1||angular_weight_<0||evidence_weight_<0||
-     dot_gain_<=0||quaternion_weight_<0||rule_gain_<0)
+     !std::isfinite(feature_rotor_gain_)||lr_<=0||lr_>1||
+     angular_weight_<0||evidence_weight_<0||dot_gain_<0||
+     quaternion_weight_<0||rule_gain_<0||feature_rotor_gain_<0)
    throw std::invalid_argument("invalid learning rate or gain");
   // Fixed, reproducible, deterministic state for previously blank heads.
   for(unsigned i=0;i<VOCAB;++i){
@@ -168,11 +175,17 @@ class FabricTeacher {
   // It is part of the same mmap root, and does not steal a language symbol.
   if(rule_gain_>0) {
    Head& h=u_.root().h[RULE_HEAD];
+   Head& inverse_head=u_.root().h[RULE_INVERSE_HEAD];
    if(h.data[RULE_INIT_OFFSET]!=RULE_MAGIC) {
     const Quat id=Quat::identity();
     std::memcpy(h.data+RULE_QUAT_OFFSET,&id,sizeof(id));
     h.data[RULE_INIT_OFFSET]=RULE_MAGIC;
    }
+   // The inverse follows the forward operator, even when an older root
+   // existed before the shared relation circuit was introduced.
+   const Quat inverse=shared_rule().conjugate();
+   std::memcpy(inverse_head.data+RULE_QUAT_OFFSET,&inverse,sizeof(inverse));
+   inverse_head.data[RULE_INIT_OFFSET]=RULE_MAGIC;
   }
  }
  Prediction predict(uint8_t previous)const{
@@ -256,7 +269,7 @@ class FabricTeacher {
    const std::array<double,3> back{backward.x,backward.y,backward.z};
    for(unsigned k=0;k<3;++k){
     grad_src[k]+=static_cast<float>(residual*(dot_gain_*old_dst[j][k]+quaternion_weight_*move[k]));
-    grad_dst[j][k]=static_cast<float>(residual*(dot_gain_*old_src[k]+0.12*rotor_vec[k]+quaternion_weight_*back[k]));
+    grad_dst[j][k]=static_cast<float>(residual*(dot_gain_*old_src[k]+feature_rotor_gain_*rotor_vec[k]+quaternion_weight_*back[k]));
    }
   }
   // Evaluate proposed parameters in scratch, then commit atomically with respect
@@ -284,7 +297,7 @@ class FabricTeacher {
     const double phase=previous==j?0.0:u_.covariant_phase(previous,static_cast<uint8_t>(j));
     trial_logits[j]=base-old_dot+new_dot+
       angular_weight_*(std::cos(phase-new_angle)-std::cos(phase-old_angle))+
-      0.12*(rotor_vec[0]*(candidate_dst[j][0]-old_dst[j][0])+
+      feature_rotor_gain_*(rotor_vec[0]*(candidate_dst[j][0]-old_dst[j][0])+
             rotor_vec[1]*(candidate_dst[j][1]-old_dst[j][1])+
             rotor_vec[2]*(candidate_dst[j][2]-old_dst[j][2]))+
       quaternion_weight_*(new_qdot-old_qdot);
