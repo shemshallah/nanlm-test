@@ -57,6 +57,12 @@ int main(){
    check(std::fabs(p.p['s']-shifted.p['s'])>1e-10,
          "persistent trainable readout inert");
    mind.set_triad_parameters(old);
+   // Shared dev calibration may neutralize an unhelpful triad.
+   mind.set_triad_scale(0.0);
+   const auto muted=mind.predict(state);
+   check(std::fabs(muted.p['s']-no_tri.p['s'])<1e-12,
+         "zero triad scale must equal the no-triad ablation");
+   mind.set_triad_scale(1.0);
    std::istringstream corpus(
       "sailor sails to harbor. the sailor arrived home. "
       "harbor lights guide sailors and ships. ");
