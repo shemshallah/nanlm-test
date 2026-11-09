@@ -26,8 +26,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make test_episodic_memory test_triad_waveformer test_wave_bptt test_frequency_bptt CXX="${{ matrix.compiler }}"
+          make test_episodic_memory test_associative_memory test_triad_waveformer test_wave_bptt test_frequency_bptt CXX="${{ matrix.compiler }}"
           ./test_episodic_memory | tee episodic-tests.log
+          ./test_associative_memory | tee associative-tests.log
           ./test_triad_waveformer | tee triad-tests.log
           ./test_wave_bptt | tee wave-adjoint-tests.log
           ./test_frequency_bptt | tee frequency-tests.log
@@ -38,6 +39,7 @@ jobs:
           name: episodic-native-${{ matrix.compiler }}
           path: |
             episodic-tests.log
+            associative-tests.log
             triad-tests.log
             wave-adjoint-tests.log
             frequency-tests.log

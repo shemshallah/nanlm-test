@@ -214,3 +214,16 @@ The CPU cost of searching all records is opt-in; ordinary exact lookup still
 uses the fast hash index. These features are **lexical/structural**; they do
 not amount to semantic retrieval or factual truth estimation. Unicode typos
 are counted in UTF-8 bytes, not codepoints.
+
+## Fixed-seed 512-typo benchmark and ablations
+
+The new `test_associative_memory` imports 128 deliberately distinct,
+synthetically generated source-backed cues under an immutable xorshift32
+seed. Each cue is challenged with one substitution, one insertion, one
+deletion and two substitutions (512 evaluations). Three controls are
+ranked on *exact cue identification* only: original phase-only suggestions,
+edit distance alone, and edit distance plus the current 85-triad hot-8
+sketch. Each reports top-1 and top-3 recovered cue counts and measured
+per-query microseconds. No approximate cue is permitted to trigger
+exact-copy. This evaluates lexical typo tolerance, **not semantic
+memory retrieval, factual correctness, or public-domain language CE**.

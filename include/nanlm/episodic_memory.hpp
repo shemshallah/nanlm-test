@@ -457,7 +457,8 @@ public:
  std::vector<Suggestion> suggest_robust(
          const uint8_t* history,size_t length,size_t count,
          size_t max_edits,const TriadCueRouter::Mapping& group_of,
-         const std::array<double,255>* live_wave=nullptr)const{
+         const std::array<double,255>* live_wave=nullptr,
+         bool use_triad=true)const{
   if(!history||length==0||count==0||count>16||max_edits>3)
    return {};
   length=std::min(length,TriadCueRouter::MAX_CUE);
@@ -482,10 +483,14 @@ public:
    }
    if(best>max_edits)continue;
    const auto matching=recent.substr(length-best_len);
-   const auto a=TriadCueRouter::encode(matching,group_of);
-   const auto b=TriadCueRouter::encode(r.cue,group_of);
-   const double triad=TriadCueRouter::cosine(a,b);
-   const size_t hot=TriadCueRouter::hotspots(a,b);
+   double triad=0;
+   size_t hot=0;
+   if(use_triad){
+    const auto a=TriadCueRouter::encode(matching,group_of);
+    const auto b=TriadCueRouter::encode(r.cue,group_of);
+    triad=TriadCueRouter::cosine(a,b);
+    hot=TriadCueRouter::hotspots(a,b);
+   }
    double score=similarity(phase_code(matching),r.phase);
    if(live_wave){
     double imprint=0;
