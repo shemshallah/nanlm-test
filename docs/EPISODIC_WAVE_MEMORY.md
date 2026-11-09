@@ -44,8 +44,11 @@ a mismatching continuation deactivates the copy.
 `memorize` is the *only* write path. Ordinary training, evaluation and
 generation load the checkpoint read-only. No automatic ingestion from
 held-out evaluation data, no query-time online learning, and no claim that
-the model has discovered facts on its own. A repeated cue is an explicit
-overwrite with the new value and source.
+the model has discovered facts on its own. A repeated (cue, source) is an explicit
+revision of that source's value. Different sources remain separate; if they
+assert different values for one cue, it is **contested**: direct recall
+reports `UNIFIED_EPISODIC_CONTESTED` and automatic exact copying is disabled
+for that cue. No arbitrary winner is chosen.
 
 To reproduce exact content longer than the 64-byte context window,
 the stream state stores a lightweight record index and next-value offset.
