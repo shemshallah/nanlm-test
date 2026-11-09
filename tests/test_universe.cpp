@@ -65,6 +65,15 @@ int main(){
  for(size_t i=0;i<HEADS;++i)g[i]=30*std::sin(i*0.137);
  u.gauge(g);
  check(std::fabs(u.triangle(1,2,3)-before)<1e-11,"large vertex gauge invariance");
+ check(std::fabs(u.anchored_triangle(1,2,3)-u.triangle(1,2,3))<1e-10,"exact anchored cycle basis");
+ const auto gcycle=u.hodge_potentials();
+ for(unsigned a=0;a<HEADS;++a){
+  double divergence=0;
+  for(unsigned b=0;b<HEADS;++b)if(a!=b)divergence+=u.hodge_cycle(
+    static_cast<uint8_t>(a),static_cast<uint8_t>(b),gcycle);
+  check(std::fabs(divergence)<1e-9,"Hodge residual divergence-free");
+ }
+
  Vec3 a=u.transformed(41);
  check(std::fabs((a.x*a.x+a.y*a.y+a.z*a.z)-1)<1e-12,"orthogonal trig transform");
  u.observe(41);check(u.root().h[41].data[16]==1,"learned register update");
