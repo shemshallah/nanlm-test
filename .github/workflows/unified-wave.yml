@@ -29,9 +29,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf 'trees bend in the wind.\ntrees grow beneath the sun.\n' > /tmp/train.txt
+          printf 'trees bend in the wind.\ntrees grow beneath the sun.\n' > /tmp/unified-train.txt
           printf 'clouds move beyond the hills.\n' > /tmp/unified-heldout.txt
-          ./nanlm /tmp/unified-hw0 unified-train /tmp/unified-train.txt 2 | tee train.log
+          ./nanlm /tmp/unified-hw0 train /tmp/unified-train.txt 2 | tee train.log
           ./nanlm /tmp/unified-hw0 spectrum | tee spectrum.log
           ./nanlm /tmp/unified-hw0 eval /tmp/unified-heldout.txt | tee heldout.log
           ./nanlm /tmp/unified-hw0 generate 'trees ' 72 29 > sample-a.txt
