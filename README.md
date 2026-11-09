@@ -131,3 +131,32 @@ external persistent storage.
 4. Compare scalar U(1) vs noncommuting SO(3) geometry with controlled
    three-body tasks, temporal generalization and uncertainty calibration.
 5. Only then integrate Nannet transport to HW4:0.
+
+## Binary-phase Harmony experiment
+
+See [architecture, measured results, and limits](docs/HARMONY.md).
+
+```
+make test validate-harmony nanlm
+./nanlm /tmp/harmony harmony-train corpus.txt
+./nanlm /tmp/harmony harmony-eval heldout.txt
+./nanlm /tmp/harmony generate 97 256 11 > generated.bin
+./nanlm /tmp/harmony nan-program
+./nanlm /tmp/harmony spectrum 97
+./nanlm /tmp/harmony import-wordnet tests/fixtures/data.noun
+./nanlm /tmp/harmony wordnet-link entity
+python3 tools/check_nan0s.py ../NaN0S
+sh ../NaN0S/tools/nrun.sh "$PWD/guest/phase.nas" 4000000
+```
+
+The new commands train a count-backed mixture with learned phase and Boolean
+experts, sample raw bytes, export a learned native instruction, and resolve
+exact WordNet IDs through the head-255 gateway intent. Transport is still a
+stub. The trainer is C++; native NaN16 Boolean translations and trig execute
+in the upstream VM. Synthetic transfer results are not a fluency claim.
+
+For streaming sequence learning, exact WordNet recall, and independent worker
+shard aggregation, see [the distributed training design](docs/DISTRIBUTED.md).
+The runnable context model needs only Python's standard library and SQLite.
+It is an exact sparse overlay; distributed transport and a native NaN16 port
+of the full language trainer remain open integration work.

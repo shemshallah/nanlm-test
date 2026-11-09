@@ -1,0 +1,28 @@
+name: Native NaN16 phase and Boolean bridge
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: shemshallah/NaN0S
+          ref: 24b358403226fa5bb5b5d108960f03cd9e32536b
+          path: upstream-nan0s
+      - name: All truth tables execute in upstream VM
+        run: python3 tools/check_nan0s.py upstream-nan0s
+      - name: Exhaustive native phase checksum
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tools/build_phase_guest.py
+          git diff --exit-code -- guest/phase.nas
+          sh upstream-nan0s/tools/nrun.sh "$PWD/guest/phase.nas" 4000000 | tee phase.log
+          grep '^PHASE PASS$' phase.log

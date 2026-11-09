@@ -1,0 +1,5 @@
+/nanlm
+/test_*
+/validate_harmony
+__pycache__/
+*.pyc
