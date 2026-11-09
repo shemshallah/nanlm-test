@@ -88,44 +88,66 @@ def main() -> None:
             "carol_later": save(held_b, carol[28000:31000]),
         }
         assert splits["training"]["bytes"] >= 10000
-        root = folder / "mapped_hw0"
-        before = {name: ce(run(root,"eval",file)) for name,file in
-                  (("carol_early",held_a),("carol_later",held_b))}
-        trained = run(root,"train",train,1)
-        assert root.stat().st_size == 8388608
-        development = ce(run(root,"eval",dev))
-        uncalibrated = {name: ce(run(root,"eval",file)) for name,file in
-                        (("carol_early",held_a),("carol_later",held_b))}
-        calibrated = run(root,"calibrate",dev)
-        after = {name: ce(run(root,"eval",file)) for name,file in
-                 (("carol_early",held_a),("carol_later",held_b))}
-        sample = run(root,"generate","Alice was ",120,29)
-        assert sample.startswith("Alice was ")
-        weights = sum(v["tokens"] for v in after.values())
-        combined = lambda group: sum(v["tokens"]*v["cross_entropy"]
-                            for v in group.values())/weights
+        weighted = lambda group: sum(
+            row["tokens"]*row["cross_entropy"] for row in group.values()
+        )/sum(row["tokens"] for row in group.values())
+        variants = {}
+        for enabled in (False, True):
+            name = "bptt_on" if enabled else "bptt_off"
+            root = folder / ("mapped_hw0_" + name)
+            before = {key: ce(run(root,"eval",file)) for key,file in
+                      (("carol_early",held_a),("carol_later",held_b))}
+            trained = run(root,"train",train,1,int(enabled))
+            assert root.stat().st_size == 8388608
+            assert f"bptt_enabled={int(enabled)}" in trained, trained
+            development = ce(run(root,"eval",dev))
+            uncalibrated = {key: ce(run(root,"eval",file)) for key,file in
+                            (("carol_early",held_a),("carol_later",held_b))}
+            calibrated = run(root,"calibrate",dev)
+            after = {key: ce(run(root,"eval",file)) for key,file in
+                     (("carol_early",held_a),("carol_later",held_b))}
+            sample = run(root,"generate","Alice was ",120,29)
+            assert sample.startswith("Alice was ")
+            variants[name] = {
+                "before": before, "uncalibrated": uncalibrated,
+                "after": after, "training_log": trained.strip(),
+                "development": development,
+                "calibration_log": calibrated.strip(),
+                "weighted_before": weighted(before),
+                "weighted_uncalibrated": weighted(uncalibrated),
+                "weighted_after": weighted(after),
+                "generation_sample": sample[:140],
+            }
+            print(f"PUBLIC_DOMAIN_VARIANT name={name} "
+                  f"before_ce={weighted(before):.8f} "
+                  f"uncalibrated_ce={weighted(uncalibrated):.8f} "
+                  f"calibrated_ce={weighted(after):.8f}")
+            print("PUBLIC_DOMAIN_GENERATION variant="+name+
+                  " sample="+repr(sample[:100]))
+        control, treatment = variants["bptt_off"], variants["bptt_on"]
+        delta = treatment["weighted_after"]-control["weighted_after"]
+        assert all(math.isfinite(v["weighted_after"]) for v in variants.values())
+        assert sum(v["tokens"] for v in control["after"].values()) == 5998
         report = {
             "sources": {"alice": a_info, "carol": c_info},
-            "splits": splits, "before": before, "uncalibrated": uncalibrated,
-            "after": after, "training_log": trained.strip(),
-            "development": development, "calibration_log": calibrated.strip(),
-            "weighted_before": combined(before),
-            "weighted_uncalibrated": combined(uncalibrated),
-            "weighted_after": combined(after),
-            "generation_sample": sample[:140],
-            "disclaimer": "Cross-author public-domain diagnostic; tiny training sample; not fluency proof",
+            "splits": splits, "variants": variants,
+            "bptt_delta_ce": delta,
+            "disclaimer": "Identical training/dev/heldout splits, independent 8MiB roots. "
+                          "Positive delta means BPTT hurt heldout CE. "
+                          "No fluency claim; train-position acceptance is not heldout validation.",
         }
         (HERE/"public-domain-report.json").write_text(json.dumps(report,indent=2)+"\n")
         print("PUBLIC_DOMAIN_SOURCE alice_sha256="+a_info["source_sha256"]+
               " carol_sha256="+c_info["source_sha256"])
-        print(f"PUBLIC_DOMAIN_TRANSFER bytes={weights} "
-              f"before_ce={report['weighted_before']:.8f} "
-              f"uncalibrated_ce={report['weighted_uncalibrated']:.8f} "
-              f"calibrated_ce={report['weighted_after']:.8f}")
-        for name,row in after.items():
-            print(f"PUBLIC_DOMAIN_DOMAIN name={name} tokens={row['tokens']} "
-                  f"ce={row['cross_entropy']:.8f} accuracy={row['accuracy']:.6f}")
-        print("PUBLIC_DOMAIN_GENERATION sample="+repr(sample[:100]))
+        print(f"PUBLIC_DOMAIN_BPTT_COMPARISON tokens=5998 "
+              f"off_ce={control['weighted_after']:.8f} "
+              f"on_ce={treatment['weighted_after']:.8f} "
+              f"delta_nats={delta:+.8f}")
+        for name,variant in variants.items():
+            for domain,row in variant["after"].items():
+                print(f"PUBLIC_DOMAIN_DOMAIN variant={name} name={domain} "
+                      f"tokens={row['tokens']} ce={row['cross_entropy']:.8f} "
+                      f"accuracy={row['accuracy']:.6f}")
 
 if __name__=="__main__":
     main()
