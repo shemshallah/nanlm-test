@@ -28,7 +28,7 @@ PATTERN = re.compile(
 )
 REQUIRED = {
     "full", "no_wave", "no_attention", "no_spectral", "no_cycle",
-    "no_inverse_evidence", "no_hyperedge", "teacher_only",
+    "no_inverse_evidence", "no_hyperedge", "no_fourth_order", "teacher_only",
 }
 
 def run(root: Path, *args: str) -> str:
@@ -54,7 +54,7 @@ def audit(root: Path, fixture: Path) -> dict:
         rows[mode] = row
     # Support both current 8-mode main and the experimental temporal track
     # which adds no_long_context; record whichever was actually run.
-    assert REQUIRED.issubset(rows) and len(rows) in (8, 9), sorted(rows)
+    assert REQUIRED.issubset(rows) and len(rows) in (9, 10), sorted(rows)
     assert len({row["tokens"] for row in rows.values()}) == 1
     return rows
 
