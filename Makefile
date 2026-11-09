@@ -9,8 +9,12 @@ test_universe: tests/test_universe.cpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_universe.cpp -o $@
 test_wordnet: tests/test_wordnet.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_wordnet.cpp -o $@
-test: test_universe test_wordnet
+
+test_teacher: tests/test_teacher.cpp include/nanlm/teacher.hpp include/nanlm/universe.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_teacher.cpp -o $@
+test: test_universe test_wordnet test_teacher
 	./test_universe
 	./test_wordnet
+	./test_teacher
 clean:
-	rm -f nanlm test_universe test_wordnet
+	rm -f nanlm test_universe test_wordnet test_teacher
