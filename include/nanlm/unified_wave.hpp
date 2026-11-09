@@ -135,6 +135,7 @@ private:
  std::array<double,N> in_degree_{},out_degree_{};
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
+ bool bptt_enabled_=true;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -626,6 +627,8 @@ public:
   rebuild_spectrum();
  }
  uint64_t trained()const{return trained_;}
+ void set_bptt_enabled(bool enabled){bptt_enabled_=enabled;}
+ bool bptt_enabled()const{return bptt_enabled_;}
  uint64_t bptt_accepted()const{return bptt_accepted_;}
  uint64_t bptt_attempted()const{return bptt_attempted_;}
  double recurrent_input_gain(uint8_t head)const{return input_gain(head);}
@@ -1009,7 +1012,7 @@ public:
     const uint8_t prev=state.history[state.length-1];
     // All persistent training occurs INSIDE the one mapped root and its
     // already-native temporal/pair/phase/quaternion overlays.
-    if(trained_%BPTT_INTERVAL==0&&tape_inputs.size()>=4)
+    if(bptt_enabled_&&trained_%BPTT_INTERVAL==0&&tape_inputs.size()>=4)
      learn_bptt(state,tape_states,tape_inputs,symbol);
     teacher_.teach(prev,symbol,initial_time+trained_);
     // One teacher and one higher-order field share all 255 registers.
