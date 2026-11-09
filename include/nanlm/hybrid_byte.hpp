@@ -28,6 +28,7 @@ private:
  const ByteModel& count_;
  const RecurrentByteModel& neural_;
  double neural_weight_;
+ unsigned count_order_;
  static uint64_t rng(uint64_t& x) {
   x+=0x9e3779b97f4a7c15ull;
   uint64_t z=x;
@@ -39,9 +40,10 @@ private:
   return double(rng(state)>>11)*(1.0/9007199254740992.0);
  }
 public:
- HybridByteInference(const ByteModel& count,const RecurrentByteModel& neural,double mix):
-  count_(count),neural_(neural),neural_weight_(mix){
-  if(!std::isfinite(mix)||mix<0||mix>1)
+ HybridByteInference(const ByteModel& count,const RecurrentByteModel& neural,double mix,
+                     unsigned count_order=ByteModel::ORDER):
+  count_(count),neural_(neural),neural_weight_(mix),count_order_(count_order){
+  if(count_order>ByteModel::ORDER||!std::isfinite(mix)||mix<0||mix>1)
    throw std::invalid_argument("hybrid mixture must lie in [0,1]");
  }
  void observe(State& s,uint8_t token)const{
@@ -51,11 +53,11 @@ public:
  RecurrentByteModel::Scores predict(const State& state)const{
   RecurrentByteModel::Scores p{};
   if(neural_weight_==0){
-   p=count_.predict(state.suffix).probability;
+   p=count_.predict(state.suffix,count_order_).probability;
   }else if(neural_weight_==1){
    p=neural_.predict(state.recurrent);
   }else{
-   const auto counts=count_.predict(state.suffix);
+   const auto counts=count_.predict(state.suffix,count_order_);
    const auto recurrent=neural_.predict(state.recurrent);
    for(size_t i=0;i<ByteModel::VOCAB;++i)
     p[i]=(1-neural_weight_)*counts.probability[i]+
