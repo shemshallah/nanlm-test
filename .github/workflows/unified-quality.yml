@@ -1,0 +1,72 @@
+name: HW0 unified prose quality sentinel
+on:
+  push:
+    branches:
+      - main
+      - 'feat/hw0-*'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quality:
+    name: Same-root prose CE and generation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build unified native predictor
+        run: make nanlm CXX=clang++
+      - name: Run train/held-out same-root experiment
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="/tmp/nanlm-prose-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$root"
+          sha256sum tests/fixtures/unified_quality_train.txt tests/fixtures/unified_quality_heldout.txt | tee corpus-sha256.txt
+          ./nanlm "$root" audit tests/fixtures/unified_quality_heldout.txt | tee before.log
+          ./nanlm "$root" train tests/fixtures/unified_quality_train.txt 2 | tee train.log
+          ./nanlm "$root" audit tests/fixtures/unified_quality_heldout.txt | tee after.log
+          ./nanlm "$root" generate 'The lantern in ' 160 29 0.85 0.92 > sample-a.txt
+          ./nanlm "$root" generate 'The lantern in ' 160 29 0.85 0.92 > sample-b.txt
+          cmp sample-a.txt sample-b.txt
+          test "$(stat -c%s "$root")" = 8388608
+          python3 - <<'PY'
+          import math
+          import re
+          from pathlib import Path
+          pattern = re.compile(r"^UNIFIED_AUDIT mode=(\w+) tokens=(\d+) ce_nats=([\d.eE+-]+) accuracy=([\d.eE+-]+)$")
+          modes = {"full", "no_wave", "no_attention", "no_spectral", "no_cycle", "no_inverse_evidence", "no_hyperedge", "teacher_only"}
+          def load(name):
+              entries = {}
+              for line in Path(name).read_text().splitlines():
+                  match = pattern.fullmatch(line)
+                  if not match:
+                      raise AssertionError(f"unrecognized audit line: {line!r}")
+                  mode, tokens, ce, acc = match.groups()
+                  assert mode not in entries
+                  entries[mode] = (int(tokens), float(ce), float(acc))
+                  assert math.isfinite(float(ce)) and 0 <= float(acc) <= 1
+              assert set(entries) == modes, entries.keys()
+              assert len({entry[0] for entry in entries.values()}) == 1
+              assert entries["full"][0] > 200
+              return entries
+          before, after = load("before.log"), load("after.log")
+          assert before["full"][0] == after["full"][0]
+          b, a = before["full"][1], after["full"][1]
+          print(f"QUALITY_SENTINEL tokens={after['full'][0]} before_ce={b:.9f} after_ce={a:.9f} delta_nats={a-b:+.9f}")
+          print(f"ABLATION_SENTINEL trained_full_ce={a:.9f} teacher_only_ce={after['teacher_only'][1]:.9f}")
+          # The sentinel is observational: it does not assert improvement.
+          PY
+      - name: Save measurements and free generation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-prose-quality
+          path: |
+            before.log
+            train.log
+            after.log
+            sample-a.txt
+            corpus-sha256.txt
+          if-no-files-found: warn

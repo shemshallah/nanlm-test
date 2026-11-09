@@ -63,3 +63,14 @@ unigram and order-matched count models as separately named *diagnostics*
 only, not production ensemble members. Record generated continuations
 and repetition, validity, novelty, latency and memory. Native
 compilation, valid Unicode and persistence do not establish fluency.
+
+## Longer prose sentinel (not a language-quality claim)
+
+The GitHub workflow `.github/workflows/unified-quality.yml` scores an
+untrained initialized root against a held-out prose file, trains that **same
+root** for two passes on a separate prose file, and then re-scores all eight
+readout modes. It records the signed after-minus-before CE difference, text
+samples, and SHA-256 corpus hashes without declaring improvement by fiat.
+The authored fixtures are tiny and do not establish transfer to new topics,
+styles or languages; the sentinel is an instrumentation gate only. No new
+production model, root, or expert ensemble is constructed.
