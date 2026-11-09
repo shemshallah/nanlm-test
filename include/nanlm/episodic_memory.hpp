@@ -59,6 +59,10 @@ private:
  // suggestions. Common grams are ignored to avoid all-record scans
  // for shared prefixes; strict source verification is unchanged.
  std::unordered_map<uint32_t,std::vector<size_t>> grams_;
+ // Number of candidate-discriminating grams per record; if <=3*edits,
+ // a bounded typo may destroy every one. Such records MUST be scanned
+ // as a conservative completeness fallback.
+ std::vector<uint16_t> rare_grams_;
  std::array<bool,MAX_KEY+1> lengths_{};
  static uint32_t gram(const uint8_t* p){
   return (uint32_t(p[0])<<16)|(uint32_t(p[1])<<8)|uint32_t(p[2]);
@@ -73,6 +77,7 @@ private:
  }
  void rebuild_index(){
   cue_index_.clear();lengths_.fill(false);grams_.clear();
+  rare_grams_.assign(entries_.size(),0u);
   for(auto& m:suffix_index_)m.clear();
   for(size_t i=0;i<entries_.size();++i){
    const auto& r=entries_[i];
@@ -86,6 +91,12 @@ private:
     const uint32_t g=gram(p);
     if(unique.insert(g).second)grams_[g].push_back(i);
    }
+  }
+  const size_t cap=std::max<size_t>(8,entries_.size()/8);
+  for(const auto& posting:grams_){
+   if(posting.second.size()>cap)continue;
+   for(size_t index:posting.second)
+    ++rare_grams_[index];
   }
  }
  Lookup probe_hash(const uint8_t* history,size_t length)const{
@@ -494,6 +505,16 @@ public:
     for(size_t index:found->second)candidate[index]=1;
    }
    narrowed=informative>0;
+   if(narrowed){
+    const size_t destruction_bound=3*max_edits;
+    for(size_t i=0;i<entries_.size();++i){
+     // q=3 gram lemma: each inserted, deleted or substituted byte
+     // can destroy at most three pre-existing trigrams. If there are
+     // fewer distinctive trigrams than this, an authentic <=k-edit
+     // cue might share none with the query. Keep it in the shortlist.
+     if(rare_grams_[i]<=destruction_bound)candidate[i]=1;
+    }
+   }
   }
   std::vector<Suggestion> ranked;
   ranked.reserve(entries_.size());

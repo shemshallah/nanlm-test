@@ -118,6 +118,29 @@ int main(){
              "approximate result marked verified or has invalid hotspots");
    }
   }
+  // A largely repeated cue has very few discriminative trigrams.
+  // The conservative 3*k fallback protects it from a false negative
+  // after two edits even when some unrelated source matches postings.
+  const std::string repetitive=
+      "Archive repetition aaaaaaaaaaaaaaaa key: ";
+  bank.remember(repetitive,"long-repetition-evidence","source-repeat");
+  std::string damaged=repetitive;
+  const auto pos=std::string("Archive repetition ").size();
+  damaged[pos+3]='q';damaged[pos+10]='z';
+  const auto* bytes=reinterpret_cast<const uint8_t*>(damaged.data());
+  const auto all=bank.suggest_robust(
+      bytes,damaged.size(),8,2,groups,nullptr,false,false);
+  const auto indexed=bank.suggest_robust(
+      bytes,damaged.size(),8,2,groups,nullptr,false,true);
+  const auto contains=[&](const auto& suggestions){
+   for(const auto& suggestion:suggestions)
+    if(suggestion.cue==repetitive&&
+       suggestion.edit_distance==2&&!suggestion.exact_verified)
+     return true;
+   return false;
+  };
+  require(contains(all)&&contains(indexed),
+          "trigram pruning dropped rare-gram adversarial correction");
   require(trials==512,"unexpected number of typo challenge trials");
   require(scan_top3==trials&&edit_top3==trials,
           "trigram index missed error-bounded target in fixed-seed fixture");

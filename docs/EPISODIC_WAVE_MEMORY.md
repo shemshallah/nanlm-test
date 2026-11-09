@@ -242,3 +242,14 @@ The 512-challenge benchmark explicitly compares **phase-only**, **full
 edit-distance scan**, **trigram-screened edit distance**, and **trigram +
 triad-hotspot**. It measures candidate counts and actual wall time; no
 architecture component is declared beneficial merely for being present.
+
+### Conservatively complete error-bounded postings
+
+To avoid silently losing genuine suggestions, the 3-gram index also tracks
+the **distinctive gram count** of every source cue. In the standard q-gram
+bound, at most `3*k` existing trigrams can be destroyed by `k` byte edits.
+If a cue has at most `3*k` informative trigrams it remains eligible for
+full edit comparison regardless of postings. This prevents a repeated-key
+edge case that ordinary rare-gram screening would otherwise drop. The
+benchmark includes a repeated-character cue with two edits and compares
+indexed versus full scan. Exact-copy safety is unchanged.
