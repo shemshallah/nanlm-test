@@ -75,6 +75,8 @@ int main(int argc,char** argv){
             <<" bptt_enabled="<<int(mind.bptt_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
             <<" bptt_accepted="<<mind.bptt_accepted()
+            <<" triad_accepted="<<mind.triad_accepted()
+            <<" projection_accepted="<<mind.projection_accepted()
             <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())<<"\n";
   }else if(operation=="eval"){
    if(argc<4)throw std::invalid_argument("evaluation file required");
@@ -98,6 +100,8 @@ int main(int argc,char** argv){
     {"no_inverse_evidence",UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE},
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
     {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
+    {"no_triad",UnifiedWaveLanguage::ABLATE_TRIAD},
+    {"no_global_field",UnifiedWaveLanguage::ABLATE_FIELD},
     {"no_tbptt_readout",UnifiedWaveLanguage::ABLATE_BPTT_READOUT},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
    };
