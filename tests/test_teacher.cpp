@@ -23,6 +23,11 @@ int main(){
   expect(u.query(23,40,PRECEDES).support>0,"head writes paired evidence");
   expect(u.query(40,23,FOLLOWS).support>0,"head teaches inverse lane");
   expect(u.query(40,23,PRECEDES).support==0,"inverse not conflated with forward");
+  const double old_mask_loss=teach.loss(23,40);
+  expect(teach.trial_gate(23,0,false,40),"Boolean gate rejects irrelevant nibble via scratch");
+  expect(!teach.trial_gate(23,8,false,40),"Boolean gate protects target nibble");
+  expect(!teach.trial_gate(23,0,true,40),"Boolean gate rejects regression");
+  expect(teach.loss(23,40)<old_mask_loss,"Boolean update really improves normalized CE");
   const double cv=u.covariant_phase(23,40);
   std::array<double,HEADS> shifts{};
   for(unsigned i=0;i<HEADS;++i)shifts[i]=5*std::sin(i*0.27);
