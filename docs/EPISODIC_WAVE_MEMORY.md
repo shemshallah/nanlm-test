@@ -176,3 +176,19 @@ are diagnostic and do not automatically authorize copying from a near miss.
 The adversarial benchmark now compares **hash-indexed** exact retrieval with
 phase ranking, not a linear scan. Any faster hash result is independent of
 whether wave-based associative search is useful.
+
+## Disabling the oscillator *computation*, not just the readout
+
+`set_wave_execution_enabled(false)` now bypasses all 255 second-order
+oscillator updates and inverse-wave scattering, zeroes the transient wave
+state, and disables wave BPTT on this model. It is a deliberate compute
+ablation; the remaining teacher, mirror graph, triad/global-field calculation
+and exact episodic copying still execute. This is **not equivalent** to
+setting the direct-wave output scale to zero; indirect readouts can change.
+
+CLI `eval TEXT 0` measures wave compute-off CE; `eval TEXT 1` is the
+unaltered default. The optional final argument to `generate` also permits
+wave execution to be switched off:
+`generate PROMPT BYTES SEED TEMPERATURE TOP_P RESONANCE WAVE_EXEC`.
+This must be evaluated for real latency/energy and CE on source-disjoint
+text before disabling waves automatically.

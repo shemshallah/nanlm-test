@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -132,10 +132,16 @@ int main(int argc,char** argv){
              <<" score="<<hint.resonance<<" source="<<hint.source
              <<" cue="<<hint.cue<<"\n";
   }else if(operation=="eval"){
-   if(argc<4)throw std::invalid_argument("evaluation file required");
+   if(argc<4||argc>5)throw std::invalid_argument("eval TEXT [WAVE_EXEC_0_OR_1]");
    std::ifstream file(argv[3],std::ios::binary);
    if(!file)throw std::runtime_error("evaluation file unavailable");
    UnifiedWaveLanguage mind(universe);
+   if(argc>4){
+    const int enabled=number(4);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("wave execution flag must be 0 or 1");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
    const auto result=mind.evaluate(file);
    std::cout<<std::setprecision(9)<<"UNIFIED_EVAL bytes="<<result.tokens
             <<" ce_nats="<<result.ce()
@@ -254,6 +260,12 @@ int main(int argc,char** argv){
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);
+   if(argc>9){
+    const int enabled=number(9);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("wave execution flag must be 0 or 1");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
    if(argc>8){
     const int enabled=number(8);
     if(enabled!=0&&enabled!=1)

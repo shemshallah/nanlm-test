@@ -60,6 +60,12 @@ jobs:
           printf 'Beacon code: \tAURORA-8273\n' > "${RUNNER_TEMP}/memory.tsv"
           ./nanlm "$root" memorize "${RUNNER_TEMP}/memory.tsv" fixture-v1 | tee episodic-cli.log
           ./nanlm "$root" recall 'Beacon code: ' | tee -a episodic-cli.log
+          ./nanlm "$root" probe-memory 'Beacon code: ' 0 | tee -a episodic-cli.log
+          ./nanlm "$root" probe-memory 'Beacon code: ' 1 | tee -a episodic-cli.log
+          ./nanlm "$root" suggest 'Beacon codes: ' 3 | tee -a episodic-cli.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt 0 | tee -a episodic-cli.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt 1 | tee -a episodic-cli.log
+          test "$(./nanlm "$root" generate 'Beacon code: ' 11 79 0.85 0.92 0 0)" = 'Beacon code: AURORA-8273'
           test "$(./nanlm "$root" generate 'Beacon code: ' 11 79 0.85 0.92)" = 'Beacon code: AURORA-8273'
           printf 'The silver spacecraft settled softly by the east laboratory.\n' > "${RUNNER_TEMP}/quotes.txt"
           ./nanlm "$root" memorize-lines "${RUNNER_TEMP}/quotes.txt" book-fixture | tee -a episodic-cli.log

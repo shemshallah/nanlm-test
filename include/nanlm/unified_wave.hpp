@@ -169,6 +169,7 @@ private:
  uint64_t triad_accepted_=0,projection_accepted_=0,adapter_accepted_=0;
  bool triad_training_enabled_=true;
  bool resonance_retrieval_enabled_=false;
+ bool wave_execution_enabled_=true;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -712,6 +713,11 @@ public:
   rebuild_spectrum();
  }
  size_t episodic_records()const{return episodic_.size();}
+ void set_wave_execution_enabled(bool enabled){
+  wave_execution_enabled_=enabled;
+  if(!enabled)bptt_enabled_=false;
+ }
+ bool wave_execution_enabled()const{return wave_execution_enabled_;}
  void set_resonance_retrieval_enabled(bool enabled){
   resonance_retrieval_enabled_=enabled;
  }
@@ -1168,6 +1174,21 @@ public:
  }
  void observe(State& s,uint8_t c)const{
   if(c==255){s.reset();return;}
+  if(!wave_execution_enabled_){
+   // Compute ablation, distinct from zero direct-wave readout. Preserve
+   // the one shared model, triad routing, mirror graph, and exact memory.
+   s.wave.fill(0.0);s.old_wave.fill(0.0);
+   s.inverse_wave.fill(0.0);s.inverse_old_wave.fill(0.0);
+   const auto previous=s.workspace;
+   s.previous_workspace=previous;
+   s.push(c);
+   episodic_.advance(s.history.data(),s.length,c,
+                      s.recall_record,s.recall_offset,
+                      resonance_retrieval_enabled_,&s.wave);
+   refresh_triad(s,previous);
+   ++s.tick;
+   return;
+  }
   std::array<double,N> next{};
   const double decay=damping_*damping_;
   // All 255 heads participate in each temporal transition. Opposing

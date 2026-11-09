@@ -212,6 +212,30 @@ int main(){
    mind.set_wave_memory_scale(0.);
    require(mind.generate(long_gap+cue,value.size(),19)==value,
            "wave readout cannot be disabled during memory recall");
+   mind.set_wave_execution_enabled(false);
+   require(!mind.wave_execution_enabled()&&!mind.bptt_enabled(),
+           "wave compute-off mode still runs wave gradients");
+   UnifiedWaveLanguage::State no_wave_state{};
+   for(unsigned char c:long_gap+cue)mind.observe(no_wave_state,c);
+   for(double x:no_wave_state.wave)
+    require(x==0.0,"standing wave executed with compute gate off");
+   for(double x:no_wave_state.inverse_wave)
+    require(x==0.0,"inverse wave executed with compute gate off");
+   require(no_wave_state.recall_record!=ExactEpisodicMemory::NONE,
+           "zero-wave compute prevented exact episodic trigger");
+   require(mind.generate(long_gap+cue,value.size(),21)==value,
+           "exact recall requires wave recurrence computation");
+   std::istringstream on_text("the silent harbor receives a distant ship");
+   std::istringstream off_text("the silent harbor receives a distant ship");
+   const auto off_score=mind.evaluate(off_text);
+   require(off_score.tokens>20&&std::isfinite(off_score.ce()),
+           "no-wave compute produces invalid language probabilities");
+   mind.set_wave_execution_enabled(true);
+   const auto on_score=mind.evaluate(on_text);
+   require(on_score.tokens==off_score.tokens&&std::isfinite(on_score.ce()),
+           "wave compute ablation changed evaluation token count");
+   std::cout<<"EPISODIC_WAVE_COMPUTE_AUDIT enabled_ce="<<on_score.ce()
+            <<" disabled_ce="<<off_score.ce()<<"\n";
    bool rejected=false;
    try{mind.memorize("bad","Z",source);}
    catch(const std::invalid_argument&){rejected=true;}
