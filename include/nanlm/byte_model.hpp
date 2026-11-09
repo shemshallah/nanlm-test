@@ -185,7 +185,8 @@ public:
      strength<=0||!std::isfinite(teacher_mix)||teacher_mix<0||teacher_mix>1||
      (teacher_mix>0&&!teacher))
    throw std::invalid_argument("invalid byte model hyperparameters");
-  (void)universe; // Explicitly bind the overlay's lifecycle to the caller's sole HW0 universe.
+  if(std::filesystem::weakly_canonical(path_.substr(0,path_.size()-8))!=std::filesystem::weakly_canonical(universe.path()))
+   throw std::invalid_argument("byte overlay belongs to a different universe");
   load();
  }
  size_t contexts()const{return nodes_.size();}

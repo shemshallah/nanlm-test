@@ -1,11 +1,11 @@
 CXX ?= c++
 CXXFLAGS ?= -O3 -std=c++20 -Wall -Wextra -Wpedantic -Werror
 CPPFLAGS ?= -Iinclude
-.PHONY: all test validate clean
+.PHONY: all test validate validate-harmony clean
 all: nanlm
-nanlm: src/main.cpp include/nanlm/unified_wave.hpp include/nanlm/universe.hpp include/nanlm/teacher.hpp include/nanlm/wordnet.hpp
+nanlm: src/main.cpp include/nanlm/universe.hpp include/nanlm/wordnet.hpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/main.cpp -o $@
-nanlm-diagnostics: src/diagnostics_main.cpp include/nanlm/byte_model.hpp include/nanlm/recurrent_byte.hpp include/nanlm/hybrid_byte.hpp
+nanlm-diagnostics: src/diagnostics_main.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) src/diagnostics_main.cpp -o $@
 test_universe: tests/test_universe.cpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_universe.cpp -o $@
@@ -22,15 +22,18 @@ test_learning_validation: tests/test_learning_validation.cpp include/nanlm/teach
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_learning_validation.cpp -o $@
 test_byte_model: tests/test_byte_model.cpp include/nanlm/byte_model.hpp include/nanlm/teacher.hpp include/nanlm/universe.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_byte_model.cpp -o $@
-test_recurrent_byte: tests/test_recurrent_byte.cpp include/nanlm/recurrent_byte.hpp include/nanlm/byte_model.hpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_recurrent_byte.cpp -o $@
-test_hybrid_byte: tests/test_hybrid_byte.cpp include/nanlm/hybrid_byte.hpp include/nanlm/recurrent_byte.hpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_hybrid_byte.cpp -o $@
-test_unified_wave: tests/test_unified_wave.cpp include/nanlm/unified_wave.hpp include/nanlm/teacher.hpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_unified_wave.cpp -o $@
 validate: test_learning_validation
 	./test_learning_validation
-test: test_universe test_wordnet test_teacher test_quaternion test_multiloss test_byte_model test_recurrent_byte test_hybrid_byte test_unified_wave
+test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_nan16: tests/test_nan16.c include/nanlm/nan16.h
+	$(CC) $(CPPFLAGS) -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror $< -lm -o $@
+
+test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_hybrid_byte test_nan16 test_harmony test_universe test_wordnet test_teacher test_quaternion test_multiloss
+	./test_nan16
+	./test_harmony
+	python3 tests/test_context_lm.py
 	./test_universe
 	./test_wordnet
 	./test_teacher
@@ -38,7 +41,25 @@ test: test_universe test_wordnet test_teacher test_quaternion test_multiloss tes
 	./test_multiloss
 	./test_byte_model
 	./test_recurrent_byte
-	./test_hybrid_byte test_unified_wave
+	./test_unified
+	./test_hybrid_byte
 	./test_unified_wave
 clean:
-	rm -f nanlm nanlm-diagnostics test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation test_byte_model test_recurrent_byte test_hybrid_byte
+	rm -f nanlm-diagnostics test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+
+validate_harmony: tests/validate_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+validate-harmony: validate_harmony
+	./validate_harmony
+
+test_recurrent_byte: tests/test_recurrent_byte.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_unified: tests/test_unified.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_unified_wave: tests/test_unified_wave.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_hybrid_byte: tests/test_hybrid_byte.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@

@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -17,14 +16,13 @@ namespace nanlm {
 
 // A small, trainable recurrent neural language model, as an EXPERIMENTAL
 // component of the same HW0:0 logical space. No second Root or 256-head map.
-// It is NOT a GRU or Transformer; it uses a bounded 8-step online
-// truncated backpropagation-through-time (TBPTT) approximation.
+// It is NOT a GRU, Transformer, or a full BPTT implementation: recurrence
+// gradients are deliberately truncated at one step (online local SGD).
 // Its value must be established with held-out, same-budget comparisons.
 class RecurrentByteModel {
 public:
  static constexpr size_t V=ByteModel::VOCAB;
  static constexpr size_t H=32;
- static constexpr size_t BPTT_WINDOW=8;
  using Hidden=std::array<float,H>;
  using Scores=std::array<double,V>;
  struct State {
@@ -124,7 +122,8 @@ private:
 public:
  explicit RecurrentByteModel(Universe& root,std::string path,float lr=0.015f):
   path_(std::move(path)+".rnn-lm"),lr_(lr){
-  (void)root;
+  if(std::filesystem::weakly_canonical(path_.substr(0,path_.size()-7))!=std::filesystem::weakly_canonical(root.path()))
+   throw std::invalid_argument("recurrent overlay belongs to a different universe");
   if(!std::isfinite(lr)||lr<=0||lr>0.1f)
    throw std::invalid_argument("recurrent learning rate must be in (0, 0.1]");
   load();
@@ -171,73 +170,55 @@ public:
   }
   return result;
  }
- Metrics train(std::istream& stream){
-  Metrics result{};
-  State state{};
-  struct Snapshot {
-   uint8_t symbol=0;
-   Hidden old{};
-   Hidden now{};
-  };
-  // An online truncated eight-step BPTT window. The historical forward
-  // activations were computed under the previous online weights; this is
-  // an approximation, but the reverse Jacobian is differentiable and
-  // explicitly traverses all states in the window, not only its endpoint.
-  std::deque<Snapshot> history;
-  char ch;
-  while(stream.get(ch)){
-   const uint8_t label=static_cast<uint8_t>(static_cast<unsigned char>(ch));
-   if(label==255){
-    state=State{};
-    history.clear();
-    continue;
-   }
-   if(state.started){
-    const Scores p=predict(state);
-    result.nll+=stable_nll(p,label);
-    const auto best=std::max_element(p.begin(),p.end())-p.begin();
-    if(size_t(best)==label)++result.correct;
-    ++result.tokens;
-    Hidden upstream{};
+ void teach_step(const State& state,const State& previous,uint8_t previous_symbol,uint8_t label){
+  if(previous_symbol==255||label==255)throw std::invalid_argument("gateway is not a recurrent target");
+  if(!state.started)return;
+  const Scores p=predict(state);
+    Hidden gradient_h{};
     for(size_t c=0;c<V;++c){
      const double delta=p[c]-(c==label?1.0:0.0);
      for(size_t i=0;i<H;++i)
-      upstream[i]+=static_cast<float>(delta*output_[c][i]);
+      gradient_h[i]+=static_cast<float>(delta*output_[c][i]);
     }
-    // Output parameters are updated after reading their old Jacobian.
+    // We update the last observed embedding and the input-to-hidden
+    // recurrent matrix. No gradient flows through previous recurrent steps.
     for(size_t c=0;c<V;++c){
      const double delta=p[c]-(c==label?1.0:0.0);
      for(size_t i=0;i<H;++i)
       output_[c][i]-=float(lr_*delta*state.h[i]);
      bias_[c]-=float(lr_*delta);
     }
-    // Work backward through the original unrolled recurrent states.
-    for(auto it=history.rbegin();it!=history.rend();++it){
-     Hidden local{};
-     Hidden propagated{};
-     for(size_t i=0;i<H;++i)
-      local[i]=static_cast<float>(std::clamp(
-       double(upstream[i])*(1-double(it->now[i])*it->now[i]),-2.0,2.0));
-     // Use pre-update recurrence for the backward flow.
-     for(size_t j=0;j<H;++j){
-      double derivative=0;
-      for(size_t i=0;i<H;++i)
-       derivative+=recurrent_[i][j]*local[i];
-      propagated[j]=static_cast<float>(derivative);
-     }
-     for(size_t i=0;i<H;++i){
-      input_[it->symbol][i]-=lr_*local[i];
-      for(size_t j=0;j<H;++j)
-       recurrent_[i][j]-=lr_*local[i]*it->old[j];
-     }
-     upstream=propagated;
+    for(size_t i=0;i<H;++i){
+     const float dh=float(gradient_h[i]*(1-state.h[i]*state.h[i]));
+     // previous.h corresponds to state before the latest symbol was read.
+     for(size_t j=0;j<H;++j)
+      recurrent_[i][j]-=lr_*dh*previous.h[j];
+     input_[previous_symbol][i]-=lr_*dh;
     }
+    // The learner is online and intentionally does not backpropagate to the
+    // earlier state. This is a truncated-step baseline.
     ++updates_;
+ }
+ Metrics train(std::istream& stream){
+  Metrics result{};
+  State state{};
+  State previous{};
+  uint8_t previous_symbol=0;
+  char ch;
+  while(stream.get(ch)){
+   const uint8_t label=static_cast<uint8_t>(static_cast<unsigned char>(ch));
+   if(label==255){state=State{};previous=State{};continue;}
+   if(state.started) {
+    const Scores p=predict(state);
+    result.nll+=stable_nll(p,label);
+    const auto best=std::max_element(p.begin(),p.end())-p.begin();
+    if(size_t(best)==label)++result.correct;
+    ++result.tokens;
+    teach_step(state,previous,previous_symbol,label);
    }
-   const State before=state;
+   previous=state;
+   previous_symbol=label;
    observe(state,label);
-   history.push_back(Snapshot{label,before.h,state.h});
-   if(history.size()>BPTT_WINDOW)history.pop_front();
   }
   return result;
  }
