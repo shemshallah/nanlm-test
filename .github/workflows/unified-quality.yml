@@ -38,7 +38,7 @@ jobs:
           import re
           from pathlib import Path
           pattern = re.compile(r"^UNIFIED_AUDIT mode=(\w+) tokens=(\d+) ce_nats=([\d.eE+-]+) accuracy=([\d.eE+-]+)$")
-          modes = {"full", "no_wave", "no_attention", "no_spectral", "no_cycle", "no_inverse_evidence", "no_hyperedge", "no_long_context", "teacher_only"}
+          modes = {"full", "no_wave", "no_attention", "no_spectral", "no_cycle", "no_inverse_evidence", "no_hyperedge", "no_long_context", "no_tbptt_readout", "teacher_only"}
           def load(name):
               entries = {}
               for line in Path(name).read_text().splitlines():

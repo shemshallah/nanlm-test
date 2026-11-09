@@ -22,10 +22,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make nanlm test_unified_wave test_temporal_credit test_hypermatrix CXX="${{ matrix.compiler }}"
+          make nanlm test_unified_wave test_temporal_credit test_wave_bptt test_hypermatrix CXX="${{ matrix.compiler }}"
           ./test_unified_wave | tee unified-test.log
           ./test_hypermatrix | tee hypermatrix-test.log
           ./test_temporal_credit | tee temporal-test.log
+          ./test_wave_bptt | tee wave-bptt-test.log
+          grep 'PASS: 7-step reverse-mode' wave-bptt-test.log
           grep "PASS: native register-coupled factorized hypermatrix" hypermatrix-test.log
           grep 'PASS: one 255-head universe' unified-test.log
       - name: Free-running native CLI integration
