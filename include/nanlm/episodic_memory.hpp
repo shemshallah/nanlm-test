@@ -76,7 +76,9 @@ private:
  static void upsert(std::vector<Record>& data,Record r){
   validate(r);
   auto it=std::find_if(data.begin(),data.end(),
-                       [&](const Record& x){return x.cue==r.cue;});
+                       [&](const Record& x){
+                         return x.cue==r.cue&&x.source==r.source;
+                       });
   if(it!=data.end())*it=std::move(r);
   else {
    if(data.size()>=MAX_RECORDS)throw std::runtime_error("episodic index full");
@@ -138,7 +140,7 @@ public:
    validate(r);
    if(hash(r)!=digest)throw std::runtime_error("episodic checkpoint digest mismatch");
    if(std::any_of(entries_.begin(),entries_.end(),
-       [&](const Record& e){return e.cue==r.cue;}))
+       [&](const Record& e){return e.cue==r.cue&&e.source==r.source;}))
     throw std::runtime_error("duplicate episodic cue");
    entries_.push_back(std::move(r));
   }
@@ -146,9 +148,24 @@ public:
    throw std::runtime_error("unexpected episodic checkpoint trailing data");
  }
  size_t size()const{return entries_.size();}
+ // Multiple independent sources may make the SAME claim. Divergent
+ // values are contested: never auto-complete one value as authoritative.
  const Record* exact(std::string_view cue)const{
-  for(const auto& r:entries_)if(r.cue==cue)return &r;
-  return nullptr;
+  const Record* chosen=nullptr;
+  for(const auto& r:entries_){
+   if(r.cue!=cue)continue;
+   if(chosen&&chosen->value!=r.value)return nullptr;
+   if(!chosen)chosen=&r;
+  }
+  return chosen;
+ }
+ bool contested(std::string_view cue)const{
+  const std::string* value=nullptr;
+  for(const auto& r:entries_)if(r.cue==cue){
+   if(value&&*value!=r.value)return true;
+   value=&r.value;
+  }
+  return false;
  }
  void remember(const std::string& cue,const std::string& value,
                const std::string& source){
@@ -197,7 +214,9 @@ public:
     for(size_t j=0;j<cue.size();++j)
      if(history[length-cue.size()+j]!=static_cast<uint8_t>(cue[j]))
       {match=false;break;}
-    if(match){best=cue.size();record=static_cast<uint32_t>(i);}
+    if(match&&exact(cue)==&entries_[i]){
+     best=cue.size();record=static_cast<uint32_t>(i);
+    }
    }
   }
  }
