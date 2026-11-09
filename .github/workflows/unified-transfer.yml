@@ -18,7 +18,10 @@ jobs:
       - name: Build native engine
         run: make nanlm CXX=clang++
       - name: Check train/dev/test separation and produce per-domain metrics
-        run: python3 tools/transfer_benchmark.py | tee transfer-audit.log
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/transfer_benchmark.py | tee transfer-audit.log
       - name: Store hashes and per-domain diagnostics
         if: always()
         uses: actions/upload-artifact@v4
