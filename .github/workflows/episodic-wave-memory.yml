@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 24
     steps:
       - uses: actions/checkout@v4
-      - name: Verify exact long-term memory and current native triad tests
+      - name: Verify source memory, triad, and wave tests
         shell: bash
         run: |
           set -euo pipefail
@@ -48,8 +48,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build actual production command-line engine
-        run: make nanlm CXX=clang++
-      - name: Check source-tagged checkpoint and exact byte recall
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm CXX=clang++
+      - name: Check exact CLI recall and contested provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -68,22 +71,7 @@ jobs:
             echo 'conflicting source was incorrectly auto-accepted' >&2
             exit 1
           else
-            grep -q '^UNIFIED_EPISODIC_CONTESTED
-          python3 - "$root" <<'PY' | tee -a episodic-cli.log
-          import os, sys
-          root = sys.argv[1]
-          assert os.stat(root).st_size == 8388608
-          assert os.path.isfile(root+'.episodes')
-          print('EPISODIC_CLI_PASS unchanged_root_bytes=8388608')
-          PY
-      - name: Upload output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: episodic-cli
-          path: episodic-cli.log
-          if-no-files-found: warn
- contested.txt
+            grep -q '^UNIFIED_EPISODIC_CONTESTED$' contested.txt
             cat contested.txt | tee -a episodic-cli.log
           fi
           python3 - "$root" <<'PY' | tee -a episodic-cli.log

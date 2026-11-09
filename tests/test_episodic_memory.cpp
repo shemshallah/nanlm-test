@@ -44,6 +44,33 @@ int main(){
            "exact source attribution lost");
    require(std::filesystem::file_size(root)==ROOT_BYTES,
            "memory expanded canonical 8 MiB root");
+   // Resonance is an optional hint, not an admission criterion. Every
+   // phase-ranked proposal must pass the SAME strict byte check.
+   UnifiedWaveLanguage::State phase_probe{};
+   for(unsigned char c:long_gap+cue)mind.observe(phase_probe,c);
+   const auto raw=mind.probe_memory(phase_probe,false);
+   const auto phase=mind.probe_memory(phase_probe,true);
+   require(raw.record!=ExactEpisodicMemory::NONE&&
+           phase.record==raw.record&&phase.exact_compares>0&&
+           std::isfinite(phase.resonance),
+           "phase candidate ranking changed exact cue identity");
+   mind.set_resonance_retrieval_enabled(true);
+   UnifiedWaveLanguage::State phase_on{};
+   for(unsigned char c:long_gap+cue)mind.observe(phase_on,c);
+   require(phase_on.recall_record==raw.record,
+           "phase-ranked exact recall lost ground truth");
+   mind.set_resonance_retrieval_enabled(false);
+   UnifiedWaveLanguage::State near_miss{};
+   for(unsigned char c:std::string("Beacon archive codes: "))
+    mind.observe(near_miss,c);
+   require(near_miss.recall_record==ExactEpisodicMemory::NONE&&
+           mind.probe_memory(near_miss,true).record==
+             ExactEpisodicMemory::NONE,
+           "phase-similar wrong cue hallucinated an exact record");
+   std::cout<<"EPISODIC_RESONANCE_AUDIT candidates="<<phase.routed
+            <<" verified_comparisons="<<phase.exact_compares
+            <<" exact_match="<<int(phase.record==raw.record)
+            <<" resonance="<<phase.resonance<<"\\n";
    const auto checkpoint_bytes=std::filesystem::file_size(root+".episodes");
    {
     UnifiedWaveLanguage::State state{};
@@ -165,6 +192,15 @@ int main(){
    for(unsigned char c:std::string("Mission ID: "))mind.observe(contested,c);
    require(contested.recall_record==ExactEpisodicMemory::NONE,
            "contested fact was incorrectly forced into automatic recall");
+   mind.set_resonance_retrieval_enabled(true);
+   UnifiedWaveLanguage::State contested_phase{};
+   for(unsigned char c:std::string("Mission ID: "))
+    mind.observe(contested_phase,c);
+   require(contested_phase.recall_record==ExactEpisodicMemory::NONE&&
+           mind.probe_memory(contested_phase,true).record==
+               ExactEpisodicMemory::NONE,
+           "resonant routing bypassed contradictory-source abstention");
+   mind.set_resonance_retrieval_enabled(false);
    const auto normal=mind.predict(contested);
    const auto no_memory=mind.predict(
       contested,UnifiedWaveLanguage::ABLATE_EPISODIC);

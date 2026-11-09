@@ -168,6 +168,7 @@ private:
  TriadWaveFormer::Parameters triad_parameters_{};
  uint64_t triad_accepted_=0,projection_accepted_=0,adapter_accepted_=0;
  bool triad_training_enabled_=true;
+ bool resonance_retrieval_enabled_=false;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -711,6 +712,15 @@ public:
   rebuild_spectrum();
  }
  size_t episodic_records()const{return episodic_.size();}
+ void set_resonance_retrieval_enabled(bool enabled){
+  resonance_retrieval_enabled_=enabled;
+ }
+ bool resonance_retrieval_enabled()const{
+  return resonance_retrieval_enabled_;
+ }
+ ExactEpisodicMemory::Lookup probe_memory(const State& s,bool resonate)const{
+  return episodic_.probe(s.history.data(),s.length,resonate,&s.wave);
+ }
  void memorize(const std::string& cue,const std::string& value,
                const std::string& source){episodic_.remember(cue,value,source);}
  size_t memorize_tsv(std::istream& data,const std::string& source){
@@ -1191,7 +1201,8 @@ public:
   s.previous_workspace=previous;
   s.push(c);
   episodic_.advance(s.history.data(),s.length,c,
-                    s.recall_record,s.recall_offset);
+                    s.recall_record,s.recall_offset,
+                    resonance_retrieval_enabled_,&s.wave);
   refresh_triad(s,previous);
   ++s.tick;
  }

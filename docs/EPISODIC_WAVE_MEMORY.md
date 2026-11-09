@@ -125,3 +125,22 @@ Next:
 
 This is the **first grounded exact-retrieval mechanism**, not a solution
 for general semantic understanding, paraphrase matching or AGI.
+
+## Optional phase-resonant cue ranking (experimental)
+
+The exact episodic store now offers an optional phase-matching search mode.
+For each cue, four pairs of damped sine/cosine oscillators produce an
+8-component normalized signature. Candidate cues are ranked by cosine
+similarity of this phase code to the current history suffix, with a bounded
+secondary priority term from the **live 255-head standing-wave state**.
+The longest matching exact suffix always takes precedence; every candidate
+must pass a byte-for-byte equality test before a copy starts.
+Conflicting source values abstain even if their phase scores are high.
+
+This mode is **disabled by default**; a caller opts in with
+`set_resonance_retrieval_enabled(true)`. This is a candidate-ordering
+experiment, not evidence of faster retrieval, superior language CE, or
+semantic paraphrase retrieval. Because the candidate list is fully sorted,
+it may use *more* CPU than direct scanning for small memory banks.
+The native test compares resonance-on and resonance-off against the same
+exact cue, then challenges both with a near-miss and contested cue.
