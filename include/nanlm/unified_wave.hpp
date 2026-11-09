@@ -719,6 +719,9 @@ public:
  const ExactEpisodicMemory::Record* exact_recall(const std::string& cue)const{
   return episodic_.exact(cue);
  }
+ bool contested_episodic(const std::string& cue)const{
+  return episodic_.contested(cue);
+ }
  double wave_memory_scale()const{
   const unsigned value=universe_.root().h[0].data[WAVE_MEMORY_SCALE_OFFSET];
   if(value==0)return 1.0; // Backward-compatible untouched checkpoints
