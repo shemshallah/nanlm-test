@@ -308,7 +308,23 @@ private:
   const double bc=pair_score(b,candidate);
   const double ac=pair_score(a,candidate);
   const double holonomy=0.65+0.35*std::cos(universe_.triangle(a,b,candidate));
-  const double factor=1.25*ab*(0.7*bc+0.3*ac)*holonomy;
+  // CP-rank-three multilinear interaction is directly tied to the
+  // trainable 3-vectors in palindromic head registers. This is not
+  // another embedding table: the teacher and attention update/read
+  // these exact head bytes.
+  const auto& root=universe_.root();
+  const auto first=vector(root.h[a],32);
+  const auto middle=vector(root.h[b],48);
+  const auto last=vector(root.h[candidate],48);
+  double cp=0;
+  for(size_t k=0;k<3;++k)
+   cp+=double(first[k])*middle[k]*last[k];
+  const double head_tensor=1.0+0.35*std::tanh(12.0*cp);
+  // The third-order readout also shares the existing forward/inverse
+  // standing-wave state. It is not a third recurrent model.
+  const double temporal=1.0+0.08*std::tanh(
+      0.5*(s.wave[a]*s.wave[b]+s.inverse_wave[b]*s.inverse_wave[candidate]));
+  const double factor=1.25*ab*(0.7*bc+0.3*ac)*holonomy*head_tensor*temporal;
   // Constant-time signed sparse hyperedge residual, exact address order.
   const auto residual=universe_.hyper_query(a,b,candidate,PRECEDES);
   const double exact=2.0*(residual.support-residual.refute)/
