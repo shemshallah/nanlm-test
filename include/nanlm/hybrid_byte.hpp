@@ -1,5 +1,6 @@
 #pragma once
 #include "nanlm/recurrent_byte.hpp"
+#include "nanlm/utf8.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -93,6 +94,11 @@ public:
      temperature>5||!std::isfinite(top_p)||top_p<=0||top_p>1)
    throw std::invalid_argument("invalid hybrid sampling");
   State state{};
+  Utf8Prefix utf8{};
+  if(!utf8.consume_prefix(prompt))
+   throw std::invalid_argument("prompt is not a valid UTF-8 prefix");
+  if(length<utf8.remaining)
+   throw std::invalid_argument("generation too short to finish UTF-8 prefix");
   for(unsigned char b:prompt)observe(state,b);
   uint64_t random=seed;
   std::string generated;generated.reserve(length);
@@ -101,7 +107,9 @@ public:
    std::vector<std::pair<double,uint8_t>> ranked;
    ranked.reserve(ByteModel::VOCAB);
    for(size_t c=0;c<ByteModel::VOCAB;++c)
-    ranked.emplace_back(std::pow(probs[c],1.0/temperature),uint8_t(c));
+    if(utf8.permits(static_cast<uint8_t>(c),length-i))
+     ranked.emplace_back(std::pow(probs[c],1.0/temperature),uint8_t(c));
+   if(ranked.empty())throw std::runtime_error("no valid UTF-8 continuation");
    std::sort(ranked.begin(),ranked.end(),[](const auto& a,const auto& b){
     return a.first==b.first?a.second<b.second:a.first>b.first;
    });
@@ -117,9 +125,12 @@ public:
     cdf+=ranked[j].first;
     if(sample<cdf){selected=ranked[j].second;break;}
    }
+   if(!utf8.push(selected,length-i))
+    throw std::runtime_error("invalid sampled UTF-8 transition");
    generated.push_back(static_cast<char>(selected));
    observe(state,selected);
   }
+  if(!utf8.complete())throw std::runtime_error("generated partial UTF-8 tail");
   return generated;
  }
 };
