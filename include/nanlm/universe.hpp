@@ -143,7 +143,9 @@ class Universe {
   }
   for(size_t i=0;i<events_.size();++i){
    const auto& e=events_[i];
-   if(e.type>=16||e.from==e.to||e.refutes>1||e.weight<0)throw std::runtime_error("invalid event");
+   if(e.type>=16||e.from==e.to||e.refutes>1||!std::isfinite(e.weight)||
+       e.weight<=0||(e.until&&e.until<=e.since))
+    throw std::runtime_error("invalid event");
    index_event(i);
   }
  }
@@ -250,6 +252,11 @@ class Universe {
             uint64_t since,uint64_t until=0,uint64_t provenance=0){
   if(a==b||type>=16||weight<=0||!std::isfinite(weight)|| (until && until<=since))
    throw std::invalid_argument("invalid typed relation");
+  // Validate both physical mirror lanes before appending journal state.
+  const float forward=lane_value(a,b,type,refutes);
+  const float backward=lane_value(b,a,inverse_type(type),refutes);
+  if(!std::isfinite(forward+weight)||!std::isfinite(backward+weight))
+   throw std::overflow_error("native mirror-pair evidence overflow");
   const Event e{since,until,provenance,weight,a,b,type,static_cast<uint8_t>(refutes),0};
   events_.push_back(e);
   index_event(events_.size()-1);
@@ -355,9 +362,13 @@ class Universe {
    x.strength+=strength;x.created=when;x.provenance=provenance;
    return id;
   }
-  hyper_index_.emplace(id,hyper_.size());
+  if(hyper_.size()>=20000000u)
+   throw std::length_error("sparse hypermatrix overlay capacity reached");
+  const size_t position=hyper_.size();
   hyper_.push_back(Hyperedge{id,when,provenance,strength,a,b,c,type,
                              static_cast<uint8_t>(refutes),3,0});
+  try{hyper_index_.emplace(id,position);}
+  catch(...){hyper_.pop_back();throw;}
   return id;
  }
  // Constant-time access to sparse residuals of the logical H[a,b,c,type].
