@@ -73,9 +73,9 @@ int main(int argc,char** argv){
             <<" eigen_residual="<<mind.spectral().residual
             <<" mirror_mass="<<mind.spectral().edge_mass
             <<" bptt_enabled="<<int(mind.bptt_enabled())
-            <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
-            <<" bptt_accepted="<<mind.bptt_accepted()<<"\n";
+            <<" bptt_accepted="<<mind.bptt_accepted()
+            <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())<<"\n";
   }else if(operation=="eval"){
    if(argc<4)throw std::invalid_argument("evaluation file required");
    std::ifstream file(argv[3],std::ios::binary);
