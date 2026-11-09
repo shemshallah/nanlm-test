@@ -116,6 +116,21 @@ int main(){
            "TSV episode import failed");
    require(mind.exact_recall("Mission ID: ")->value=="PX-8837",
            "TSV memory exact content mismatch");
+   mind.memorize("Mission ID: ","PX-9999","independent-source");
+   require(mind.contested_episodic("Mission ID: ")&&
+           mind.exact_recall("Mission ID: ")==nullptr,
+           "independent contradictory claim was overwritten");
+   UnifiedWaveLanguage::State contested{};
+   for(unsigned char c:std::string("Mission ID: "))mind.observe(contested,c);
+   require(contested.recall_record==ExactEpisodicMemory::NONE,
+           "contested fact was incorrectly forced into automatic recall");
+   const auto normal=mind.predict(contested);
+   const auto no_memory=mind.predict(
+      contested,UnifiedWaveLanguage::ABLATE_EPISODIC);
+   for(size_t i=0;i<UnifiedWaveLanguage::N;++i)
+    require(std::fabs(normal.p[i]-no_memory.p[i])<1e-12,
+            "contested memory changed predictive distribution");
+
   }
   {
    std::fstream damage(root+".episodes",std::ios::binary|
