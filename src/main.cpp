@@ -92,6 +92,9 @@ int main(int argc,char** argv){
    if(argc!=4)throw std::invalid_argument("recall requires exact cue");
    UnifiedWaveLanguage mind(universe);
    const auto* record=mind.exact_recall(argv[3]);
+   if(mind.contested_episodic(argv[3])){
+    std::cout<<"UNIFIED_EPISODIC_CONTESTED\n";return 4;
+   }
    if(!record){std::cout<<"UNIFIED_EPISODIC_MISS\n";return 3;}
    std::cout<<"UNIFIED_EPISODIC_HIT source="<<record->source
             <<" value="<<record->value<<"\n";
