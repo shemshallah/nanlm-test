@@ -5,6 +5,7 @@ on:
       - main
       - 'feat/hw0-public-domain-corpus'
       - 'feat/hw0-real-bptt'
+      - 'feat/hw0-bptt-controlled-ablation'
   pull_request:
   workflow_dispatch:
 permissions:
