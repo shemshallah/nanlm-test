@@ -272,3 +272,18 @@ updates, not cryptographic authenticity. Process crash after rename but
 before directory fsync can leave a committed-on-disk update with an error
 returned to the caller; reopening is required to reconcile it. The lock
 file intentionally remains alongside the source memory.
+
+## Public-domain author-disjoint wave-compute ablation
+
+The existing SHA-256-pinned Alice (training/development) -> Dickens
+(two nonoverlapping held-out spans) benchmark now evaluates **the same
+trained/checkpointed root twice** for each variant: wave execution on and
+all 255 standing-wave recurrences disabled. Neither test mode retrains,
+recalibrates or writes indexed facts, and both use the same 5,998
+cross-author held-out target tokens. It logs both CE/accuracy and repeated
+wall-clock subprocess execution times. Reported runtime **includes process
+startup, 8 MiB mapping, spectrum rebuild and Python overhead**; it is
+not a per-token isolated wave-kernel benchmark. The experiment asks whether
+retaining waves improves author-disjoint CE enough to justify their cost;
+no positive result is presumed. Results are reported under `PUBLIC_DOMAIN_WAVE_EXEC`
+and `PUBLIC_DOMAIN_WAVE_AGGREGATE` in the public-domain workflow logs.

@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import re
+import statistics
 import subprocess
 import tempfile
 import time
@@ -139,6 +140,43 @@ def main() -> None:
             calibrated = run(root,"calibrate",dev)
             after = {key: ce(run(root,"eval",file)) for key,file in
                      (("carol_early",held_a),("carol_later",held_b))}
+            # Exactly the SAME trained root and held-out Dickens bytes,
+            # with only the 255-head oscillator execution toggled.
+            # This measures end-to-end CLI eval time (includes startup,
+            # mmap, spectrum reconstruction and subprocess overhead).
+            wave_off, wave_on_timed = {}, {}
+            time_on, time_off = {}, {}
+            for key,file in (("carol_early",held_a),("carol_later",held_b)):
+                def timed_eval(wave_execute: bool):
+                    timings = []
+                    outputs = []
+                    for _ in range(2):
+                        started = time.perf_counter()
+                        outputs.append(ce(run(root, "eval", file,
+                                              int(wave_execute))))
+                        timings.append(time.perf_counter()-started)
+                    assert outputs[0] == outputs[1], "nondeterministic wave ablation"
+                    return outputs[0], statistics.median(timings)
+                wave_on_timed[key], time_on[key] = timed_eval(True)
+                wave_off[key], time_off[key] = timed_eval(False)
+                assert wave_on_timed[key] == after[key], (
+                    "explicit wave-on eval differs from production default"
+                )
+                assert wave_off[key]["tokens"] == after[key]["tokens"]
+                print(f"PUBLIC_DOMAIN_WAVE_EXEC variant={name} domain={key} "
+                      f"tokens={after[key]['tokens']} "
+                      f"on_ce={after[key]['cross_entropy']:.8f} "
+                      f"off_ce={wave_off[key]['cross_entropy']:.8f} "
+                      f"delta_off_minus_on={wave_off[key]['cross_entropy']-after[key]['cross_entropy']:+.8f} "
+                      f"on_wall_seconds={time_on[key]:.6f} "
+                      f"off_wall_seconds={time_off[key]:.6f}",flush=True)
+            print(f"PUBLIC_DOMAIN_WAVE_AGGREGATE variant={name} "
+                  f"tokens={sum(v['tokens'] for v in after.values())} "
+                  f"on_ce={weighted(after):.8f} "
+                  f"off_ce={weighted(wave_off):.8f} "
+                  f"delta_off_minus_on={weighted(wave_off)-weighted(after):+.8f} "
+                  f"on_wall_seconds={sum(time_on.values()):.6f} "
+                  f"off_wall_seconds={sum(time_off.values()):.6f}",flush=True)
             sample = run(root,"generate","Alice was ",120,29)
             assert sample.startswith("Alice was ")
             variants[name] = {
@@ -150,6 +188,11 @@ def main() -> None:
                 "weighted_uncalibrated": weighted(uncalibrated),
                 "weighted_after": weighted(after),
                 "generation_sample": sample[:140],
+                "wave_execution_off": wave_off,
+                "wave_execution_on": wave_on_timed,
+                "weighted_wave_off": weighted(wave_off),
+                "wave_off_minus_on_ce": weighted(wave_off)-weighted(after),
+                "wave_wall_seconds": {"on": time_on, "off": time_off},
             }
             print(f"PUBLIC_DOMAIN_VARIANT name={name} "
                   f"before_ce={weighted(before):.8f} "
