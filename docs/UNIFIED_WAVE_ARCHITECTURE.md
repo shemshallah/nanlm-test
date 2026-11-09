@@ -155,6 +155,17 @@ set is therefore larger than 8 MiB. The learner does not yet provide
 multi-step backpropagation through time. These distinctions should
 remain explicit in performance reports.
 
+The optional multilinear CP and inverse-standing-wave tensor factors
+have two independently calibrated **signed** strengths. They are float32
+values stored at offsets 96–103 of head 0, with schema marker at 104,
+disjoint from the previous gain and gauge layouts. `calibrate DEV_TEXT`
+now fits them after the original four output scales by a fixed grid
+search over [-2, 2], using the **development split only**. Zero turns
+off a tensor modulation without deleting the shared physical structure;
+a negative value makes the corresponding alignment anti-evidence.
+The extra calibration dimensions can overfit a small development set,
+so a new source-disjoint evaluation is required for performance claims.
+
 ### Regressions and ablation interpretation
 
 `make test_hypermatrix && ./test_hypermatrix` checks a never-stored
