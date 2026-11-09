@@ -41,7 +41,7 @@ class WordNetIndex {
  public:
  size_t concepts()const{return concepts_.size();}
  size_t relations()const{return edges_.size();}
- const Concept* concept(uint32_t id)const{
+ const Concept* get_concept(uint32_t id)const{
   auto it=concepts_.find(id);return it==concepts_.end()?nullptr:&it->second;
  }
  const std::vector<uint32_t>& concepts_at(uint16_t address)const{
