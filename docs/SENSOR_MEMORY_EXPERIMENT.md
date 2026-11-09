@@ -55,3 +55,29 @@ g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude src/sensor_memory_
 \`\`\`
 
 GCC and Clang are covered by the branch workflow. Before claiming language improvement, integrate the native hypergraph register journal, implement source-aware fact extraction, test entity resolution, learn a proof-to-language decoder, run source-disjoint evaluation and measure CE, retrieval F1, latency, memory, and multi-source reasoning accuracy.
+
+
+## Native ABI bridge and always-resident protocol
+
+The new tests/test_sensor_native_bridge.cpp constructs a real mapped Universe
+and UnifiedWaveLanguage, imports live head_triad() membership and triangle()
+curvature, checks NaN16 hypermatrix leg/inverse address equality, and ensures
+experimental intake does not write a single production root byte or native
+hyperedge. The root remains exactly 8,388,608 bytes. This demonstrates
+read-only adapter compatibility, NOT native persistence.
+
+The src/sensor_resident.cpp component maintains 255/85/1 state while running.
+It accepts line-oriented tab-delimited commands:
+
+- INGEST [source] [+/-] [subject] [relation] [object]
+- QUERY [subject] [relation] [object]
+- TICK, STATUS, SYNC, QUIT
+
+Each INGEST snapshots newly accepted observations immediately. TICK changes
+transient activity without erasing exact graph evidence. CI launches a second
+process from the snapshot and checks the cross-source proof survives restart.
+
+This is live only while a host runs the resident process. It is a separate
+sidecar, not the native atomic .overlay format. Rename alone is not fsync-safe.
+Native NaNclock scheduling, network intake, CRC and transactional journaling
+are required before calling this an always-on permanent native overlay.
