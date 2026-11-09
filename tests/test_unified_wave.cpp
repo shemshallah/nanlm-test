@@ -69,6 +69,15 @@ int main(){
    if(evaluated.tokens!=unseen.size()-1||!std::isfinite(final_ce)||
       final_ce<=0)
     throw std::runtime_error("unified heldout score invalid");
+   // Ablations evaluate the same persisted root, not independent models.
+   std::istringstream teacher_only(unseen), no_wave(unseen), full_again(unseen);
+   const auto baseline=mind.evaluate(teacher_only,UnifiedWaveLanguage::ABLATE_ALL);
+   const auto missing_wave=mind.evaluate(no_wave,UnifiedWaveLanguage::ABLATE_WAVE);
+   const auto intact=mind.evaluate(full_again);
+   if(baseline.tokens!=evaluated.tokens||missing_wave.tokens!=evaluated.tokens||
+      !std::isfinite(baseline.ce())||!std::isfinite(missing_wave.ce())||
+      std::fabs(intact.ce()-final_ce)>1e-12)
+    throw std::runtime_error("single-root ablation audit inconsistent");
    sample=mind.generate("wind ",80,19);
    if(sample.size()!=80||!valid_utf8(sample)||
       sample!=mind.generate("wind ",80,19))

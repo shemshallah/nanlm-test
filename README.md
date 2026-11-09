@@ -20,6 +20,7 @@ make nanlm CXX=clang++
 ./nanlm /tmp/hw0 train corpus.txt 2
 ./nanlm /tmp/hw0 spectrum
 ./nanlm /tmp/hw0 eval unseen.txt
+./nanlm /tmp/hw0 audit unseen.txt
 ./nanlm /tmp/hw0 generate 'the future of ' 120 11 0.85 0.92
 ```
 
@@ -98,6 +99,17 @@ uses strict UTF-8 prefix-constrained sampling. This guarantees a
 well-formed UTF-8 continuation for a valid prefix and requested length,
 **not** grammatical, semantically correct or open-domain fluent text.
 Raw symbol 255 remains reserved and is never sampled.
+
+### Read-only contribution audit
+
+`nanlm ROOT audit unseen.txt` replays the **same held-out file** eight times
+against the **same mapped universe**. It reports `ce_nats` and top-1 accuracy
+for the full predictor, each of its six removed feature families, and a
+`teacher_only` readout with all six disabled. The teacher-only control is
+**not** a separately trained language model: it is the existing native
+head/pair teacher projection from that exact same root and checkpoint.
+No audit pass updates trainable state. A change in cross-entropy is evidence
+of a feature's contribution on this file, **not** proof of generalization.
 
 ### Research and correctness gates
 

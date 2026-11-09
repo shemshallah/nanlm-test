@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS]|eval TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS]|eval TEXT|audit TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -67,6 +67,28 @@ int main(int argc,char** argv){
    std::cout<<std::setprecision(9)<<"UNIFIED_EVAL bytes="<<result.tokens
             <<" ce_nats="<<result.ce()
             <<" accuracy="<<result.accuracy()<<"\n";
+  }else if(operation=="audit"){
+   if(argc<4)throw std::invalid_argument("audit file required");
+   UnifiedWaveLanguage mind(universe);
+   struct Ablation {const char* name;unsigned disabled;};
+   const Ablation runs[]={
+    {"full",0},
+    {"no_wave",UnifiedWaveLanguage::ABLATE_WAVE},
+    {"no_attention",UnifiedWaveLanguage::ABLATE_ATTENTION},
+    {"no_spectral",UnifiedWaveLanguage::ABLATE_SPECTRAL},
+    {"no_cycle",UnifiedWaveLanguage::ABLATE_CYCLE},
+    {"no_inverse_evidence",UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE},
+    {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
+    {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
+   };
+   for(const auto& run:runs){
+    std::ifstream file(argv[3],std::ios::binary);
+    if(!file)throw std::runtime_error("audit file unavailable");
+    const auto result=mind.evaluate(file,run.disabled);
+    std::cout<<std::setprecision(9)<<"UNIFIED_AUDIT mode="<<run.name
+             <<" tokens="<<result.tokens<<" ce_nats="<<result.ce()
+             <<" accuracy="<<result.accuracy()<<"\n";
+   }
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);

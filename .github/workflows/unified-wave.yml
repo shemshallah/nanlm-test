@@ -34,6 +34,9 @@ jobs:
           ./nanlm /tmp/unified-hw0 train /tmp/unified-train.txt 2 | tee train.log
           ./nanlm /tmp/unified-hw0 spectrum | tee spectrum.log
           ./nanlm /tmp/unified-hw0 eval /tmp/unified-heldout.txt | tee heldout.log
+          ./nanlm /tmp/unified-hw0 audit /tmp/unified-heldout.txt | tee ablation.log
+          grep -q 'UNIFIED_AUDIT mode=full ' ablation.log
+          grep -q 'UNIFIED_AUDIT mode=teacher_only ' ablation.log
           ./nanlm /tmp/unified-hw0 generate 'trees ' 72 29 > sample-a.txt
           ./nanlm /tmp/unified-hw0 generate 'trees ' 72 29 > sample-b.txt
           cmp sample-a.txt sample-b.txt
@@ -49,5 +52,6 @@ jobs:
             train.log
             heldout.log
             spectrum.log
+            ablation.log
             sample-a.txt
           if-no-files-found: warn

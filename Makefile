@@ -38,7 +38,7 @@ test: test_universe test_wordnet test_teacher test_quaternion test_multiloss tes
 	./test_multiloss
 	./test_byte_model
 	./test_recurrent_byte
-	./test_hybrid_byte
+	./test_hybrid_byte test_unified_wave
 	./test_unified_wave
 clean:
 	rm -f nanlm nanlm-diagnostics test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation test_byte_model test_recurrent_byte test_hybrid_byte

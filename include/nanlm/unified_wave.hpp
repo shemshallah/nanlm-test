@@ -34,6 +34,14 @@ public:
  static constexpr size_t N=FabricTeacher::VOCAB;
  static constexpr size_t WINDOW=16;
  static constexpr size_t MODES=4;
+ // Bitmask for read-only, single-root counterfactual evaluations.
+ static constexpr unsigned ABLATE_WAVE=1u<<0;
+ static constexpr unsigned ABLATE_ATTENTION=1u<<1;
+ static constexpr unsigned ABLATE_SPECTRAL=1u<<2;
+ static constexpr unsigned ABLATE_CYCLE=1u<<3;
+ static constexpr unsigned ABLATE_INVERSE_EVIDENCE=1u<<4;
+ static constexpr unsigned ABLATE_HYPEREDGE=1u<<5;
+ static constexpr unsigned ABLATE_ALL=(1u<<6)-1u;
  static constexpr size_t HEAD_GAIN_OFFSET=80;
  static constexpr size_t HEAD_GAIN_MAGIC_OFFSET=60;
  static constexpr uint8_t HEAD_GAIN_MAGIC=0xC7;
@@ -362,7 +370,8 @@ public:
   s.push(c);
   ++s.tick;
  }
- Prediction predict(const State& s)const{
+ Prediction predict(const State& s,unsigned disabled=0)const{
+  if(disabled&~ABLATE_ALL)throw std::invalid_argument("unknown ablation bits");
   Prediction out{};
   if(s.length==0){
    out.p.fill(1.0/N);
@@ -374,6 +383,11 @@ public:
   double largest=-std::numeric_limits<double>::infinity();
   for(size_t c=0;c<N;++c){
    const uint8_t target=static_cast<uint8_t>(c);
+   if(disabled==ABLATE_ALL){
+    logits[c]=baseline.logit[c];
+    largest=std::max(largest,logits[c]);
+    continue;
+   }
    const auto f=features(s,target);
    const auto g=gains(target);
    const auto forward=universe_.query(last,target,PRECEDES);
@@ -381,10 +395,13 @@ public:
    const double inverse_consensus=
       (forward.support+inverse.support-forward.refute-inverse.refute)/
       (2.0+forward.support+inverse.support+forward.refute+inverse.refute);
-   logits[c]=baseline.logit[c]+double(g[0])*f.wave+
-      double(g[1])*f.attention+double(g[2])*f.spectral+
-      double(g[3])*f.cycle+evidence_gain_*inverse_consensus+
-      0.03*hyperedge_signal(s,target);
+   logits[c]=baseline.logit[c]+
+      ((disabled&ABLATE_WAVE)?0.0:double(g[0])*f.wave)+
+      ((disabled&ABLATE_ATTENTION)?0.0:double(g[1])*f.attention)+
+      ((disabled&ABLATE_SPECTRAL)?0.0:double(g[2])*f.spectral)+
+      ((disabled&ABLATE_CYCLE)?0.0:double(g[3])*f.cycle)+
+      ((disabled&ABLATE_INVERSE_EVIDENCE)?0.0:evidence_gain_*inverse_consensus)+
+      ((disabled&ABLATE_HYPEREDGE)?0.0:0.03*hyperedge_signal(s,target));
    largest=std::max(largest,logits[c]);
   }
   double z=0;
@@ -398,7 +415,8 @@ public:
   }
   return out;
  }
- Metrics evaluate(std::istream& corpus)const{
+ Metrics evaluate(std::istream& corpus,unsigned disabled=0)const{
+  if(disabled&~ABLATE_ALL)throw std::invalid_argument("unknown ablation bits");
   State state{};
   Metrics result{};
   char ch;
@@ -406,7 +424,7 @@ public:
    const uint8_t symbol=static_cast<uint8_t>(static_cast<unsigned char>(ch));
    if(symbol==255){state.reset();continue;}
    if(state.length){
-    const auto p=predict(state);
+    const auto p=predict(state,disabled);
     result.nll-=std::log(std::max(p.p[symbol],1e-300));
     result.correct+=(p.best==symbol?1u:0u);
     ++result.tokens;
