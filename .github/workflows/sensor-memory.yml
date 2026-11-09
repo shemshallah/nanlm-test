@@ -1,0 +1,38 @@
+name: Experimental three-resolution sensor memory
+on:
+  push:
+    branches: ['experiment/math-sensor-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  multiresolution-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test math sensor memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          for compiler in g++ clang++; do
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_memory.cpp -o test_sensor_memory
+            ./test_sensor_memory | tee sensor-memory-test.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude src/sensor_memory_probe.cpp -o sensor-memory-probe
+            ./sensor-memory-probe tests/fixtures/sensor_sources.tsv penguin ISA animal | tee proof.log
+            grep -q 'state=3 inferred=1' proof.log
+            grep -q 'source_A source_B' proof.log
+          done
+      - name: Store sensor results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensor-memory-logs
+          path: |
+            sensor-memory-test.log
+            proof.log
