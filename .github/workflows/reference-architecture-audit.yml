@@ -1,0 +1,80 @@
+name: Reference architecture correctness and memory audit
+on:
+  push:
+    branches:
+      - 'feat/hw0-reference-audit-*'
+  pull_request:
+    paths:
+      - 'experiments/**'
+      - 'tests/test_independent_heads.py'
+      - 'tests/test_sparse_shared.py'
+      - 'tools/audit_reference_architecture.py'
+      - '.github/workflows/reference-architecture-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reference-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU reference dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -U pip
+          python -m pip install numpy
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Existing independent-head and sparse-shared tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+          python -m unittest tests.test_independent_heads tests.test_sparse_shared -v 2>&1 | tee reference-tests.log
+      - name: Detect layout, position and transactional invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+          python -m tools.audit_reference_architecture 2>&1 | tee reference-audit.log
+      - name: Matched one-batch sparse versus dense adapter benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+          python - <<'PY' 2>&1 | tee reference-throughput.log
+          import json
+          import torch
+          from experiments.independent_heads.quant_bank import memory_projection
+          from experiments.sparse_shared.train import run
+          from experiments.sparse_shared.model import SparseConfig
+          torch.set_num_threads(1)
+          cfg=SparseConfig(d_model=32,layers=2,mlp=64,context=8)
+          for mode in ("sparse","random","dense"):
+              row=run(cfg=cfg,steps=3,seq=8,batch=1,seed=17,same_batch=True,
+                      dense=mode=="dense",random_topk=mode=="random",active=8)
+              print("REFERENCE_THROUGHPUT mode="+mode+
+                    " tokens_per_second="+str(round(row["tokens_per_second"],3))+
+                    " first_loss="+str(round(row["first_loss"],6))+
+                    " last_loss="+str(round(row["last_loss"],6)),flush=True)
+          for n in (255,256):
+              p=memory_projection(n)
+              print("REFERENCE_MEMORY cognitive_or_physical_slots="+str(n)+
+                    " bank_MiB="+str(p["total_mib"])+
+                    " bank_plus_native_root_MiB="+
+                    str(round(p["total_mib"]+8,3)),flush=True)
+          PY
+      - name: Save complete test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-architecture-audit
+          path: |
+            reference-tests.log
+            reference-audit.log
+            reference-throughput.log
+          if-no-files-found: warn
