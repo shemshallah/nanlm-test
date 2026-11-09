@@ -65,8 +65,11 @@ int main(){
    m.observe(s,static_cast<uint8_t>('a'+step%4));
   const auto elapsed=std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now()-clock_start).count();
+  const double checksum=s.wave['a']+s.wave['b']+s.inverse_wave['d'];
+  check(std::isfinite(checksum),"sparse long-run wave diverged");
   std::cout<<"SPARSE_MIRROR_BENCHMARK steps=512 elapsed_us="<<elapsed
-           <<" arcs="<<m.active_mirror_arcs()<<" root_bytes="<<ROOT_BYTES<<"\n";
+           <<" arcs="<<m.active_mirror_arcs()<<" root_bytes="<<ROOT_BYTES
+           <<" checksum="<<checksum<<"\n";
   for(const auto ext:{"",".overlay",".overlay.tmp",".so3"})
    std::filesystem::remove(root+ext);
   std::cout<<"PASS: cached sparse T and T* equal dense native mirror recurrence\n";
