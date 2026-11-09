@@ -1,0 +1,25 @@
+name: HW0 adaptive three-head topology audit
+on:
+  push:
+    branches:
+      - 'feat/hw0-*'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  triad-regression:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and verify reversible shared-root topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ matrix.compiler }} -Iinclude -O2 -std=c++20 -Wall -Wextra -Wpedantic -Werror tests/test_adaptive_triads.cpp -o /tmp/test_adaptive_triads
+          /tmp/test_adaptive_triads | tee triad.log
+          grep -q 'PASS: 85 balanced adaptive triads' triad.log
