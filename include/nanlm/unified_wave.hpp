@@ -101,6 +101,7 @@ public:
  using GlobalScales=std::array<double,4>;
  struct State {
   TriadWaveFormer::Workspace workspace{};
+  TriadWaveFormer::Workspace previous_workspace{};
   std::array<double,N> wave{};
   std::array<double,N> old_wave{};
   std::array<double,N> inverse_wave{};
@@ -154,7 +155,7 @@ private:
  bool bptt_enabled_=true;
  bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
  TriadWaveFormer::Parameters triad_parameters_{};
- uint64_t triad_accepted_=0,projection_accepted_=0;
+ uint64_t triad_accepted_=0,projection_accepted_=0,adapter_accepted_=0;
  bool triad_training_enabled_=true;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
@@ -698,6 +699,7 @@ public:
  uint64_t trained()const{return trained_;}
  uint64_t triad_accepted()const{return triad_accepted_;}
  uint64_t projection_accepted()const{return projection_accepted_;}
+ uint64_t adapter_accepted()const{return adapter_accepted_;}
  void set_triad_training_enabled(bool yes){triad_training_enabled_=yes;}
  TriadWaveFormer::Parameters triad_parameters()const{return triad_parameters_;}
  void set_triad_parameters(const TriadWaveFormer::Parameters& p){
@@ -1127,6 +1129,7 @@ public:
   s.wave=next;
   s.inverse_wave=next_inverse;
   const auto previous=s.workspace;
+  s.previous_workspace=previous;
   s.push(c);
   refresh_triad(s,previous);
   ++s.tick;
@@ -1226,6 +1229,63 @@ public:
   }
   return false;
  }
+ // One-step differentiable-in-principle kernel calibration, evaluated
+ // through exact causal replay of the current recurrent workspace. Central
+ // differences are used for the QKV/adapter coordinates as a reference
+ // optimizer, NOT claimed as full reverse-mode transformer BPTT.
+ bool learn_triad_kernel(State& s,uint8_t label){
+  if(!s.length||s.workspace.active_count==0)return false;
+  auto saved=triad_parameters_;
+  auto trial=[&](const TriadWaveFormer::Parameters& p,State* result=nullptr){
+   triad_parameters_=p;
+   State probe=s;
+   refresh_triad(probe,s.previous_workspace);
+   const double p_label=predict(probe).p[label];
+   if(result)*result=std::move(probe);
+   triad_parameters_=saved;
+   return -std::log(std::max(p_label,1e-300));
+  };
+  const double before=trial(saved);
+  if(!std::isfinite(before))throw std::runtime_error("nonfinite triad objective");
+  bool improved=false;
+  // One routed adapter and one coordinate of the globally shared QKV
+  // bank per interval; all 255 heads still share the resulting kernel.
+  const size_t active=s.workspace.active[trained_%s.workspace.active_count];
+  const size_t index=(trained_/32u)%TriadWaveFormer::PROJECTION_WEIGHTS;
+  const auto optimize=[&](float& param,double bound,bool adapter){
+   // This lambda receives a reference into saved, and probes complete
+   // independent parameter snapshots without modifying the mapped root.
+   const double value=param,eps=0.002;
+   param=float(value+eps);
+   const double plus=trial(saved);
+   param=float(value-eps);
+   const double minus=trial(saved);
+   param=float(value);
+   const double gradient=(plus-minus)/(2*eps);
+   if(!std::isfinite(gradient)||std::fabs(gradient)<1e-9)return false;
+   const double current=trial(saved);
+   for(int retry=0;retry<6;++retry){
+    const double eta=std::ldexp(adapter?0.15:0.08,-retry);
+    const float updated=float(std::clamp(value-eta*gradient,-bound,bound));
+    if(updated==param)continue;
+    param=updated;
+    const double candidate=trial(saved);
+    if(candidate+1e-10<current){
+     if(adapter)++adapter_accepted_;else ++projection_accepted_;
+     return true;
+    }
+   }
+   param=float(value);
+   return false;
+  };
+  improved|=optimize(saved.adapter[active],1.0,true);
+  improved|=optimize(saved.qkv[index],2.0,false);
+  if(improved){
+   store_triad_parameters(saved);
+   refresh_triad(s,s.previous_workspace);
+  }
+  return improved;
+ }
  Metrics evaluate(std::istream& corpus,unsigned disabled=0)const{
   if(disabled&~ABLATE_ALL)throw std::invalid_argument("unknown ablation bits");
   State state{};
@@ -1271,7 +1331,10 @@ public:
     learn_head_gains(state,symbol);
     learn_hyper_gains(state,symbol);
     learn_long_context_gains(state,symbol);
-    if(triad_training_enabled_)learn_triad_readout(state,symbol);
+    if(triad_training_enabled_){
+     learn_triad_readout(state,symbol);
+     if(trained_%32u==0)learn_triad_kernel(state,symbol);
+    }
     learn_hyper_residual(state,symbol,initial_time+trained_);
     if(trained_%128==0)
      trial_swap_triads(prev,symbol,state,symbol);
