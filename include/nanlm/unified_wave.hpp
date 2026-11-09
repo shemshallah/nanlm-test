@@ -80,10 +80,13 @@ public:
  static constexpr uint8_t HYPER_GROUP_MAGIC=0xB7;
  static constexpr uint8_t HYPER_FIELD_MAGIC=0xB8;
  // Byte-disjoint shared QKV, adapters and per-head gains in the fixed root.
- static constexpr size_t TRIAD_GAIN_OFFSET=8;
- static constexpr size_t TRIAD_PROJECTION_OFFSET=16;
- static constexpr size_t TRIAD_ADAPTER_OFFSET=20;
- static constexpr size_t TRIAD_KERNEL_MARKER_OFFSET=122;
+ // Explicitly avoid Universe observation state at [8..11], count [16..19],
+ // accepted proposals [20..23], and reserved SO(3) rule quaternions in
+ // heads 6/7 at [96..111]. The QKV slots skip these two heads.
+ static constexpr size_t TRIAD_GAIN_OFFSET=124;
+ static constexpr size_t TRIAD_PROJECTION_OFFSET=105;
+ static constexpr size_t TRIAD_ADAPTER_OFFSET=100;
+ static constexpr size_t TRIAD_KERNEL_MARKER_OFFSET=123;
  static constexpr uint8_t TRIAD_KERNEL_MAGIC=0xD6;
  static constexpr size_t TRIAD_ID_OFFSET=64;
  static constexpr size_t TRIAD_MAGIC_OFFSET=65;
@@ -169,7 +172,7 @@ private:
  }
  void store_triad_parameters(const TriadWaveFormer::Parameters& p){
   for(size_t i=0;i<TriadWaveFormer::PROJECTION_WEIGHTS;++i)
-   write_scalar(universe_.root().h[i],TRIAD_PROJECTION_OFFSET,p.qkv[i]);
+   write_scalar(universe_.root().h[i<6?i:i+2],TRIAD_PROJECTION_OFFSET,p.qkv[i]);
   for(size_t i=0;i<N;++i)
    write_scalar(universe_.root().h[i],TRIAD_GAIN_OFFSET,p.head_gain[i]);
   for(size_t i=0;i<GROUPS;++i)
@@ -183,7 +186,7 @@ private:
   }
   TriadWaveFormer::Parameters p{};
   for(size_t i=0;i<TriadWaveFormer::PROJECTION_WEIGHTS;++i)
-   p.qkv[i]=read_scalar(universe_.root().h[i],TRIAD_PROJECTION_OFFSET);
+   p.qkv[i]=read_scalar(universe_.root().h[i<6?i:i+2],TRIAD_PROJECTION_OFFSET);
   for(size_t i=0;i<N;++i)
    p.head_gain[i]=read_scalar(universe_.root().h[i],TRIAD_GAIN_OFFSET);
   for(size_t i=0;i<GROUPS;++i)
