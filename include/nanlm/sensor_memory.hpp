@@ -87,6 +87,7 @@ public:
 private:
  std::array<Branch,HEAD_COUNT> head_branches_{};
  std::array<TriadAggregate,TRIAD_COUNT> triads_{};
+ std::array<double,HEAD_COUNT> head_state_{};
  GlobalAggregate global_{};
  TriadMap map_=default_map();
  std::array<std::uint8_t,HEAD_COUNT> reverse_group_{};
@@ -191,6 +192,7 @@ public:
  }
  void tick() {
   ++clock_;
+  for(auto& x:head_state_)x*=leak_;
   for(auto& t:triads_){
    t.support*=leak_;t.refute*=leak_;t.activation*=leak_;
    for(auto& x:t.tensor)x*=leak_;
@@ -221,6 +223,7 @@ public:
    const auto xyz=features(v,h,angle);
    const double strength=std::abs(xyz[0])+std::abs(xyz[1])+std::abs(xyz[2]);
    leaf.activation+=strength*a.confidence;
+   head_state_[h]+=strength*a.confidence;
    if(a.refutes)leaf.refute_charge+=a.confidence;
    else leaf.support_charge+=a.confidence;
    for(std::size_t i=0;i<3;++i)
@@ -322,6 +325,7 @@ public:
   }
   return accepted;
  }
+ double head_activity(std::uint8_t h)const{return head_state_.at(h);}
  const Branch& branch(std::uint8_t h)const {return head_branches_.at(h);}
  const TriadAggregate& triad(std::size_t g)const {return triads_.at(g);}
  const GlobalAggregate& global()const {return global_;}
