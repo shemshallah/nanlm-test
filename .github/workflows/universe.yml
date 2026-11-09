@@ -17,24 +17,24 @@ jobs:
       - name: CLI persistence smoke
         shell: bash
         run: |
-          make nanlm CXX=clang++
-          ./nanlm /tmp/nanlm-ci-root init
-          ./nanlm /tmp/nanlm-ci-root write 1 2 0 0 1 10
-          ./nanlm /tmp/nanlm-ci-root query 2 1 1 15 | tee query.txt
+          make nanlm-diagnostics CXX=clang++
+          ./nanlm-diagnostics /tmp/nanlm-ci-root init
+          ./nanlm-diagnostics /tmp/nanlm-ci-root write 1 2 0 0 1 10
+          ./nanlm-diagnostics /tmp/nanlm-ci-root query 2 1 1 15 | tee query.txt
           grep 'state=1' query.txt
-          ./nanlm /tmp/nanlm-ci-root import-wordnet tests/fixtures/data.noun
+          ./nanlm-diagnostics /tmp/nanlm-ci-root import-wordnet tests/fixtures/data.noun
           test "$(stat -c%s /tmp/nanlm-ci-root)" = 8388608
           rm -f /tmp/nanlm-ci-root /tmp/nanlm-ci-root.overlay /tmp/nanlm-ci-root.wordnet.tsv
       - name: One continuously mapped resident universe
         shell: bash
         run: |
-          printf "status\ntrain 23 40\npredict 23\nsync\nexit\n" | ./nanlm /tmp/nanlm-live-root resident | tee resident.txt
+          printf "status\ntrain 23 40\npredict 23\nsync\nexit\n" | ./nanlm-diagnostics /tmp/nanlm-live-root resident | tee resident.txt
           grep 'READY HW0:0 mapped_root=8388608' resident.txt
           grep 'TRAIN accepted=1' resident.txt
           grep 'BYE saved' resident.txt
-          ./nanlm /tmp/nanlm-live-root inspect | tee restored.txt
+          ./nanlm-diagnostics /tmp/nanlm-live-root inspect | tee restored.txt
           grep 'events=1' restored.txt
           printf 'ababababababababab' > corpus.txt
-          ./nanlm /tmp/nanlm-live-root teach-stream corpus.txt
-          ./nanlm /tmp/nanlm-live-root eval-stream corpus.txt
+          ./nanlm-diagnostics /tmp/nanlm-live-root teach-stream corpus.txt
+          ./nanlm-diagnostics /tmp/nanlm-live-root eval-stream corpus.txt
           rm -f /tmp/nanlm-live-root /tmp/nanlm-live-root.overlay
