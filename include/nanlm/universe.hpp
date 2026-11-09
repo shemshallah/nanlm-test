@@ -1,4 +1,5 @@
 #pragma once
+#include "nanlm/quaternion.hpp"
 #include <array>
 #include <algorithm>
 #include <bit>
@@ -89,6 +90,7 @@ class Universe {
  std::string filename_;
  int fd_=-1;
  Root* root_=nullptr;
+ QuaternionField quaternions_;
  std::array<Leaf,LEAVES> leaves_{};
  std::array<double,PAIRS> phase_{};
  std::vector<Event> events_;
@@ -149,7 +151,7 @@ class Universe {
   }
  }
  public:
- explicit Universe(const std::string& path):filename_(path){
+ explicit Universe(const std::string& path):filename_(path),quaternions_(path+".so3"){
   fd_=::open(path.c_str(),O_CREAT|O_RDWR,0600);
   if(fd_<0)throw std::runtime_error("cannot open root");
   struct stat st{};
@@ -181,10 +183,12 @@ class Universe {
  ~Universe(){if(root_){::msync(root_,ROOT_BYTES,MS_SYNC);::munmap(root_,ROOT_BYTES);}if(fd_>=0)::close(fd_);}
  const Root& root()const{return *root_;}
  Root& root(){return *root_;}
+ QuaternionField& quaternion_field(){return quaternions_;}
+ const QuaternionField& quaternion_field()const{return quaternions_;}
  const Leaf& leaf(uint16_t raw)const{return leaves_[raw];}
  size_t event_count()const{return events_.size();}
  size_t hyperedge_count()const{return hyper_.size();}
- size_t resident_bytes_nominal()const{return ROOT_BYTES+sizeof(leaves_)+sizeof(phase_)+
+ size_t resident_bytes_nominal()const{return ROOT_BYTES+sizeof(leaves_)+sizeof(phase_)+quaternions_.mapped_bytes()+
    events_.capacity()*sizeof(Event)+hyper_.capacity()*sizeof(Hyperedge);}
  void observe(uint8_t byte) {
   // Noncommuting 3-plane Givens stages, with lossless byte identity retained by the head address.
@@ -323,6 +327,7 @@ class Universe {
   return RoutePacket{255,remote_hw,remote_slot,leaf_address,id};
  }
  void sync()const{
+  quaternions_.sync();
   if(::msync(root_,ROOT_BYTES,MS_SYNC)!=0)throw std::runtime_error("msync");
   const auto temp=filename_+".overlay.tmp",dest=filename_+".overlay";
   std::ofstream out(temp,std::ios::binary|std::ios::trunc);
