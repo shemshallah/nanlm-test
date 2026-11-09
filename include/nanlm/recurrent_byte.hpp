@@ -173,10 +173,11 @@ public:
   Metrics result{};
   State state{};
   State previous{};
+  uint8_t previous_symbol=0;
   char ch;
   while(stream.get(ch)){
    const uint8_t label=static_cast<uint8_t>(static_cast<unsigned char>(ch));
-   if(label==255){state=State{};continue;}
+   if(label==255){state=State{};previous=State{};continue;}
    if(state.started) {
     const Scores p=predict(state);
     result.nll+=stable_nll(p,label);
@@ -189,7 +190,7 @@ public:
      for(size_t i=0;i<H;++i)
       gradient_h[i]+=static_cast<float>(delta*output_[c][i]);
     }
-    // We update the currently observed embedding and the input-to-hidden
+    // We update the last observed embedding and the input-to-hidden
     // recurrent matrix. No gradient flows through previous recurrent steps.
     for(size_t c=0;c<V;++c){
      const double delta=p[c]-(c==label?1.0:0.0);
@@ -202,13 +203,14 @@ public:
      // previous.h corresponds to state before the latest symbol was read.
      for(size_t j=0;j<H;++j)
       recurrent_[i][j]-=lr_*dh*previous.h[j];
-     // Last input symbol's embedding is tracked separately below.
+     input_[previous_symbol][i]-=lr_*dh;
     }
     // The learner is online and intentionally does not backpropagate to the
     // earlier state. This is a truncated-step baseline.
     ++updates_;
    }
    previous=state;
+   previous_symbol=label;
    observe(state,label);
   }
   return result;
