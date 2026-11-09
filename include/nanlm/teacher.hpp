@@ -35,6 +35,7 @@ class FabricTeacher {
  double dot_gain_;
  double quaternion_weight_;
  double rule_gain_;
+ bool train_heads_;
  static constexpr uint8_t RULE_HEAD=PRECEDES;
  static constexpr size_t RULE_QUAT_OFFSET=96;
  static constexpr size_t RULE_INIT_OFFSET=112;
@@ -137,10 +138,11 @@ class FabricTeacher {
  explicit FabricTeacher(Universe& u,double learning_rate=0.055,
                         double angular_weight=0.08,double evidence_weight=0.09,
                         double quaternion_weight=0.45,double dot_gain=4.0,
-                        double rule_gain=0.0):
+                        double rule_gain=0.0,bool train_heads=true):
   u_(u),lr_(learning_rate),angular_weight_(angular_weight),
   evidence_weight_(evidence_weight),dot_gain_(dot_gain),
-  quaternion_weight_(quaternion_weight),rule_gain_(rule_gain){
+  quaternion_weight_(quaternion_weight),rule_gain_(rule_gain),
+  train_heads_(train_heads){
   if(!std::isfinite(lr_)||!std::isfinite(angular_weight_)||
      !std::isfinite(evidence_weight_)||!std::isfinite(dot_gain_)||
      !std::isfinite(quaternion_weight_)||!std::isfinite(rule_gain_)||
@@ -232,6 +234,12 @@ class FabricTeacher {
   if(previous>=VOCAB||next>=VOCAB)throw std::invalid_argument("nannet head is reserved");
   const auto prediction=predict(previous);
   const double before=-std::log(std::max(prediction.probability[next],1e-300));
+  // Diagnostic: isolate the shared relation operator from head-specific updates.
+  // The operator still trains inside the same persistent physical head fabric.
+  if(!train_heads_) {
+   const bool accepted=teach_shared_rule(previous,next);
+   return Update{before,loss(previous,next),accepted};
+  }
   const Vector old_src=get(u_.root().h[previous],32);
   const Vec3 rotor=u_.transformed(previous);
   const std::array<double,3> rotor_vec{rotor.x,rotor.y,rotor.z};
