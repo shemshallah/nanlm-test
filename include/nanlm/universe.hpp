@@ -199,6 +199,29 @@ class Universe {
  QuaternionField& quaternion_field(){return quaternions_;}
  const QuaternionField& quaternion_field()const{return quaternions_;}
  const Leaf& leaf(uint16_t raw)const{return leaves_[raw];}
+ // A rank-three hypermatrix coordinate has three directed mirror
+ // addresses but NO additional physical cells: the pair legs use the
+ // same canonical NaN16 cells and their reverse orientations. The head
+ // offsets point into the same 256 palindromic 128-byte registers.
+ struct HyperMatrixAddress {
+  std::array<uint16_t,3> directed{},inverse{};
+  std::array<uint32_t,3> pair_offsets{},head_offsets{};
+ };
+ HyperMatrixAddress hypermatrix_address(uint8_t a,uint8_t b,uint8_t c)const{
+  if(a==b||b==c||a==c)throw std::invalid_argument("degenerate hypermatrix coordinate");
+  HyperMatrixAddress out{};
+  out.directed={address(a,b),address(b,c),address(c,a)};
+  out.head_offsets={
+   static_cast<uint32_t>(offsetof(Root,h)+size_t(a)*sizeof(Head)),
+   static_cast<uint32_t>(offsetof(Root,h)+size_t(b)*sizeof(Head)),
+   static_cast<uint32_t>(offsetof(Root,h)+size_t(c)*sizeof(Head))
+  };
+  for(size_t i=0;i<3;++i){
+   out.inverse[i]=mirror(out.directed[i]);
+   out.pair_offsets[i]=leaf(out.directed[i]).physical_offset;
+  }
+  return out;
+ }
  size_t event_count()const{return events_.size();}
  size_t hyperedge_count()const{return hyper_.size();}
  size_t resident_bytes_nominal()const{return ROOT_BYTES+sizeof(leaves_)+sizeof(phase_)+quaternions_.mapped_bytes()+
