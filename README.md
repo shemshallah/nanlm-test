@@ -160,3 +160,48 @@ shard aggregation, see [the distributed training design](docs/DISTRIBUTED.md).
 The runnable context model needs only Python's standard library and SQLite.
 It is an exact sparse overlay; distributed transport and a native NaN16 port
 of the full language trainer remain open integration work.
+## Causal byte-language milestone (experimental branch)
+
+The byte model uses **the same HW0:0 Universe** plus a bounded, checksum-verified
+sparse `.byte-lm` context overlay. It is not a second 256-head universe.
+The legacy 8,388,608-byte mmap layout and Nannet head 255 remain unchanged.
+
+Build: `make nanlm test_byte_model CXX=g++` (or `CXX=clang++`).
+
+- `./nanlm /tmp/hw0 train-text train.txt 3` learns three passes of causal
+  byte statistics, preserving a bounded context up to five prior bytes.
+- `./nanlm /tmp/hw0 eval-text independent.txt` computes prequential
+  next-byte held-out cross-entropy in nats, bits/byte, accuracy and unseen
+  context count, without modifying the model.
+- `./nanlm /tmp/hw0 generate "the tiny " 200 11 0.85 0.92` generates
+  200 continuation bytes with deterministic seed 11, temperature 0.85 and
+  top-p 0.92. The output contains the prompt followed by new bytes.
+- Optional `train-text corpus.txt 1 32` enables a slow existing
+  geometric teacher update every 32 bytes. The default deliberately
+  excludes teacher training to isolate the contextual baseline.
+
+Implementation: each observed symbol increments the root unigram and up
+to five suffix-context nodes. Predict interpolates longer suffixes with a
+strictly positive shorter-context distribution, with more shrinkage for
+rare contexts. Memory is capped at 500,000 sparse nodes; once full, new
+contexts fall back to their existing shorter suffixes. This means
+**bounded representation**, not bounded compute or bounded complete
+storage footprint: the full physical universe plus indexes, journals,
+maps and overlay may consume additional memory. A 128 MiB read cap is
+enforced for the overlay.
+
+The format has an eight-byte versioned magic, order, token count, sorted
+records and an FNV-1a checksum with atomic rename on save. Writes across
+the root, temporal journal and this overlay are not jointly transactional.
+Do not share one checkpoint between uncoordinated writer processes.
+
+**Research honesty:** the model is a count-based autoregressive reference,
+not yet a fluent generative neural model. Simple, repetitive held-out
+sentences are not genuinely out-of-domain. Run paragraph- and
+document-disjoint tests, a matched order-5 n-gram baseline, a conventional
+small recurrent/attention model, and byte-level free-run diversity,
+UTF-8 validity and repetition checks before making any claims of language
+generalization or of the geometry's utility. The current sampler is
+byte-level; UTF-8 validity of generated text is not guaranteed.
+
+The integrated causal path and its commands are described in [the unified model guide](docs/UNIFIED.md). Earlier component commands remain available for diagnostics.

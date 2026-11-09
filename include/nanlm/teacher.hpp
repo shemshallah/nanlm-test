@@ -243,7 +243,7 @@ class FabricTeacher {
   std::memcpy(u_.root().h[head].data+4,&new_mask,2);
   return true;
  }
- Update teach(uint8_t previous,uint8_t next,uint64_t time){
+ Update teach(uint8_t previous,uint8_t next,uint64_t time,bool record_evidence=true){
   if(previous>=VOCAB||next>=VOCAB)throw std::invalid_argument("nannet head is reserved");
   const auto prediction=predict(previous);
   const double before=-std::log(std::max(prediction.probability[next],1e-300));
@@ -332,8 +332,8 @@ class FabricTeacher {
      const double target=norm_angle(candidate_src,candidate_dst[next]);
      u_.set_covariant_phase(previous,next,wrap(original+0.08*wrap(target-original)));
      const float evidence=u_.query(previous,next,PRECEDES).support;
-     u_.trial(previous,previous,next,PRECEDES,false,0.125f,evidence+0.125f,time);
-    }else{
+     if(record_evidence)u_.trial(previous,previous,next,PRECEDES,false,0.125f,evidence+0.125f,time);
+    }else if(record_evidence){
      auto& h=u_.root().h[previous];
      uint32_t count=self_count(previous);
      ++count;std::memcpy(h.data+24,&count,4);

@@ -18,6 +18,8 @@ test_multiloss: tests/test_multiloss.cpp include/nanlm/multiloss.hpp include/nan
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_multiloss.cpp -o $@
 test_learning_validation: tests/test_learning_validation.cpp include/nanlm/teacher.hpp include/nanlm/universe.hpp include/nanlm/quaternion.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_learning_validation.cpp -o $@
+test_byte_model: tests/test_byte_model.cpp include/nanlm/byte_model.hpp include/nanlm/teacher.hpp include/nanlm/universe.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/test_byte_model.cpp -o $@
 validate: test_learning_validation
 	./test_learning_validation
 test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
@@ -26,7 +28,7 @@ test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nan
 test_nan16: tests/test_nan16.c include/nanlm/nan16.h
 	$(CC) $(CPPFLAGS) -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror $< -lm -o $@
 
-test: test_nan16 test_harmony test_universe test_wordnet test_teacher test_quaternion test_multiloss
+test: test_byte_model test_recurrent_byte test_unified test_nan16 test_harmony test_universe test_wordnet test_teacher test_quaternion test_multiloss
 	./test_nan16
 	./test_harmony
 	python3 tests/test_context_lm.py
@@ -35,10 +37,19 @@ test: test_nan16 test_harmony test_universe test_wordnet test_teacher test_quate
 	./test_teacher
 	./test_quaternion
 	./test_multiloss
+	./test_byte_model
+	./test_recurrent_byte
+	./test_unified
 clean:
-	rm -f test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+	rm -f test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
 
 validate_harmony: tests/validate_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 validate-harmony: validate_harmony
 	./validate_harmony
+
+test_recurrent_byte: tests/test_recurrent_byte.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_unified: tests/test_unified.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@

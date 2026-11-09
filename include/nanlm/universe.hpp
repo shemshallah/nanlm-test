@@ -181,6 +181,7 @@ class Universe {
  Universe(const Universe&)=delete;
  Universe& operator=(const Universe&)=delete;
  ~Universe(){if(root_){::msync(root_,ROOT_BYTES,MS_SYNC);::munmap(root_,ROOT_BYTES);}if(fd_>=0)::close(fd_);}
+ const std::string& path()const{return filename_;}
  const Root& root()const{return *root_;}
  Root& root(){return *root_;}
  QuaternionField& quaternion_field(){return quaternions_;}
