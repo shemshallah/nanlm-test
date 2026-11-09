@@ -189,10 +189,46 @@ private:
    if(a.first!=b.first)return a.first>b.first;
    return a.second<b.second;
   });
-  hot_count_=std::min(hot_budget_,ranked.size());
+  // A top-K selection based only on activation can erase an active
+  // minority refutation from the hot *readout*, even though the exact graph
+  // still holds it. Reserve hot slots for contradictory and signed evidence,
+  // when such active candidates exist, then fill by salience.
+  std::vector<std::pair<double,std::size_t>> selected;
+  selected.reserve(std::min(hot_budget_,ranked.size()));
+  const auto has_support=[&]() {
+   for(const auto& e:selected)if(triads_[e.second].support>0)return true;
+   return false;
+  };
+  const auto has_refute=[&]() {
+   for(const auto& e:selected)if(triads_[e.second].refute>0)return true;
+   return false;
+  };
+  const auto reserve=[&](const auto& pred) {
+   if(selected.size()>=hot_budget_)return;
+   for(const auto& e:ranked) {
+    if(!pred(triads_[e.second]))continue;
+    bool already=false;
+    for(const auto& chosen:selected)if(chosen.second==e.second)already=true;
+    if(!already){selected.push_back(e);break;}
+   }
+  };
+  reserve([](const TriadAggregate& t){return t.support>0&&t.refute>0;});
+  if(!has_refute())reserve([](const TriadAggregate& t){return t.refute>0;});
+  if(!has_support())reserve([](const TriadAggregate& t){return t.support>0;});
+  for(const auto& e:ranked) {
+   if(selected.size()>=hot_budget_)break;
+   bool already=false;
+   for(const auto& chosen:selected)if(chosen.second==e.second)already=true;
+   if(!already)selected.push_back(e);
+  }
+  std::sort(selected.begin(),selected.end(),[](const auto& a,const auto& b) {
+   if(a.first!=b.first)return a.first>b.first;
+   return a.second<b.second;
+  });
+  hot_count_=selected.size();
   double weight_sum=0;
   for(std::size_t slot=0;slot<hot_count_;++slot) {
-   const auto [score,g]=ranked[slot];
+   const auto [score,g]=selected[slot];
    const auto& triad=triads_[g];
    auto& out=hot_[slot];
    out.group=static_cast<std::uint8_t>(g);
