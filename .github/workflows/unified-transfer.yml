@@ -1,0 +1,30 @@
+name: NaNLM source-disjoint transfer audit
+on:
+  push:
+    branches:
+      - main
+      - 'feat/hw0-transfer-benchmark'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  transfer-audit:
+    name: Single-root authored-domain evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native engine
+        run: make nanlm CXX=clang++
+      - name: Check train/dev/test separation and produce per-domain metrics
+        run: python3 tools/transfer_benchmark.py | tee transfer-audit.log
+      - name: Store hashes and per-domain diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transfer-audit
+          path: |
+            transfer-report.json
+            transfer-audit.log
+          if-no-files-found: warn

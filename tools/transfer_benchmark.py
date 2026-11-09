@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Source-disjoint, multi-domain sentinel for ONE persistent native NaNLM.
+
+This is a reproducibility/instrumentation test, not a claim of general
+linguistic transfer. No alternative production model is instantiated.
+"""
+from __future__ import annotations
+import hashlib
+import json
+import math
+import re
+import subprocess
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+EXE = ROOT / "nanlm"
+FIXTURES = ROOT / "tests" / "fixtures"
+TRAIN = FIXTURES / "transfer_train.txt"
+DEV = FIXTURES / "transfer_dev.txt"
+TESTS = {
+    "ocean": FIXTURES / "transfer_test_ocean.txt",
+    "space": FIXTURES / "transfer_test_space.txt",
+    "civic": FIXTURES / "transfer_test_civic.txt",
+}
+PATTERN = re.compile(
+    r"UNIFIED_AUDIT mode=(\w+) tokens=(\d+) ce_nats=([\d.eE+-]+) accuracy=([\d.eE+-]+)"
+)
+REQUIRED = {
+    "full", "no_wave", "no_attention", "no_spectral", "no_cycle",
+    "no_inverse_evidence", "no_hyperedge", "teacher_only",
+}
+
+def run(root: Path, *args: str) -> str:
+    process = subprocess.run(
+        [str(EXE), str(root), *map(str, args)],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=True, timeout=400,
+    )
+    return process.stdout
+
+def audit(root: Path, fixture: Path) -> dict:
+    rows = {}
+    for line in run(root, "audit", str(fixture)).splitlines():
+        m = PATTERN.fullmatch(line)
+        if not m:
+            raise AssertionError("unexpected audit output: " + repr(line))
+        mode, count, ce, acc = m.groups()
+        assert mode not in rows, "duplicate audit mode"
+        row = {"tokens": int(count), "ce": float(ce), "accuracy": float(acc)}
+        assert row["tokens"] > 100, "fixture too short"
+        assert math.isfinite(row["ce"]) and row["ce"] > 0
+        assert 0 <= row["accuracy"] <= 1
+        rows[mode] = row
+    # Support both current 8-mode main and the experimental temporal track
+    # which adds no_long_context; record whichever was actually run.
+    assert REQUIRED.issubset(rows) and len(rows) in (8, 9), sorted(rows)
+    assert len({row["tokens"] for row in rows.values()}) == 1
+    return rows
+
+def verify_distinct() -> dict:
+    fixtures = {"train": TRAIN, "development": DEV, **TESTS}
+    contents = {name: path.read_bytes() for name, path in fixtures.items()}
+    for name, data in contents.items():
+        assert len(data) > 500 and b"\xff" not in data, (name, len(data))
+        data.decode("utf-8", errors="strict")
+    # Deliberately stronger than an identical-document check. Require
+    # no 32-byte exact spans shared across ANY two authored splits.
+    for left, a in contents.items():
+        spans = {a[i:i + 32] for i in range(len(a) - 31)}
+        for right, b in contents.items():
+            if left >= right:
+                continue
+            overlap = next((b[i:i + 32] for i in range(len(b) - 31)
+                            if b[i:i + 32] in spans), None)
+            assert overlap is None, f"32-byte split overlap: {left} / {right}"
+    return {name: {
+        "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+    } for name, data in contents.items()}
+
+def weighted_ce(per_domain: dict, phase: str) -> float:
+    num = sum(per_domain[name][phase]["full"]["ce"] *
+              per_domain[name][phase]["full"]["tokens"] for name in TESTS)
+    den = sum(per_domain[name][phase]["full"]["tokens"] for name in TESTS)
+    return num / den
+
+def main() -> None:
+    files = verify_distinct()
+    with tempfile.TemporaryDirectory(prefix="nanlm-transfer-") as tmp:
+        root = Path(tmp) / "hw0"
+        before = {name: audit(root, fixture) for name, fixture in TESTS.items()}
+        training = run(root, "train", str(TRAIN), "2")
+        assert root.stat().st_size == 8388608, "mapped 8 MiB contract broken"
+        uncalibrated = {name: audit(root, fixture)
+                        for name, fixture in TESTS.items()}
+        calibration = run(root, "calibrate", str(DEV))
+        after = {name: audit(root, fixture) for name, fixture in TESTS.items()}
+        # Generation remains on the one trained root, and it must be
+        # deterministic and decode as UTF-8 without replacement.
+        generated = run(root, "generate", "A distant ", "120", "29")
+        again = run(root, "generate", "A distant ", "120", "29")
+        assert generated == again and len(generated.encode("utf-8")) == 130
+        per_domain = {
+            name: {"before": before[name], "uncalibrated": uncalibrated[name],
+                   "after": after[name]} for name in TESTS
+        }
+        report = {
+            "corpus": files,
+            "training": training,
+            "calibration": calibration,
+            "weighted_ce_before": weighted_ce(per_domain, "before"),
+            "weighted_ce_uncalibrated": weighted_ce(per_domain, "uncalibrated"),
+            "weighted_ce_after": weighted_ce(per_domain, "after"),
+            "domains": per_domain,
+            "generated": generated,
+            "scope": "authored source-disjoint diagnostic; not open-domain fluency",
+        }
+        (ROOT / "transfer-report.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(f"TRANSFER_AUDIT weighted_before={report['weighted_ce_before']:.6f} "
+              f"uncalibrated={report['weighted_ce_uncalibrated']:.6f} "
+              f"calibrated={report['weighted_ce_after']:.6f}")
+        for name in TESTS:
+            pre = before[name]["full"]
+            post = after[name]["full"]
+            ablated = after[name]["no_hyperedge"]
+            print(f"TRANSFER_DOMAIN name={name} tokens={post['tokens']} "
+                  f"before_ce={pre['ce']:.6f} full_ce={post['ce']:.6f} "
+                  f"no_hyperedge_ce={ablated['ce']:.6f} "
+                  f"accuracy={post['accuracy']:.6f}")
+if __name__ == "__main__":
+    main()
