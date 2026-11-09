@@ -1,19 +1,78 @@
 #include "nanlm/universe.hpp"
 #include "nanlm/wordnet.hpp"
+#include "nanlm/teacher.hpp"
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 using namespace nanlm;
 int main(int argc,char**argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|resident|teach-stream FILE|eval-stream FILE|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],op=argv[2];
   Universe u(path);
   auto value=[&](int i)->int{if(i>=argc)throw std::invalid_argument("missing argument");return std::stoi(argv[i]);};
   auto vert=[&](int i)->uint8_t{int x=value(i);if(x<0||x>255)throw std::out_of_range("head must be 0..255");return static_cast<uint8_t>(x);};
-  if(op=="init"||op=="inspect"){
+  if(op=="resident"){
+   FabricTeacher teacher(u);
+   std::cout<<"READY HW0:0 mapped_root=8388608 memory_lifetime=process"
+            <<" next_byte_vocab=255 gateway=255"<<std::endl;
+   std::string line;
+   uint64_t steps=0;
+   while(std::getline(std::cin,line)){
+    std::istringstream s(line);std::string cmd;s>>cmd;
+    if(cmd=="exit"||cmd=="quit"){u.sync();std::cout<<"BYE saved"<<std::endl;break;}
+    if(cmd=="status"){std::cout<<"READY steps="<<steps<<" events="<<u.event_count()<<std::endl;continue;}
+    if(cmd=="sync"){u.sync();std::cout<<"SAVED"<<std::endl;continue;}
+    if(cmd=="train"){
+     int a=-1,b=-1;s>>a>>b;
+     if(a<0||a>254||b<0||b>254){std::cout<<"ERROR byte range 0..254"<<std::endl;continue;}
+     const auto z=teacher.teach(static_cast<uint8_t>(a),static_cast<uint8_t>(b),++steps);
+     std::cout<<std::setprecision(9)<<"TRAIN accepted="<<z.accepted
+              <<" loss_before="<<z.before<<" loss_scratch="<<z.after<<std::endl;
+     continue;
+    }
+    if(cmd=="predict"){
+     int a=-1;s>>a;
+     if(a<0||a>254){std::cout<<"ERROR byte range 0..254"<<std::endl;continue;}
+     auto pred=teacher.predict(static_cast<uint8_t>(a));
+     std::cout<<"PREDICT head="<<a<<" next="<<int(pred.choice)
+              <<" probability="<<pred.probability[pred.choice]<<std::endl;
+     continue;
+    }
+    std::cout<<"ERROR commands: status, train A B, predict A, sync, exit"<<std::endl;
+   }
+  }else if(op=="teach-stream"||op=="eval-stream"){
+   if(argc<4)throw std::invalid_argument("need corpus file");
+   std::ifstream corpus(argv[3],std::ios::binary);
+   if(!corpus)throw std::runtime_error("corpus not found");
+   FabricTeacher teacher(u);
+   int last=-1;
+   uint64_t step=0,accepted=0;
+   double ce=0,after=0;
+   char ch=0;
+   while(corpus.get(ch)){
+    const unsigned value=static_cast<unsigned char>(ch);
+    if(value==255){last=-1;continue;} // reserved for nannet; valid UTF-8 never contains FF
+    if(last>=0){
+     if(op=="teach-stream"){
+      auto z=teacher.teach(static_cast<uint8_t>(last),static_cast<uint8_t>(value),step+1);
+      ce+=z.before;after+=z.after;accepted+=z.accepted?1:0;
+     }else ce+=teacher.loss(static_cast<uint8_t>(last),static_cast<uint8_t>(value));
+     ++step;
+    }
+    last=static_cast<int>(value);
+   }
+   if(op=="teach-stream")u.sync();
+   std::cout<<std::setprecision(9)<<"pairs="<<step<<" accepted="<<accepted
+            <<" mean_ce_before="<<(step?ce/step:0)
+            <<" mean_scratch_ce="<<(step?after/step:0)
+            <<" updated="<<(op=="teach-stream")<<"\n";
+  }else if(op=="init"||op=="inspect"){
    std::cout<<"HW0:0 ready root=8388608 cells=32896 mirror_pairs=32640 palindromes=256 leaves=65536\n";
    std::cout<<"events="<<u.event_count()<<" hyperedges="<<u.hyperedge_count()<<" nominal_ram="<<u.resident_bytes_nominal()<<"\n";
   }else if(op=="ingest"){
