@@ -4,12 +4,14 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 namespace nanlm::math_sensor {
 // Hot entries are indexed by original triad ID; inactive entries use 255.
 struct HotTriadPacket {
+ std::array<float,3> vector{};
  std::array<float,9> tensor{};
  float score=0,activation=0,previous_activation=0;
  float support=0,refute=0,curvature=0;
@@ -27,18 +29,28 @@ struct NumericProofPacket {
  std::array<std::uint64_t,6> proof_nodes{};
  std::array<std::uint64_t,6> proof_sources{};
  std::array<float,255> head_activity{};
+ std::array<std::array<float,3>,255> head_vectors{};
+ std::array<std::array<float,9>,255> head_tensors{};
+ std::array<std::array<float,3>,85> triad_vectors{};
  std::array<std::array<float,9>,85> triad_tensors{};
  std::array<HotTriadPacket,SensorMemory::HOT_MAX> hot_triads{};
  std::array<HotLinkPacket,SensorMemory::HOT_LINK_MAX> hot_links{};
+ std::array<float,3> hot_field_vector{};
  std::array<float,9> hot_field_tensor{};
  float hot_field_support=0,hot_field_refute=0;
  std::uint8_t hot_count=0,hot_link_count=0;
+ std::array<float,3> global_vector{};
  std::array<float,9> global_tensor{};
  float global_support=0,global_refute=0;
  std::uint8_t truth=0,inferred=0,path_length=0,source_length=0;
 };
 static_assert(std::is_trivially_copyable_v<NumericProofPacket>);
 static_assert(std::is_standard_layout_v<NumericProofPacket>);
+inline float sensor_float_packet(double x){
+ if(!std::isfinite(x)||std::abs(x)>double(std::numeric_limits<float>::max()))
+  throw std::overflow_error("nonfinite or overflowing packet readout");
+ return static_cast<float>(x);
+}
 class BootstrapCatalog {
  std::map<std::uint64_t,std::string> lookup_;
 public:
@@ -77,11 +89,18 @@ inline NumericProofPacket encode_proof(const SensorMemory& sensor,
   out.proof_nodes[i]=fingerprint(r.proof_nodes[i]);
  std::size_t idx=0;
  for(const auto& source:r.proof_sources)out.proof_sources[idx++]=fingerprint(source);
- for(std::size_t i=0;i<255;++i)
-  out.head_activity[i]=float(sensor.head_activity(std::uint8_t(i)));
- for(std::size_t g=0;g<85;++g)
+ for(std::size_t i=0;i<255;++i) {
+  const auto h=static_cast<std::uint8_t>(i);
+  out.head_activity[i]=sensor_float_packet(sensor.head_activity(h));
+  for(std::size_t k=0;k<3;++k)out.head_vectors[i][k]=sensor_float_packet(sensor.head_vector(h)[k]);
+  for(std::size_t k=0;k<9;++k)out.head_tensors[i][k]=sensor_float_packet(sensor.head_tensor(h)[k]);
+ }
+ for(std::size_t g=0;g<85;++g){
+  for(std::size_t k=0;k<3;++k)
+   out.triad_vectors[g][k]=sensor_float_packet(sensor.triad(g).vector[k]);
   for(std::size_t k=0;k<9;++k)
-   out.triad_tensors[g][k]=float(sensor.triad(g).tensor[k]);
+   out.triad_tensors[g][k]=sensor_float_packet(sensor.triad(g).tensor[k]);
+ }
  out.hot_count=static_cast<std::uint8_t>(sensor.hot_count());
  out.hot_link_count=static_cast<std::uint8_t>(sensor.hot_links().size());
  for(std::size_t slot=0;slot<sensor.hot_count();++slot) {
@@ -92,6 +111,7 @@ inline NumericProofPacket encode_proof(const SensorMemory& sensor,
   o.previous_activation=float(h.previous_activation);
   o.support=float(h.support);o.refute=float(h.refute);
   o.curvature=float(h.curvature);
+  for(std::size_t k=0;k<3;++k)o.vector[k]=sensor_float_packet(h.vector[k]);
   o.source_count=static_cast<std::uint16_t>(std::min<std::size_t>(h.source_count,65535));
   for(std::size_t k=0;k<9;++k)o.tensor[k]=float(h.tensor[k]);
  }
@@ -103,12 +123,16 @@ inline NumericProofPacket encode_proof(const SensorMemory& sensor,
   o.phase_lock=float(e.phase_lock);
   o.shared_sources=static_cast<std::uint16_t>(std::min<std::size_t>(e.shared_sources,65535));
  }
+ for(std::size_t k=0;k<3;++k)
+  out.hot_field_vector[k]=sensor_float_packet(sensor.hot_field().vector[k]);
  for(std::size_t k=0;k<9;++k)
-  out.hot_field_tensor[k]=float(sensor.hot_field().tensor[k]);
+  out.hot_field_tensor[k]=sensor_float_packet(sensor.hot_field().tensor[k]);
  out.hot_field_support=float(sensor.hot_field().support);
  out.hot_field_refute=float(sensor.hot_field().refute);
+ for(std::size_t k=0;k<3;++k)
+  out.global_vector[k]=sensor_float_packet(sensor.global().vector[k]);
  for(std::size_t k=0;k<9;++k)
-  out.global_tensor[k]=float(sensor.global().tensor[k]);
+  out.global_tensor[k]=sensor_float_packet(sensor.global().tensor[k]);
  out.global_support=float(sensor.global().support);
  out.global_refute=float(sensor.global().refute);
  return out;
