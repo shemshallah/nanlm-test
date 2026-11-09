@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/hw0-learning-validation
+      - feat/binary-phase-fabric
   pull_request:
   workflow_dispatch:
 permissions:
@@ -23,11 +24,14 @@ jobs:
         run: |
           set -o pipefail
           make validate CXX="${{ matrix.compiler }}" | tee learning-audit.log
+          make validate-harmony CXX="${{ matrix.compiler }}" | tee harmony-audit.log
           grep 'PASS: deterministic source-disjoint held-out audit' learning-audit.log
       - name: Save reproducibility log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: learning-audit-${{ matrix.compiler }}
-          path: learning-audit.log
+          path: |
+            learning-audit.log
+            harmony-audit.log
           if-no-files-found: warn

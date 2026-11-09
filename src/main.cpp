@@ -1,6 +1,7 @@
 #include "nanlm/universe.hpp"
 #include "nanlm/wordnet.hpp"
 #include "nanlm/teacher.hpp"
+#include "nanlm/harmony.hpp"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -10,14 +11,45 @@ using namespace nanlm;
 int main(int argc,char**argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|resident|teach-stream FILE|eval-stream FILE|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {harmony-train FILE|harmony-eval FILE|generate BYTE LENGTH SEED|nan-program|spectrum BYTE|wordnet-link LEMMA|init|inspect|resident|teach-stream FILE|eval-stream FILE|ingest TEXT|write A B TYPE POLARITY WEIGHT TIME|query A B TYPE [TIME]|phase A B ANGLE|triangle A B C|hyper A B C TYPE|route HW SLOT RAW|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],op=argv[2];
   Universe u(path);
   auto value=[&](int i)->int{if(i>=argc)throw std::invalid_argument("missing argument");return std::stoi(argv[i]);};
   auto vert=[&](int i)->uint8_t{int x=value(i);if(x<0||x>255)throw std::out_of_range("head must be 0..255");return static_cast<uint8_t>(x);};
-  if(op=="resident"){
+  if(op=="harmony-train"||op=="harmony-eval"){
+   if(argc!=4)throw std::invalid_argument("need corpus file");
+   std::ifstream input(argv[3],std::ios::binary);if(!input)throw std::runtime_error("corpus not found");
+   Harmony model(u);int last=-1;char ch;size_t pairs=0;double loss=0;
+   while(input.get(ch)){auto b=static_cast<uint8_t>(ch);if(b==255){last=-1;continue;}
+    if(last>=0){loss+=op=="harmony-train"?model.teach(static_cast<uint8_t>(last),b):model.loss(static_cast<uint8_t>(last),b);++pairs;}last=b;
+   }
+   if(op=="harmony-train")u.sync();
+   std::cout<<"pairs="<<pairs<<" mean_ce="<<(pairs?loss/pairs:0)<<" weights=";
+   for(double w:model.expert_weights())std::cout<<w<<",";
+   std::cout<<"\n";
+  }else if(op=="generate"){
+   if(argc!=6)throw std::invalid_argument("need start-byte length seed");
+   int length=value(4);if(length<0||length>1000000)throw std::invalid_argument("length 0..1000000");
+   Harmony model(u);auto text=model.generate(vert(3),static_cast<size_t>(length),std::stoull(argv[5]));
+   std::cout.write(text.data(),static_cast<std::streamsize>(text.size()));
+  }else if(op=="spectrum"){
+   if(argc!=4)throw std::invalid_argument("need source byte");
+   Harmony model(u);auto wave=model.wave(vert(3));row_fft(wave.amplitude);
+   for(unsigned k=0;k<256;++k)std::cout<<k<<","<<std::norm(wave.amplitude[k])/256.<<"\n";
+  }else if(op=="nan-program"){
+   Harmony model(u);auto code=model.program();uint32_t payload=0;int n=nan_unpack(code.data(),&payload);
+   if(n<0)throw std::runtime_error("train before exporting a program");
+   std::cout<<std::hex<<std::setfill('0')<<std::setw(4)<<nan_head(unsigned(n)>>2)<<"_"<<std::setw(8)<<payload<<"_"<<std::setw(2)<<unsigned(code[1])<<std::setw(2)<<unsigned(code[0])<<"\n";
+  }else if(op=="wordnet-link"){
+   if(argc!=4)throw std::invalid_argument("need lemma");
+   WordNetIndex index;index.load(path+".wordnet.tsv");
+   for(auto id:index.lookup(argv[3])){
+    const auto* c=index.get_concept(id);const auto packet=u.nannet_packet(4,0,c->leaf,id);
+    std::cout<<"HW4:0::0:HW0 gateway=255 synset=n:"<<id<<" leaf="<<packet.ingress<<" lemma="<<c->lemma<<" transport=local-intent\n";
+   }
+  }else if(op=="resident"){
    FabricTeacher teacher(u);
    std::cout<<"READY HW0:0 mapped_root=8388608 memory_lifetime=process"
             <<" next_byte_vocab=255 gateway=255"<<std::endl;
