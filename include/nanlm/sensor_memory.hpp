@@ -55,6 +55,7 @@ struct SupportSet {
 };
 struct FeatureLeaf {
  Hypervector vector{};
+ std::array<double,3> measured_vector{};
  std::array<double,9> tensor{};
  double support_charge=0,refute_charge=0;
  double curvature=0,activation=0;
@@ -62,6 +63,7 @@ struct FeatureLeaf {
  std::set<std::string> sources;
 };
 struct TriadAggregate {
+ std::array<double,3> vector{};
  std::array<double,9> tensor{};
  double support=0,refute=0,activation=0,curvature=0;
  std::set<std::string> sources;
@@ -70,6 +72,7 @@ struct TriadAggregate {
 struct HotTriad {
  std::uint8_t group=255;
  std::array<std::uint8_t,3> heads{};
+ std::array<double,3> vector{};
  std::array<double,9> tensor{};
  double score=0,activation=0,previous_activation=0;
  double support=0,refute=0,curvature=0;
@@ -81,11 +84,13 @@ struct HotTriadLink {
  std::size_t shared_sources=0;
 };
 struct HotFieldAggregate {
+ std::array<double,3> vector{};
  std::array<double,9> tensor{};
  double support=0,refute=0,activation=0;
  std::size_t active=0,links=0;
 };
 struct GlobalAggregate {
+ std::array<double,3> vector{};
  std::array<double,9> tensor{};
  double support=0,refute=0,activation=0;
  std::size_t unique_statements=0,unique_sources=0;
@@ -109,6 +114,8 @@ private:
  std::array<Branch,HEAD_COUNT> head_branches_{};
  std::array<TriadAggregate,TRIAD_COUNT> triads_{};
  std::array<double,HEAD_COUNT> head_state_{};
+ std::array<std::array<double,3>,HEAD_COUNT> head_vectors_{};
+ std::array<std::array<double,9>,HEAD_COUNT> head_tensors_{};
  std::array<double,TRIAD_COUNT> previous_triad_activity_{};
  std::array<HotTriad,HOT_MAX> hot_{};
  std::array<std::int8_t,TRIAD_COUNT> hot_slots_{};
@@ -233,6 +240,7 @@ private:
    auto& out=hot_[slot];
    out.group=static_cast<std::uint8_t>(g);
    out.heads=map_[g];
+   out.vector=triad.vector;
    out.tensor=triad.tensor;
    out.score=score;
    out.activation=triad.activation;
@@ -245,6 +253,7 @@ private:
    hot_field_.support+=score*triad.support;
    hot_field_.refute+=score*triad.refute;
    hot_field_.activation+=score*triad.activation;
+   for(std::size_t k=0;k<3;++k)hot_field_.vector[k]+=score*triad.vector[k];
    for(std::size_t k=0;k<9;++k)
     hot_field_.tensor[k]+=score*triad.tensor[k];
   }
@@ -252,6 +261,7 @@ private:
    hot_field_.support/=weight_sum;
    hot_field_.refute/=weight_sum;
    hot_field_.activation/=weight_sum;
+   for(auto& x:hot_field_.vector)x/=weight_sum;
    for(auto& x:hot_field_.tensor)x/=weight_sum;
   }
   // Pairwise overlays carry distinct tensor alignment, U(1)-phase alignment
@@ -285,15 +295,18 @@ private:
 
  void recalc_global() {
   recalc_hotspots();
+  global_.vector.fill(0);
   global_.tensor.fill(0);
   global_.support=global_.refute=global_.activation=0;
   for(const auto& t:triads_) {
    global_.support+=t.support;global_.refute+=t.refute;
    global_.activation+=t.activation;
+   for(std::size_t i=0;i<3;++i)global_.vector[i]+=t.vector[i];
    for(std::size_t i=0;i<9;++i)global_.tensor[i]+=t.tensor[i];
   }
   global_.support/=TRIAD_COUNT;global_.refute/=TRIAD_COUNT;
   global_.activation/=TRIAD_COUNT;
+  for(auto& x:global_.vector)x/=TRIAD_COUNT;
   for(auto& x:global_.tensor)x/=TRIAD_COUNT;
   global_.unique_statements=graph_.size();
   global_.unique_sources=sources_.size();
@@ -343,8 +356,11 @@ public:
    previous_triad_activity_[g]=triads_[g].activation;
   ++clock_;
   for(auto& x:head_state_)x*=leak_;
+  for(auto& v:head_vectors_)for(auto& x:v)x*=leak_;
+  for(auto& t:head_tensors_)for(auto& x:t)x*=leak_;
   for(auto& t:triads_){
    t.support*=leak_;t.refute*=leak_;t.activation*=leak_;
+   for(auto& x:t.vector)x*=leak_;
    for(auto& x:t.tensor)x*=leak_;
   }
   recalc_global(); // exact graph and source provenance never decay on idle ticks
@@ -374,15 +390,23 @@ public:
    const double strength=std::abs(xyz[0])+std::abs(xyz[1])+std::abs(xyz[2]);
    leaf.activation+=strength*a.confidence;
    head_state_[h]+=strength*a.confidence;
+   const double signed_weight=(a.refutes?-1.0:1.0)*a.confidence;
+   for(std::size_t i=0;i<3;++i){
+    leaf.measured_vector[i]+=signed_weight*xyz[i];
+    head_vectors_[h][i]+=signed_weight*xyz[i];
+   }
    if(a.refutes)leaf.refute_charge+=a.confidence;
    else leaf.support_charge+=a.confidence;
    for(std::size_t i=0;i<3;++i)
     for(std::size_t j=0;j<3;++j)
      leaf.tensor[3*i+j]+=a.confidence*xyz[i]*xyz[j];
+   for(std::size_t i=0;i<9;++i)
+    head_tensors_[h][i]+=a.confidence*xyz[i/3]*xyz[i%3];
    const auto g=reverse_group_[h];
    auto& t=triads_[g];touched[g]=true;
    t.sources.insert(a.source);
    t.activation+=strength*a.confidence;
+   for(std::size_t i=0;i<3;++i)t.vector[i]+=signed_weight*xyz[i];
    if(a.refutes)t.refute+=a.confidence;
    else t.support+=a.confidence;
    for(std::size_t i=0;i<9;++i)t.tensor[i]+=a.confidence*xyz[i/3]*xyz[i%3];
@@ -493,6 +517,9 @@ public:
  int hot_slot(std::uint8_t triad_id)const{return hot_slots_.at(triad_id);}
  const std::vector<HotTriadLink>& hot_links()const{return hot_links_;}
  const HotFieldAggregate& hot_field()const{return hot_field_;}
+ const std::array<double,3>& head_vector(std::uint8_t h)const{return head_vectors_.at(h);}
+ const std::array<double,9>& head_tensor(std::uint8_t h)const{return head_tensors_.at(h);}
+ const std::array<std::uint8_t,3>& triad_heads(std::uint8_t g)const{return map_.at(g);}
  double head_activity(std::uint8_t h)const{return head_state_.at(h);}
  const Branch& branch(std::uint8_t h)const {return head_branches_.at(h);}
  const TriadAggregate& triad(std::size_t g)const {return triads_.at(g);}
