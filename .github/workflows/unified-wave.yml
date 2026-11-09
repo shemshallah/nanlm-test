@@ -1,0 +1,53 @@
+name: HW0 unified mirror-wave language engine
+on:
+  push:
+    branches:
+      - feat/hw0-unified-wave-heads
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-unified:
+    name: "One-universe wave head (${{ matrix.compiler }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test unified engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm test_unified_wave CXX="${{ matrix.compiler }}"
+          ./test_unified_wave | tee unified-test.log
+          grep 'PASS: one 255-head universe' unified-test.log
+      - name: Free-running native CLI integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'trees bend in the wind.\ntrees grow beneath the sun.\n' > /tmp/unified-train.txt
+          printf 'clouds move beyond the hills.\n' > /tmp/unified-heldout.txt
+          ./nanlm /tmp/unified-hw0 unified-train /tmp/unified-train.txt 2 | tee train.log
+          ./nanlm /tmp/unified-hw0 unified-spectrum | tee spectrum.log
+          ./nanlm /tmp/unified-hw0 unified-eval /tmp/unified-heldout.txt | tee heldout.log
+          ./nanlm /tmp/unified-hw0 unified-generate 'trees ' 72 29 > sample-a.txt
+          ./nanlm /tmp/unified-hw0 unified-generate 'trees ' 72 29 > sample-b.txt
+          cmp sample-a.txt sample-b.txt
+          test "$(wc -c < sample-a.txt)" = 78
+          test "$(stat -c%s /tmp/unified-hw0)" = 8388608
+      - name: Reproducibility artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unified-wave-${{ matrix.compiler }}
+          path: |
+            unified-test.log
+            train.log
+            heldout.log
+            spectrum.log
+            sample-a.txt
+          if-no-files-found: warn
