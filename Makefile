@@ -33,7 +33,7 @@ test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nan
 test_nan16: tests/test_nan16.c include/nanlm/nan16.h
 	$(CC) $(CPPFLAGS) -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror $< -lm -o $@
 
-test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_temporal_credit test_wave_bptt test_sequence_bptt test_frequency_bptt test_hypermatrix test_hybrid_byte test_nan16 test_harmony test_universe test_fabric_integrity test_wordnet test_teacher test_quaternion test_multiloss
+test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_temporal_credit test_wave_bptt test_sequence_bptt test_frequency_bptt test_hypermatrix test_triad_waveformer test_hybrid_byte test_nan16 test_harmony test_universe test_fabric_integrity test_wordnet test_teacher test_quaternion test_multiloss
 	./test_nan16
 	./test_harmony
 	python3 tests/test_context_lm.py
@@ -53,8 +53,9 @@ test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_te
 	./test_sequence_bptt
 	./test_frequency_bptt
 	./test_hypermatrix
+	./test_triad_waveformer
 clean:
-	rm -f test_frequency_bptt test_sequence_bptt test_wave_bptt test_fabric_integrity test_temporal_credit nanlm-diagnostics test_hypermatrix test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+	rm -f test_frequency_bptt test_sequence_bptt test_wave_bptt test_fabric_integrity test_temporal_credit nanlm-diagnostics test_hypermatrix test_triad_waveformer test_adaptive_triads test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
 
 validate_harmony: tests/validate_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
@@ -89,4 +90,10 @@ test_sequence_bptt: tests/test_sequence_bptt.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 test_frequency_bptt: tests/test_frequency_bptt.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_triad_waveformer: tests/test_triad_waveformer.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_adaptive_triads: tests/test_adaptive_triads.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@

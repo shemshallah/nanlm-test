@@ -75,6 +75,9 @@ int main(int argc,char** argv){
             <<" bptt_enabled="<<int(mind.bptt_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
             <<" bptt_accepted="<<mind.bptt_accepted()
+            <<" triad_accepted="<<mind.triad_accepted()
+            <<" projection_accepted="<<mind.projection_accepted()
+            <<" adapter_accepted="<<mind.adapter_accepted()
             <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())<<"\n";
   }else if(operation=="eval"){
    if(argc<4)throw std::invalid_argument("evaluation file required");
@@ -98,6 +101,8 @@ int main(int argc,char** argv){
     {"no_inverse_evidence",UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE},
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
     {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
+    {"no_triad",UnifiedWaveLanguage::ABLATE_TRIAD},
+    {"no_global_field",UnifiedWaveLanguage::ABLATE_FIELD},
     {"no_tbptt_readout",UnifiedWaveLanguage::ABLATE_BPTT_READOUT},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
    };
@@ -155,6 +160,19 @@ int main(int argc,char** argv){
     tensor[mode]=best_scale;
     mind.set_tensor_scales(tensor);
    }
+   // Only a development set may select the weight of the new shared
+   // triad readout. Zero is a valid outcome; it means the component
+   // has not earned its place in the final probability distribution.
+   const double triad_choices[]={0.,0.25,0.5,0.75,1.,1.25,1.5,2.};
+   const double saved_triad=mind.triad_scale();
+   double best_triad=saved_triad;
+   double triad_loss=measure().ce();
+   for(double candidate:triad_choices){
+    mind.set_triad_scale(candidate);
+    const double value=measure().ce();
+    if(value+1e-7<triad_loss){triad_loss=value;best_triad=candidate;}
+   }
+   mind.set_triad_scale(best_triad);
    const auto after=measure();
    if(after.ce()>before.ce()+1e-7)
     throw std::runtime_error("development calibration worsened loss");
@@ -164,7 +182,8 @@ int main(int argc,char** argv){
             <<" wave_scale="<<chosen[0]<<" attention_scale="<<chosen[1]
             <<" spectral_scale="<<chosen[2]<<" cycle_scale="<<chosen[3]
             <<" cp_scale="<<tensor[0]
-            <<" inverse_wave_tensor_scale="<<tensor[1]<<"\n";
+            <<" inverse_wave_tensor_scale="<<tensor[1]
+            <<" triad_scale="<<mind.triad_scale()<<"\n";
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);

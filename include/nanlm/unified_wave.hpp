@@ -1,5 +1,6 @@
 #pragma once
 #include "nanlm/teacher.hpp"
+#include "nanlm/triad_waveformer.hpp"
 #include "nanlm/utf8.hpp"
 #include <algorithm>
 #include <array>
@@ -32,7 +33,7 @@ namespace nanlm {
 class UnifiedWaveLanguage {
 public:
  static constexpr size_t N=FabricTeacher::VOCAB;
- static constexpr size_t WINDOW=48;
+ static constexpr size_t WINDOW=64;
  static constexpr size_t ATTENTION_WINDOW=16;
  static constexpr size_t LONG_GAIN_OFFSET=44; // float32 per head, former unused register gap
  static constexpr size_t MODES=4;
@@ -47,7 +48,9 @@ public:
  static constexpr unsigned ABLATE_HYPEREDGE=1u<<5;
  static constexpr unsigned ABLATE_LONG_CONTEXT=1u<<6;
  static constexpr unsigned ABLATE_BPTT_READOUT=1u<<7;
- static constexpr unsigned ABLATE_ALL=(1u<<8)-1u;
+ static constexpr unsigned ABLATE_TRIAD=1u<<8;
+ static constexpr unsigned ABLATE_FIELD=1u<<9;
+ static constexpr unsigned ABLATE_ALL=(1u<<10)-1u;
  static constexpr size_t BPTT_STEPS=8;
  static constexpr size_t BPTT_INTERVAL=16;
  static constexpr size_t BPTT_INPUT_OFFSET=112;
@@ -76,6 +79,18 @@ public:
  static constexpr uint8_t HYPER_LOCAL_MAGIC=0xB6;
  static constexpr uint8_t HYPER_GROUP_MAGIC=0xB7;
  static constexpr uint8_t HYPER_FIELD_MAGIC=0xB8;
+ // Byte-disjoint shared QKV, adapters and per-head gains in the fixed root.
+ // Explicitly avoid Universe observation state at [8..11], count [16..19],
+ // accepted proposals [20..23], and reserved SO(3) rule quaternions in
+ // heads 6/7 at [96..111]. The QKV slots skip these two heads.
+ static constexpr size_t TRIAD_GAIN_OFFSET=124;
+ static constexpr size_t TRIAD_PROJECTION_OFFSET=105;
+ static constexpr size_t TRIAD_ADAPTER_OFFSET=100;
+ static constexpr size_t TRIAD_KERNEL_MARKER_OFFSET=123;
+ static constexpr uint8_t TRIAD_KERNEL_MAGIC=0xD6;
+ static constexpr size_t TRIAD_SCALE_OFFSET=109;
+ static constexpr size_t TRIAD_SCALE_MAGIC_OFFSET=111;
+ static constexpr uint8_t TRIAD_SCALE_MAGIC=0xD7;
  static constexpr size_t TRIAD_ID_OFFSET=64;
  static constexpr size_t TRIAD_MAGIC_OFFSET=65;
  static constexpr uint8_t TRIAD_MAGIC=0xE5;
@@ -88,6 +103,8 @@ public:
  using TensorScales=std::array<double,2>;
  using GlobalScales=std::array<double,4>;
  struct State {
+  TriadWaveFormer::Workspace workspace{};
+  TriadWaveFormer::Workspace previous_workspace{};
   std::array<double,N> wave{};
   std::array<double,N> old_wave{};
   std::array<double,N> inverse_wave{};
@@ -140,6 +157,9 @@ private:
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
  bool bptt_enabled_=true;
  bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
+ TriadWaveFormer::Parameters triad_parameters_{};
+ uint64_t triad_accepted_=0,projection_accepted_=0,adapter_accepted_=0;
+ bool triad_training_enabled_=true;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -153,6 +173,38 @@ private:
   auto& h=universe_.root().h[head];
   std::memcpy(h.data+HEAD_GAIN_OFFSET,g.data(),sizeof(g));
   h.data[HEAD_GAIN_MAGIC_OFFSET]=HEAD_GAIN_MAGIC;
+ }
+ void store_triad_parameters(const TriadWaveFormer::Parameters& p){
+  for(size_t i=0;i<TriadWaveFormer::PROJECTION_WEIGHTS;++i)
+   write_scalar(universe_.root().h[i<6?i:i+2],TRIAD_PROJECTION_OFFSET,p.qkv[i]);
+  for(size_t i=0;i<N;++i)
+   write_scalar(universe_.root().h[i],TRIAD_GAIN_OFFSET,p.head_gain[i]);
+  for(size_t i=0;i<GROUPS;++i)
+   write_scalar(universe_.root().h[group_register(i)],TRIAD_ADAPTER_OFFSET,p.adapter[i]);
+  universe_.root().h[0].data[TRIAD_KERNEL_MARKER_OFFSET]=TRIAD_KERNEL_MAGIC;
+  triad_parameters_=p;
+ }
+ void load_triad_parameters(){
+  if(universe_.root().h[0].data[TRIAD_KERNEL_MARKER_OFFSET]!=TRIAD_KERNEL_MAGIC){
+   store_triad_parameters(TriadWaveFormer::defaults());return;
+  }
+  TriadWaveFormer::Parameters p{};
+  for(size_t i=0;i<TriadWaveFormer::PROJECTION_WEIGHTS;++i)
+   p.qkv[i]=read_scalar(universe_.root().h[i<6?i:i+2],TRIAD_PROJECTION_OFFSET);
+  for(size_t i=0;i<N;++i)
+   p.head_gain[i]=read_scalar(universe_.root().h[i],TRIAD_GAIN_OFFSET);
+  for(size_t i=0;i<GROUPS;++i)
+   p.adapter[i]=read_scalar(universe_.root().h[group_register(i)],TRIAD_ADAPTER_OFFSET);
+  validate_triad_parameters(p);
+  triad_parameters_=p;
+ }
+ static void validate_triad_parameters(const TriadWaveFormer::Parameters& p){
+  for(float v:p.qkv)if(!std::isfinite(v)||std::fabs(v)>2)
+   throw std::runtime_error("invalid shared QKV parameter");
+  for(float v:p.head_gain)if(!std::isfinite(v)||std::fabs(v)>1)
+   throw std::runtime_error("invalid triad head gain");
+  for(float v:p.adapter)if(!std::isfinite(v)||std::fabs(v)>1)
+   throw std::runtime_error("invalid triad adapter");
  }
  static constexpr uint8_t group_register(size_t group){
   return static_cast<uint8_t>(group*GROUP_SIZE+GROUP_SIZE-1);
@@ -644,9 +696,35 @@ public:
    write_scalar(field,HYPER_SHARED_OFFSET,0.025f);
    field.data[HYPER_SHARED_MAGIC_OFFSET]=HYPER_FIELD_MAGIC;
   }
+  load_triad_parameters();
   rebuild_spectrum();
  }
+ double triad_scale()const{
+  const auto& b=universe_.root().h[0].data;
+  if(b[TRIAD_SCALE_MAGIC_OFFSET]!=TRIAD_SCALE_MAGIC)return 1.0;
+  const unsigned v=unsigned(b[TRIAD_SCALE_OFFSET])|
+                    (unsigned(b[TRIAD_SCALE_OFFSET+1])<<8);
+  if(v>512)throw std::runtime_error("invalid shared triad readout scale");
+  return double(v)/256.0;
+ }
+ void set_triad_scale(double v){
+  if(!std::isfinite(v)||v<0||v>2)
+   throw std::invalid_argument("triad scale must be finite in [0,2]");
+  auto& b=universe_.root().h[0].data;
+  const unsigned x=static_cast<unsigned>(std::lround(256.0*v));
+  b[TRIAD_SCALE_OFFSET]=static_cast<uint8_t>(x&255);
+  b[TRIAD_SCALE_OFFSET+1]=static_cast<uint8_t>(x>>8);
+  b[TRIAD_SCALE_MAGIC_OFFSET]=TRIAD_SCALE_MAGIC;
+ }
  uint64_t trained()const{return trained_;}
+ uint64_t triad_accepted()const{return triad_accepted_;}
+ uint64_t projection_accepted()const{return projection_accepted_;}
+ uint64_t adapter_accepted()const{return adapter_accepted_;}
+ void set_triad_training_enabled(bool yes){triad_training_enabled_=yes;}
+ TriadWaveFormer::Parameters triad_parameters()const{return triad_parameters_;}
+ void set_triad_parameters(const TriadWaveFormer::Parameters& p){
+  validate_triad_parameters(p);store_triad_parameters(p);
+ }
  void set_bptt_enabled(bool enabled){bptt_enabled_=enabled;}
  bool bptt_enabled()const{return bptt_enabled_;}
  void set_frequency_learning_enabled(bool enabled){frequency_learning_enabled_=enabled;}
@@ -721,7 +799,7 @@ public:
  struct WaveAdjoint {
   std::array<double,N> x{},xp{},y{},yp{};
  };
- // Reverse derivative of the COMPLETE conditional loss with respect to
+ // Reverse derivative of legacy wave-attention-hypermatrix loss with respect to
  // transient wave state. Teacher, pair evidence, spectral basis and head
  // geometry are frozen for the truncated time window; wave, attention,
  // and hypermatrix temporal readouts all contribute to the adjoints.
@@ -804,7 +882,7 @@ public:
   }
   return adj;
  }
- // True reverse-mode truncated BPTT through both SECOND-ORDER recurrences,
+ // Reverse-mode original wave readouts through both SECOND-ORDER recurrences,
  // including T and T* scattering, old-wave links and clamp masks.
  // Detach only the oldest state (explicit 8-transition truncation).
  double bptt_window_loss(const std::deque<State>& states,
@@ -826,7 +904,7 @@ public:
  }
  BpttGradient bptt_gradient(const std::deque<State>& states,
                            const std::deque<uint8_t>& symbols,
-                           uint8_t label,bool sequence=false)const{
+                           uint8_t label,bool sequence=false){
   if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
      states.size()!=symbols.size()+1)
    throw std::invalid_argument("invalid truncated wave tape");
@@ -886,6 +964,50 @@ public:
     if(states[k].length)++targets;
    for(double& value:result.input)value/=double(targets);
    for(double& value:result.frequency)value/=double(targets);
+  }
+  // The attention/field readout contributes wave derivatives beyond
+  // the older T/T* analytic adjoint. Correct the coordinates that
+  // receive directly observed symbols using full-loss central differences.
+  // NOTE: full reverse-mode through QKV, routing and the field is not yet
+  // implemented; this is a checked numerical reference for active inputs.
+  std::array<bool,N> touched{};
+  for(uint8_t b:symbols)touched[b]=true;
+  const auto exact_loss=[&](){
+   std::deque<State> replay{states.front()};
+   for(uint8_t b:symbols){
+    auto next=replay.back();
+    observe(next,b);
+    replay.push_back(std::move(next));
+   }
+   return bptt_window_loss(replay,symbols,label,sequence);
+  };
+  for(size_t i=0;i<N;++i){
+   if(!touched[i]){result.input[i]=0;continue;}
+   const uint8_t head=static_cast<uint8_t>(i);
+   auto& h=universe_.root().h[i];
+   std::array<uint8_t,10> old_bytes{};
+   std::memcpy(old_bytes.data(),h.data+BPTT_INPUT_OFFSET,8);
+   old_bytes[8]=h.data[BPTT_MAGIC_OFFSET];
+   old_bytes[9]=h.data[BPTT_FREQUENCY_MAGIC_OFFSET];
+   const auto restore=[&](){
+    std::memcpy(h.data+BPTT_INPUT_OFFSET,old_bytes.data(),8);
+    h.data[BPTT_MAGIC_OFFSET]=old_bytes[8];
+    h.data[BPTT_FREQUENCY_MAGIC_OFFSET]=old_bytes[9];
+   };
+   const double gain=input_gain(head),eps=0.002;
+   write_input_gain(head,float(gain+eps));
+   const double up=exact_loss();
+   write_input_gain(head,float(gain-eps));
+   const double down=exact_loss();
+   restore();
+   result.input[i]=(up-down)/(2*eps);
+   const double freq=recurrent_frequency(head),delta=0.0005;
+   write_frequency(head,float(freq+delta));
+   const double freq_up=exact_loss();
+   write_frequency(head,float(freq-delta));
+   const double freq_down=exact_loss();
+   restore();
+   result.frequency[i]=(freq_up-freq_down)/(2*delta);
   }
   for(double v:result.input)result.norm+=v*v;
   if(frequency_learning_enabled_)
@@ -956,12 +1078,40 @@ public:
   if(ga==gb)return false;
   auto& ha=universe_.root().h[a].data[TRIAD_ID_OFFSET];
   auto& hb=universe_.root().h[b].data[TRIAD_ID_OFFSET];
-  const double before=predict(s).p[label];
+  // Topology mutation requires replay of the causal recurrent field.
+  // Testing a remapped register against a stale cached field is not an
+  // exact-loss trial and can fail determinism after reboot.
+  const auto score=[&](){
+   State replay{};
+   for(size_t i=0;i<s.length;++i)observe(replay,s.history[i]);
+   return predict(replay).p[label];
+  };
+  const double before=score();
   ha=static_cast<uint8_t>(gb);hb=static_cast<uint8_t>(ga);
-  const double after=predict(s).p[label];
+  const double after=score();
   if(std::isfinite(after)&&after>before+1e-10)return true;
   ha=static_cast<uint8_t>(ga);hb=static_cast<uint8_t>(gb);
   return false;
+ }
+ void refresh_triad(State& s,const TriadWaveFormer::Workspace& previous)const{
+  auto embed=[this](uint8_t h){
+   std::array<double,TriadWaveFormer::DIM> v{};
+   const auto a=vector(universe_.root().h[h],32);
+   const auto b=vector(universe_.root().h[h],48);
+   for(size_t d=0;d<3;++d){v[d]=a[d];v[d+3]=b[d];}
+   return v;
+  };
+  auto evidence=[this](uint8_t a,uint8_t b){
+   if(a==b)return 0.0;
+   const auto e=universe_.query(a,b,PRECEDES);
+   return (double(e.support)-e.refute)/(1.0+e.support+e.refute);
+  };
+  auto phase=[this](uint8_t a,uint8_t b){
+   return a==b?0.0:universe_.covariant_phase(a,b);
+  };
+  TriadWaveFormer::advance(s.workspace,previous,s.history.data(),s.length,
+    s.wave,s.inverse_wave,eigen_.vectors,triad_parameters_,
+    [this](uint8_t h){return triad_of(h);},embed,evidence,phase);
  }
  void observe(State& s,uint8_t c)const{
   if(c==255){s.reset();return;}
@@ -998,7 +1148,10 @@ public:
   s.inverse_old_wave=s.inverse_wave;
   s.wave=next;
   s.inverse_wave=next_inverse;
+  const auto previous=s.workspace;
+  s.previous_workspace=previous;
   s.push(c);
+  refresh_triad(s,previous);
   ++s.tick;
  }
  Prediction predict(const State& s,unsigned disabled=0)const{
@@ -1038,6 +1191,15 @@ public:
       ((disabled&ABLATE_LONG_CONTEXT)?0.0:
         read_scalar(universe_.root().h[target],LONG_GAIN_OFFSET)*
         long_context_signal(s,target));
+   if(!(disabled&ABLATE_TRIAD)){
+    const size_t group=triad_of(target);
+    const double f=(disabled&ABLATE_FIELD)?0.0:
+      0.28*(s.workspace.field[(c*7)%TriadWaveFormer::FIELD]-
+            s.workspace.field[(c*7+17)%TriadWaveFormer::FIELD])+
+      0.20*s.workspace.routing[group];
+    logits[c]+=triad_scale()*triad_parameters_.head_gain[c]*
+        clamp(s.workspace.triad[group]+f,3.0);
+   }
    largest=std::max(largest,logits[c]);
   }
   double z=0;
@@ -1050,6 +1212,100 @@ public:
    if(out.p[c]>out.p[out.best])out.best=static_cast<uint8_t>(c);
   }
   return out;
+ }
+ // True full-softmax gradient for all 255 shared-triad output gains.
+ // The recurrent field and attention kernels remain fixed for this step.
+ bool learn_triad_readout(const State& s,uint8_t label){
+  if(!s.length)return false;
+  const auto distribution=predict(s);
+  const double before=-std::log(std::max(distribution.p[label],1e-300));
+  std::array<double,N> feature{};
+  for(size_t c=0;c<N;++c){
+   const size_t g=triad_of(static_cast<uint8_t>(c));
+   const double f=0.28*(s.workspace.field[(c*7)%TriadWaveFormer::FIELD]-
+                s.workspace.field[(c*7+17)%TriadWaveFormer::FIELD])+
+                0.2*s.workspace.routing[g];
+   feature[c]=triad_scale()*clamp(s.workspace.triad[g]+f,3.0);
+  }
+  for(int retry=0;retry<7;++retry){
+   const double rate=std::ldexp(0.12,-retry);
+   auto next=triad_parameters_;
+   std::array<double,N> logits{};
+   double max_logit=-std::numeric_limits<double>::infinity();
+   for(size_t c=0;c<N;++c){
+    const double error=distribution.p[c]-(c==label?1.0:0.0);
+    next.head_gain[c]=float(std::clamp(double(triad_parameters_.head_gain[c])-
+                       rate*error*feature[c],-1.0,1.0));
+    logits[c]=std::log(std::max(distribution.p[c],1e-300))+
+          (double(next.head_gain[c])-triad_parameters_.head_gain[c])*feature[c];
+    max_logit=std::max(max_logit,logits[c]);
+   }
+   double normalizer=0;
+   for(double v:logits)normalizer+=std::exp(v-max_logit);
+   const double after=std::log(normalizer)+max_logit-logits[label];
+   if(after+1e-12<before){
+    store_triad_parameters(next);++triad_accepted_;return true;
+   }
+  }
+  return false;
+ }
+ // One-step differentiable-in-principle kernel calibration, evaluated
+ // through exact causal replay of the current recurrent workspace. Central
+ // differences are used for the QKV/adapter coordinates as a reference
+ // optimizer, NOT claimed as full reverse-mode transformer BPTT.
+ bool learn_triad_kernel(State& s,uint8_t label){
+  if(!s.length||s.workspace.active_count==0)return false;
+  auto saved=triad_parameters_;
+  const auto initial_parameters=triad_parameters_;
+  auto trial=[&](const TriadWaveFormer::Parameters& p,State* result=nullptr){
+   triad_parameters_=p;
+   State probe=s;
+   refresh_triad(probe,s.previous_workspace);
+   const double p_label=predict(probe).p[label];
+   if(result)*result=std::move(probe);
+   triad_parameters_=initial_parameters;
+   return -std::log(std::max(p_label,1e-300));
+  };
+  const double before=trial(saved);
+  if(!std::isfinite(before))throw std::runtime_error("nonfinite triad objective");
+  bool improved=false;
+  // One routed adapter and one coordinate of the globally shared QKV
+  // bank per interval; all 255 heads still share the resulting kernel.
+  const size_t active=s.workspace.active[trained_%s.workspace.active_count];
+  const size_t index=(trained_/32u)%TriadWaveFormer::PROJECTION_WEIGHTS;
+  const auto optimize=[&](float& param,double bound,bool adapter){
+   // This lambda receives a reference into saved, and probes complete
+   // independent parameter snapshots without modifying the mapped root.
+   const double value=param,eps=0.002;
+   param=float(value+eps);
+   const double plus=trial(saved);
+   param=float(value-eps);
+   const double minus=trial(saved);
+   param=float(value);
+   const double gradient=(plus-minus)/(2*eps);
+   if(!std::isfinite(gradient)||std::fabs(gradient)<1e-9)return false;
+   const double current=trial(saved);
+   for(int retry=0;retry<6;++retry){
+    const double eta=std::ldexp(adapter?0.15:0.08,-retry);
+    const float updated=float(std::clamp(value-eta*gradient,-bound,bound));
+    if(updated==param)continue;
+    param=updated;
+    const double candidate=trial(saved);
+    if(candidate+1e-10<current){
+     if(adapter)++adapter_accepted_;else ++projection_accepted_;
+     return true;
+    }
+   }
+   param=float(value);
+   return false;
+  };
+  improved|=optimize(saved.adapter[active],1.0,true);
+  improved|=optimize(saved.qkv[index],2.0,false);
+  if(improved){
+   store_triad_parameters(saved);
+   refresh_triad(s,s.previous_workspace);
+  }
+  return improved;
  }
  Metrics evaluate(std::istream& corpus,unsigned disabled=0)const{
   if(disabled&~ABLATE_ALL)throw std::invalid_argument("unknown ablation bits");
@@ -1096,6 +1352,10 @@ public:
     learn_head_gains(state,symbol);
     learn_hyper_gains(state,symbol);
     learn_long_context_gains(state,symbol);
+    if(triad_training_enabled_){
+     learn_triad_readout(state,symbol);
+     if(trained_%32u==0)learn_triad_kernel(state,symbol);
+    }
     learn_hyper_residual(state,symbol,initial_time+trained_);
     if(trained_%128==0)
      trial_swap_triads(prev,symbol,state,symbol);
