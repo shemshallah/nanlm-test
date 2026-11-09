@@ -30,11 +30,12 @@ test_harmony: tests/test_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nan
 test_nan16: tests/test_nan16.c include/nanlm/nan16.h
 	$(CC) $(CPPFLAGS) -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror $< -lm -o $@
 
-test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_hypermatrix test_hybrid_byte test_nan16 test_harmony test_universe test_wordnet test_teacher test_quaternion test_multiloss
+test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_hypermatrix test_hybrid_byte test_nan16 test_harmony test_universe test_fabric_integrity test_wordnet test_teacher test_quaternion test_multiloss
 	./test_nan16
 	./test_harmony
 	python3 tests/test_context_lm.py
 	./test_universe
+	./test_fabric_integrity
 	./test_wordnet
 	./test_teacher
 	./test_quaternion
@@ -46,7 +47,7 @@ test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_hy
 	./test_unified_wave
 	./test_hypermatrix
 clean:
-	rm -f nanlm-diagnostics test_hypermatrix test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+	rm -f test_fabric_integrity nanlm-diagnostics test_hypermatrix test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
 
 validate_harmony: tests/validate_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
@@ -66,4 +67,7 @@ test_hybrid_byte: tests/test_hybrid_byte.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 test_hypermatrix: tests/test_hypermatrix.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+test_fabric_integrity: tests/test_fabric_integrity.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
