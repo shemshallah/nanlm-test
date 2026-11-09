@@ -20,9 +20,13 @@ int main(){
   ("nanlm-bptt-"+std::to_string(::getpid()))).string();
  try{
   double saved=0;
+  std::array<uint8_t,128> ingress_initial{};
   {
+   // Reserved ingress may already contain topology/runtime metadata.
+   // Compare the entire 128-byte register, not an assumed zero slot.
    Universe u(path);
    UnifiedWaveLanguage m(u);
+   std::memcpy(ingress_initial.data(),u.root().h[255].data,128);
    require(UnifiedWaveLanguage::BPTT_STEPS>=6,"truncation below six transitions");
    require(m.recurrent_input_gain('a')==1.0,"new weights must start neutral");
    const std::string input="abcdefg";
@@ -69,8 +73,8 @@ int main(){
    require(after+1e-9<prior,"accepted BPTT failed true softmax objective");
    require(std::fabs(m.recurrent_input_gain('a')-1.0)>1e-7,
            "remote input weight not trained");
-   require(u.root().h[255].data[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET]==0,
-           "reserved head 255 acquired BPTT parameters");
+   require(std::memcmp(u.root().h[255].data,ingress_initial.data(),128)==0,
+           "BPTT modified the reserved ingress register");
    saved=m.recurrent_input_gain('a');
    u.sync();
   }
@@ -79,8 +83,8 @@ int main(){
    UnifiedWaveLanguage m(u);
    require(std::fabs(m.recurrent_input_gain('a')-saved)<1e-7,
            "recurrent gain not persisted across root reboot");
-   require(u.root().h[255].data[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET]==0,
-           "gateway mutated after reload");
+   require(std::memcmp(u.root().h[255].data,ingress_initial.data(),128)==0,
+           "gateway state changed after reload");
   }
   for(const auto ext:{"",".so3",".overlay",".overlay.tmp"})
    std::filesystem::remove(path+ext);
