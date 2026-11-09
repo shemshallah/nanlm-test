@@ -102,6 +102,21 @@ gauge-invariant U(1) triangle holonomy. The product of pair operators
 is non-additive: evidence for one leg conditions the others. These
 terms are derived directly from the same 8 MiB memory-mapped `Root`.
 
+Each logical triple also has a concrete NaN16 location mapping:
+`Universe::hypermatrix_address(a,b,c)` identifies three oriented legs
+`a→b`, `b→c`, `c→a`, their exact mirror addresses, physical offsets
+into the canonical pair bank, and the three fixed-point head offsets.
+A directed leg and its inverse have **the same physical offset**;
+neither address creates a new independent tensor cell.
+
+The factorized tensor additionally reads the existing trainable 3-vectors
+in heads `a,b,c` as a CP-rank-three multilinear product, which
+multiplicatively modulates the pair evidence. Both forward and inverse
+standing-wave amplitudes provide a small temporal modulation. This
+couples head register learning, mirror topology and the causal wave to
+the same higher-order readout, rather than adding an unconnected
+hyperedge lookup.
+
 There is an additional **signed sparse correction** for explicitly
 observed `(a,b,c,relation)` tuples. The persistent overlay maintains
 the previous `Hyperedge` binary representation, with a rebuilt hash
@@ -144,8 +159,9 @@ remain explicit in performance reports.
 
 `make test_hypermatrix && ./test_hypermatrix` checks a never-stored
 ordered triple receiving a third-order signal via native pair legs,
-signed residual independence, restart determinism, and all three
-learnable voter levels. `make test_unified_wave && ./test_unified_wave`
+signed residual independence, restart determinism, all three
+learnable voter levels, physical address/mirror equality, and sensitivity
+to a live head-vector perturbation. `make test_unified_wave && ./test_unified_wave`
 checks the full standing-wave system. Both are required under GCC and
 Clang in `.github/workflows/unified-wave.yml`.
 
