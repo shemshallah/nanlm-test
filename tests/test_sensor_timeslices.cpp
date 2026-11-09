@@ -159,7 +159,7 @@ int main(){
    const auto latest=trace.latest();
    std::fstream file(filename,std::ios::in|std::ios::out|std::ios::binary);
    file.seekp(latest.offset+TemporalMatrixLog::RECORD_HEADER+8);
-   char corrupt=0xff;
+   char corrupt=static_cast<char>(0xff);
    file.write(&corrupt,1);file.flush();
    check(bool(file),"corruption test write failed");
    file.close();
