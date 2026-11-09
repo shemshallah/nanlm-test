@@ -287,3 +287,9 @@ not a per-token isolated wave-kernel benchmark. The experiment asks whether
 retaining waves improves author-disjoint CE enough to justify their cost;
 no positive result is presumed. Results are reported under `PUBLIC_DOMAIN_WAVE_EXEC`
 and `PUBLIC_DOMAIN_WAVE_AGGREGATE` in the public-domain workflow logs.
+
+The wave-execution toggle preserves the caller's configured BPTT intent:
+when the wave engine is disabled, `bptt_enabled()` reports false and no
+wave BPTT steps run; re-enabling waves restores the prior BPTT setting,
+unless the caller separately disabled BPTT. This is verified by the native
+compute-switch regression.

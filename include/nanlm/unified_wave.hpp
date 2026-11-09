@@ -714,8 +714,9 @@ public:
  }
  size_t episodic_records()const{return episodic_.size();}
  void set_wave_execution_enabled(bool enabled){
+  // Control runtime compute without destroying the intended BPTT setting.
+  // A later re-enable must restore the original training configuration.
   wave_execution_enabled_=enabled;
-  if(!enabled)bptt_enabled_=false;
  }
  bool wave_execution_enabled()const{return wave_execution_enabled_;}
  void set_resonance_retrieval_enabled(bool enabled){
@@ -793,7 +794,7 @@ public:
   validate_triad_parameters(p);store_triad_parameters(p);
  }
  void set_bptt_enabled(bool enabled){bptt_enabled_=enabled;}
- bool bptt_enabled()const{return bptt_enabled_;}
+ bool bptt_enabled()const{return bptt_enabled_&&wave_execution_enabled_;}
  void set_frequency_learning_enabled(bool enabled){frequency_learning_enabled_=enabled;}
  bool frequency_learning_enabled()const{return frequency_learning_enabled_;}
  uint64_t bptt_accepted()const{return bptt_accepted_;}
@@ -1445,7 +1446,7 @@ public:
     const uint8_t prev=state.history[state.length-1];
     // All persistent training occurs INSIDE the one mapped root and its
     // already-native temporal/pair/phase/quaternion overlays.
-    if(bptt_enabled_&&trained_%BPTT_INTERVAL==0&&tape_inputs.size()>=4)
+    if(bptt_enabled()&&trained_%BPTT_INTERVAL==0&&tape_inputs.size()>=4)
      learn_bptt(state,tape_states,tape_inputs,symbol);
     teacher_.teach(prev,symbol,initial_time+trained_);
     // One teacher and one higher-order field share all 255 registers.

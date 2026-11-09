@@ -297,6 +297,8 @@ int main(){
    require(off_score.tokens>20&&std::isfinite(off_score.ce()),
            "no-wave compute produces invalid language probabilities");
    mind.set_wave_execution_enabled(true);
+   require(mind.bptt_enabled(),
+           "re-enabling wave execution lost the previous BPTT setting");
    const auto on_score=mind.evaluate(on_text);
    require(on_score.tokens==off_score.tokens&&std::isfinite(on_score.ce()),
            "wave compute ablation changed evaluation token count");
