@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Reproducible cross-author benchmark using transient public-domain books.
+"""Reproducible cross-author benchmark using pinned public-domain books.
 
-Downloads Project Gutenberg plaintext during CI. Never commits or republishes
-the works. SHA-256 of original sources and exact UTF-8 split bytes are logged.
+Downloads immutable GITenberg GitHub snapshots during CI. Never commits
+or republishes the works. SHA-256 of original sources and exact UTF-8 split
+bytes are verified and logged.
 """
 from __future__ import annotations
 import hashlib
@@ -18,11 +19,19 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1]
 EXE = HERE / "nanlm"
+# Immutable public-domain GITenberg mirrors, pinned by Git commit AND SHA-256.
+# No source book content is checked into this repository.
 SOURCES = {
-    "alice": ("https://www.gutenberg.org/cache/epub/11/pg11.txt", 11,
-              "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e"),
-    "carol": ("https://www.gutenberg.org/cache/epub/46/pg46.txt", 46,
-              "8c36b93723d454982df045ec0efdf2664e5a48e6b5e2f670e883575f75ad0cc8"),
+    "alice": (
+        "https://raw.githubusercontent.com/GITenberg/Alice-s-Adventures-in-Wonderland_11/"
+        "7f18748e114b994d5d9454d5793581bc0b9cf9d7/11-0.txt",
+        11, "49a0b2726606e1290ac03a63978fa1dd1bd38a8d805704d98265f393533ea094"
+    ),
+    "carol": (
+        "https://raw.githubusercontent.com/GITenberg/A-Christmas-Carol_46/"
+        "b173bd3787848ecbded8d036ed9f5326c738da19/46-0.txt",
+        46, "919e060656548dd0bf5f615fe85932e67718b9a58e5a535d1ff7548c4380caeb"
+    ),
 }
 
 def book(name: str) -> tuple[str, dict]:
@@ -31,7 +40,7 @@ def book(name: str) -> tuple[str, dict]:
         "User-Agent": "NaNLM-public-domain-research/1.0 (noncommercial evaluation)",
         "Accept": "text/plain",
     })
-    # Gutenberg's public gateway intermittently responds with HTTP 503/504.
+    # The GitHub raw file delivery network can temporarily return HTTP 5xx.
     # Retry only transient failures; the SHA-256 pin below rejects altered
     # content. Never substitute an unverified edition or claim model failure.
     raw = None
@@ -64,8 +73,8 @@ def book(name: str) -> tuple[str, dict]:
     text = raw.decode("utf-8-sig")
     assert f"eBook #{number}" in text or f"EBook #{number}" in text or (
         f"ebooks/{number}" in text), "unexpected Gutenberg source"
-    start = re.search(r"\*\*\* START OF THE PROJECT GUTENBERG EBOOK [^\n]*\*\*\*", text)
-    end = re.search(r"\*\*\* END OF THE PROJECT GUTENBERG EBOOK [^\n]*\*\*", text)
+    start = re.search(r"[*]{3} START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK [^\r\n]*[*]{3}", text)
+    end = re.search(r"[*]{3} END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK [^\r\n]*[*]{3}", text)
     assert start and end and end.start() > start.end(), "missing Gutenberg boundaries"
     body = text[start.end():end.start()]
     assert len(body) > 40_000
