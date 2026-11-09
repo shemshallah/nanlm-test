@@ -46,7 +46,8 @@ public:
  static constexpr unsigned ABLATE_INVERSE_EVIDENCE=1u<<4;
  static constexpr unsigned ABLATE_HYPEREDGE=1u<<5;
  static constexpr unsigned ABLATE_LONG_CONTEXT=1u<<6;
- static constexpr unsigned ABLATE_ALL=(1u<<7)-1u;
+ static constexpr unsigned ABLATE_FOURTH_ORDER=1u<<7;
+ static constexpr unsigned ABLATE_ALL=(1u<<8)-1u;
  static constexpr size_t HEAD_GAIN_OFFSET=80;
  static constexpr size_t HEAD_GAIN_MAGIC_OFFSET=60;
  static constexpr uint8_t HEAD_GAIN_MAGIC=0xC7;
@@ -69,6 +70,10 @@ public:
  static constexpr size_t TRIAD_ID_OFFSET=64;
  static constexpr size_t TRIAD_MAGIC_OFFSET=65;
  static constexpr uint8_t TRIAD_MAGIC=0xE5;
+ // Trainable fourth-order factor readout occupies spare fixed-point
+ // register words: h0 [105..108]; h1..254 [66..69]. 255 is untouched.
+ static constexpr size_t FOURTH_GAIN_OFFSET=66;
+ static constexpr size_t FOURTH_HEAD0_GAIN_OFFSET=105;
  // Optional calibration of rank-three CP and wave tensor modulations.
  // Two float32 scales + marker use h0 [96..104], disjoint from its
  // four-output Q8.8 scales, its gauge, and the teacher's vectors.
@@ -144,6 +149,14 @@ private:
  }
  static void write_scalar(Head& h,size_t offset,float value){
   std::memcpy(h.data+offset,&value,sizeof(value));
+ }
+ float fourth_gain(uint8_t head)const{
+  return read_scalar(universe_.root().h[head],
+                     head==0?FOURTH_HEAD0_GAIN_OFFSET:FOURTH_GAIN_OFFSET);
+ }
+ void write_fourth_gain(uint8_t head,float gain){
+  write_scalar(universe_.root().h[head],
+               head==0?FOURTH_HEAD0_GAIN_OFFSET:FOURTH_GAIN_OFFSET,gain);
  }
  float local_hyper(uint8_t head)const{
   return read_scalar(universe_.root().h[head],HYPER_LOCAL_OFFSET);
@@ -336,6 +349,39 @@ private:
   }
   return denom>0?clamp(value/denom,2.0):0.0;
  }
+ // Rank-factored H[a,b,d,c] from 3 temporal pair legs, a fourth
+ // closing leg, shared head vectors and a cycle holonomy. This is one
+ // higher-order feature of the SAME resident NaN16 mirror fabric.
+ // No 255^4 tensor, lookup-table language model or extra root exists.
+ double fourth_order_signal(const State& s,uint8_t candidate)const{
+  if(s.length<3)return 0;
+  const uint8_t a=s.history[s.length-3],b=s.history[s.length-2];
+  const uint8_t d=s.history[s.length-1];
+  const auto pair=[&](uint8_t x,uint8_t y){
+   if(x==y){
+    uint32_t observed=0;
+    std::memcpy(&observed,universe_.root().h[x].data+24,4);
+    return 0.5*double(observed)/(4.0+observed);
+   }
+   const auto pos=universe_.query(x,y,PRECEDES);
+   const auto inv=universe_.query(y,x,FOLLOWS);
+   const double support=0.5*(pos.support+inv.support);
+   const double refute=0.5*(pos.refute+inv.refute);
+   return (support-refute)/(1.0+support+refute);
+  };
+  const double ab=pair(a,b),bd=pair(b,d),dc=pair(d,candidate);
+  const double ac=pair(a,candidate);
+  const double holonomy=(a!=b&&b!=candidate&&a!=candidate)?
+    (0.75+0.25*std::cos(universe_.triangle(a,b,candidate))):1.0;
+  const auto& h=universe_.root().h;
+  const auto va=vector(h[a],32),vb=vector(h[b],48);
+  const auto vd=vector(h[d],32),vc=vector(h[candidate],48);
+  double cp=0;
+  for(size_t k=0;k<3;++k)
+   cp+=double(va[k])*vb[k]*vd[k]*vc[k];
+  return clamp((2.5*ab*bd*dc+0.6*ac*bd)*
+    holonomy*(1.0+0.3*std::tanh(8.0*cp)),2.0);
+ }
  double hyperedge_signal(const State& s,uint8_t candidate)const{
   if(s.length<2)return 0;
   const uint8_t a=s.history[s.length-2],b=s.history[s.length-1];
@@ -436,6 +482,40 @@ private:
  // Local independent gradients, triad consensus and full-field consensus
  // all vote on one output distribution, and commit only if exact scratch
  // softmax loss improves. No second model or unvalidated live mutation.
+ bool learn_fourth_gains(const State& s,uint8_t label){
+  if(s.length<3)return false;
+  const auto dist=predict(s);
+  const double before=-std::log(std::max(dist.p[label],1e-300));
+  std::array<double,N> features{},old{};
+  for(size_t i=0;i<N;++i){
+   features[i]=fourth_order_signal(s,static_cast<uint8_t>(i));
+   old[i]=fourth_gain(static_cast<uint8_t>(i));
+   if(!std::isfinite(old[i])||std::fabs(old[i])>1.00001)
+    throw std::runtime_error("invalid fourth-order register gain");
+  }
+  for(int retry=0;retry<8;++retry){
+   const double rate=std::ldexp(0.08,-retry);
+   std::array<double,N> logits{};
+   std::array<float,N> trial{};
+   double max_logit=-std::numeric_limits<double>::infinity();
+   for(size_t i=0;i<N;++i){
+    const double grad=(dist.p[i]-(i==label?1.0:0.0))*features[i];
+    trial[i]=static_cast<float>(std::clamp(old[i]-rate*grad,-1.0,1.0));
+    logits[i]=std::log(std::max(dist.p[i],1e-300))+
+              (double(trial[i])-old[i])*features[i];
+    max_logit=std::max(max_logit,logits[i]);
+   }
+   double z=0;
+   for(double value:logits)z+=std::exp(value-max_logit);
+   const double after=std::log(z)+max_logit-logits[label];
+   if(after+1e-12<before){
+    for(size_t i=0;i<N;++i)
+     write_fourth_gain(static_cast<uint8_t>(i),trial[i]);
+    return true;
+   }
+  }
+  return false;
+ }
  bool learn_long_context_gains(const State& s,uint8_t label){
   if(s.length<=ATTENTION_WINDOW)return false;
   const auto distribution=predict(s);
@@ -721,7 +801,9 @@ public:
       ((disabled&ABLATE_HYPEREDGE)?0.0:hyper_gain(target)*hyperedge_signal(s,target))+
       ((disabled&ABLATE_LONG_CONTEXT)?0.0:
         read_scalar(universe_.root().h[target],LONG_GAIN_OFFSET)*
-        long_context_signal(s,target));
+        long_context_signal(s,target))+
+      ((disabled&ABLATE_FOURTH_ORDER)?0.0:
+        double(fourth_gain(target))*fourth_order_signal(s,target));
    largest=std::max(largest,logits[c]);
   }
   double z=0;
@@ -773,6 +855,7 @@ public:
     learn_head_gains(state,symbol);
     learn_hyper_gains(state,symbol);
     learn_long_context_gains(state,symbol);
+    learn_fourth_gains(state,symbol);
     learn_hyper_residual(state,symbol,initial_time+trained_);
     if(trained_%128==0)
      trial_swap_triads(prev,symbol,state,symbol);
