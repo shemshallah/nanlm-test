@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import hashlib
+import heapq
 import json
 import math
 import mmap
@@ -334,7 +335,8 @@ class Specialist:
         for g in active_groups:
             self.writer.emit(tick, 3*g+2, "triad", groups[g])
         # A bounded hotspot selection avoids sorting all 85 triads on every tick.
-        hot = sorted(range(TRIADS), key=lambda g:(-abs(groups[g]),g))[:self.hotspots]
+        hot = heapq.nlargest(self.hotspots, range(TRIADS),
+                             key=lambda g:(abs(groups[g]),-g))
         for g in hot:
             self.writer.emit(tick, 3*g+2, "hottriad", groups[g])
         field = sum(self.x)/ACTIVE
