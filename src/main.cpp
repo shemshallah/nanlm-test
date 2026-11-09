@@ -24,9 +24,9 @@ int main(int argc,char**argv){
    std::cout<<"transformed "<<s.size()<<" bytes into head states; original symbols preserved by caller\n";
   }else if(op=="write"){
    if(argc<9)throw std::invalid_argument("need from to type polarity weight timestamp");
-   const int type=value(6);
+   const int type=value(5);
    if(type<0||type>=16)throw std::out_of_range("relation type");
-   u.write(vert(3),vert(4),static_cast<uint8_t>(value(5)),value(6)!=0,
+   u.write(vert(3),vert(4),static_cast<uint8_t>(type),value(6)!=0,
            std::stof(argv[7]),std::stoull(argv[8]));
    u.sync();std::cout<<"stored source relation and its typed inverse\n";
   }else if(op=="query"){
