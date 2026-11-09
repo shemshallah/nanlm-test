@@ -114,7 +114,7 @@ class SpecialistTests(unittest.TestCase):
             source.write_text("a non-entry header\n")
             with self.assertRaisesRegex(ValueError,"no noun"):
                 m.run(source,p/"probe",profiles=("topology",))
-            self.assertEqual(len(list((p/"probe").glob("*.c256tensor"))),1)
+            self.assertEqual(len(list((p/"probe").glob("*.c256tensor"))),0)
 
     def test_individual_specialist_and_deterministic_numeric_export(self):
         with tempfile.TemporaryDirectory() as tmp:
