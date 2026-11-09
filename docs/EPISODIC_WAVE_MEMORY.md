@@ -32,6 +32,9 @@ printf 'Beacon code: \tAURORA-8273\n' > /tmp/nanlm-facts.tsv
 ./nanlm /tmp/nanlm-root recall 'Beacon code: '
 ./nanlm /tmp/nanlm-root generate 'Beacon code: ' 11 19
 # Prints: Beacon code: AURORA-8273
+# Explicitly index the opening phrases and remaining text of each long line:
+./nanlm /tmp/nanlm-root memorize-lines /tmp/quotes.txt public-domain-book
+# Indexed sources carry line tags such as public-domain-book#L18
 ```
 
 Cues are strict UTF-8 strings of 6–64 bytes ending with a space.
