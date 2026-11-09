@@ -61,7 +61,7 @@ class FabricTeacher {
   std::memcpy(&bits,u_.root().h[h].data+4,2);
   return bits;
  }
- double score(uint8_t previous,uint8_t candidate,const Vector& src,const Vector& dst)const{
+ double score(uint8_t previous,uint8_t candidate,const Vector& src,const Vector& dst,const Vec3& rot)const{
   if((gates(previous)&static_cast<uint16_t>(1u<<(candidate&15)))==0)return -30.;
   const double coupling=DOT_GAIN*dot(src,dst);
   const double phase=previous==candidate?0.:u_.covariant_phase(previous,candidate);
@@ -70,7 +70,8 @@ class FabricTeacher {
   const double evidence=previous==candidate?self_count(previous):
                           u_.query(previous,candidate,PRECEDES).support;
   // Formal refutations are NOT treated as negative language examples.
-  return coupling+geometry+evidence_weight_*std::log1p(evidence);
+  const double triply_rotated=0.12*(rot.x*dst[0]+rot.y*dst[1]+rot.z*dst[2]);
+  return coupling+geometry+triply_rotated+evidence_weight_*std::log1p(evidence);
  }
  static double logloss(const std::array<double,VOCAB>& logits,uint8_t label){
   const double m=*std::max_element(logits.begin(),logits.end());
@@ -104,11 +105,12 @@ class FabricTeacher {
   if(previous==255)throw std::invalid_argument("nannet head is not a language symbol");
   Prediction out;
   const auto src=get(u_.root().h[previous],32);
+  const Vec3 rotor=u_.transformed(previous);
   double best=-std::numeric_limits<double>::infinity();
   double max_logit=-std::numeric_limits<double>::infinity();
   for(unsigned j=0;j<VOCAB;++j){
    const auto dst=get(u_.root().h[j],48);
-   const double z=score(previous,static_cast<uint8_t>(j),src,dst);
+   const double z=score(previous,static_cast<uint8_t>(j),src,dst,rotor);
    out.logit[j]=z;
    if(z>best){best=z;out.choice=static_cast<uint8_t>(j);}
    max_logit=std::max(max_logit,z);
@@ -134,6 +136,8 @@ class FabricTeacher {
   const auto prediction=predict(previous);
   const double before=-std::log(std::max(prediction.probability[next],1e-300));
   const Vector old_src=get(u_.root().h[previous],32);
+  const Vec3 rotor=u_.transformed(previous);
+  const std::array<double,3> rotor_vec{rotor.x,rotor.y,rotor.z};
   Matrix old_dst{};
   Vector grad_src{};
   Matrix grad_dst{};
@@ -142,7 +146,7 @@ class FabricTeacher {
    const double residual=prediction.probability[j]-(j==next?1.0:0.0);
    for(unsigned k=0;k<3;++k){
     grad_src[k]+=static_cast<float>(DOT_GAIN*residual*old_dst[j][k]);
-    grad_dst[j][k]=static_cast<float>(DOT_GAIN*residual*old_src[k]);
+    grad_dst[j][k]=static_cast<float>(residual*(DOT_GAIN*old_src[k]+0.12*rotor_vec[k]));
    }
   }
   // Evaluate proposed parameters in scratch, then commit atomically with respect
@@ -164,7 +168,10 @@ class FabricTeacher {
     const double new_angle=norm_angle(candidate_src,candidate_dst[j]);
     const double phase=previous==j?0.0:u_.covariant_phase(previous,static_cast<uint8_t>(j));
     trial_logits[j]=base-old_dot+new_dot+
-      angular_weight_*(std::cos(phase-new_angle)-std::cos(phase-old_angle));
+      angular_weight_*(std::cos(phase-new_angle)-std::cos(phase-old_angle))+
+      0.12*(rotor_vec[0]*(candidate_dst[j][0]-old_dst[j][0])+
+            rotor_vec[1]*(candidate_dst[j][1]-old_dst[j][1])+
+            rotor_vec[2]*(candidate_dst[j][2]-old_dst[j][2]));
    }
    const double after=logloss(trial_logits,next);
    if(after+1e-12<before){
