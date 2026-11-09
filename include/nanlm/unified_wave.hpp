@@ -777,7 +777,7 @@ public:
  struct WaveAdjoint {
   std::array<double,N> x{},xp{},y{},yp{};
  };
- // Reverse derivative of the COMPLETE conditional loss with respect to
+ // Reverse derivative of legacy wave-attention-hypermatrix loss with respect to
  // transient wave state. Teacher, pair evidence, spectral basis and head
  // geometry are frozen for the truncated time window; wave, attention,
  // and hypermatrix temporal readouts all contribute to the adjoints.
@@ -860,7 +860,7 @@ public:
   }
   return adj;
  }
- // True reverse-mode truncated BPTT through both SECOND-ORDER recurrences,
+ // Reverse-mode original wave readouts through both SECOND-ORDER recurrences,
  // including T and T* scattering, old-wave links and clamp masks.
  // Detach only the oldest state (explicit 8-transition truncation).
  double bptt_window_loss(const std::deque<State>& states,
@@ -882,7 +882,7 @@ public:
  }
  BpttGradient bptt_gradient(const std::deque<State>& states,
                            const std::deque<uint8_t>& symbols,
-                           uint8_t label,bool sequence=false)const{
+                           uint8_t label,bool sequence=false){
   if(label>=N||symbols.empty()||symbols.size()>BPTT_STEPS||
      states.size()!=symbols.size()+1)
    throw std::invalid_argument("invalid truncated wave tape");
@@ -942,6 +942,50 @@ public:
     if(states[k].length)++targets;
    for(double& value:result.input)value/=double(targets);
    for(double& value:result.frequency)value/=double(targets);
+  }
+  // The attention/field readout contributes wave derivatives beyond
+  // the older T/T* analytic adjoint. Correct the coordinates that
+  // receive directly observed symbols using full-loss central differences.
+  // NOTE: full reverse-mode through QKV, routing and the field is not yet
+  // implemented; this is a checked numerical reference for active inputs.
+  std::array<bool,N> touched{};
+  for(uint8_t b:symbols)touched[b]=true;
+  const auto exact_loss=[&](){
+   std::deque<State> replay{states.front()};
+   for(uint8_t b:symbols){
+    auto next=replay.back();
+    observe(next,b);
+    replay.push_back(std::move(next));
+   }
+   return bptt_window_loss(replay,symbols,label,sequence);
+  };
+  for(size_t i=0;i<N;++i){
+   if(!touched[i]){result.input[i]=0;continue;}
+   const uint8_t head=static_cast<uint8_t>(i);
+   auto& h=universe_.root().h[i];
+   std::array<uint8_t,10> old_bytes{};
+   std::memcpy(old_bytes.data(),h.data+BPTT_INPUT_OFFSET,8);
+   old_bytes[8]=h.data[BPTT_MAGIC_OFFSET];
+   old_bytes[9]=h.data[BPTT_FREQUENCY_MAGIC_OFFSET];
+   const auto restore=[&](){
+    std::memcpy(h.data+BPTT_INPUT_OFFSET,old_bytes.data(),8);
+    h.data[BPTT_MAGIC_OFFSET]=old_bytes[8];
+    h.data[BPTT_FREQUENCY_MAGIC_OFFSET]=old_bytes[9];
+   };
+   const double gain=input_gain(head),eps=0.002;
+   write_input_gain(head,float(gain+eps));
+   const double up=exact_loss();
+   write_input_gain(head,float(gain-eps));
+   const double down=exact_loss();
+   restore();
+   result.input[i]=(up-down)/(2*eps);
+   const double freq=recurrent_frequency(head),delta=0.0005;
+   write_frequency(head,float(freq+delta));
+   const double freq_up=exact_loss();
+   write_frequency(head,float(freq-delta));
+   const double freq_down=exact_loss();
+   restore();
+   result.frequency[i]=(freq_up-freq_down)/(2*delta);
   }
   for(double v:result.input)result.norm+=v*v;
   if(frequency_learning_enabled_)
