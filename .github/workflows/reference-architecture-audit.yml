@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
-          python tools/audit_reference_architecture.py 2>&1 | tee reference-audit.log
+          python -m tools.audit_reference_architecture 2>&1 | tee reference-audit.log
       - name: Save complete test output
         if: always()
         uses: actions/upload-artifact@v4
