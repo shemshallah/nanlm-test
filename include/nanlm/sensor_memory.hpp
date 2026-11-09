@@ -114,6 +114,7 @@ private:
  std::array<Branch,HEAD_COUNT> head_branches_{};
  std::array<TriadAggregate,TRIAD_COUNT> triads_{};
  std::array<double,HEAD_COUNT> head_state_{};
+ std::array<double,HEAD_COUNT> head_support_{},head_refute_{};
  std::array<std::array<double,3>,HEAD_COUNT> head_vectors_{};
  std::array<std::array<double,9>,HEAD_COUNT> head_tensors_{};
  std::array<double,TRIAD_COUNT> previous_triad_activity_{};
@@ -356,6 +357,8 @@ public:
    previous_triad_activity_[g]=triads_[g].activation;
   ++clock_;
   for(auto& x:head_state_)x*=leak_;
+  for(auto& x:head_support_)x*=leak_;
+  for(auto& x:head_refute_)x*=leak_;
   for(auto& v:head_vectors_)for(auto& x:v)x*=leak_;
   for(auto& t:head_tensors_)for(auto& x:t)x*=leak_;
   for(auto& t:triads_){
@@ -390,6 +393,7 @@ public:
    const double strength=std::abs(xyz[0])+std::abs(xyz[1])+std::abs(xyz[2]);
    leaf.activation+=strength*a.confidence;
    head_state_[h]+=strength*a.confidence;
+   (a.refutes?head_refute_[h]:head_support_[h])+=a.confidence;
    const double signed_weight=(a.refutes?-1.0:1.0)*a.confidence;
    for(std::size_t i=0;i<3;++i){
     leaf.measured_vector[i]+=signed_weight*xyz[i];
@@ -521,6 +525,8 @@ public:
  const std::array<double,9>& head_tensor(std::uint8_t h)const{return head_tensors_.at(h);}
  const std::array<std::uint8_t,3>& triad_heads(std::uint8_t g)const{return map_.at(g);}
  double head_activity(std::uint8_t h)const{return head_state_.at(h);}
+ double head_support(std::uint8_t h)const{return head_support_.at(h);}
+ double head_refute(std::uint8_t h)const{return head_refute_.at(h);}
  const Branch& branch(std::uint8_t h)const {return head_branches_.at(h);}
  const TriadAggregate& triad(std::size_t g)const {return triads_.at(g);}
  const GlobalAggregate& global()const {return global_;}
