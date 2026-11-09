@@ -32,7 +32,9 @@ namespace nanlm {
 class UnifiedWaveLanguage {
 public:
  static constexpr size_t N=FabricTeacher::VOCAB;
- static constexpr size_t WINDOW=16;
+ static constexpr size_t WINDOW=48;
+ static constexpr size_t ATTENTION_WINDOW=16;
+ static constexpr size_t LONG_GAIN_OFFSET=44; // float32 per head, former unused register gap
  static constexpr size_t MODES=4;
  static constexpr size_t GROUP_SIZE=3;
  static constexpr size_t GROUPS=(N+GROUP_SIZE-1)/GROUP_SIZE; // 85 voting triads
@@ -43,7 +45,8 @@ public:
  static constexpr unsigned ABLATE_CYCLE=1u<<3;
  static constexpr unsigned ABLATE_INVERSE_EVIDENCE=1u<<4;
  static constexpr unsigned ABLATE_HYPEREDGE=1u<<5;
- static constexpr unsigned ABLATE_ALL=(1u<<6)-1u;
+ static constexpr unsigned ABLATE_LONG_CONTEXT=1u<<6;
+ static constexpr unsigned ABLATE_ALL=(1u<<7)-1u;
  static constexpr size_t HEAD_GAIN_OFFSET=80;
  static constexpr size_t HEAD_GAIN_MAGIC_OFFSET=60;
  static constexpr uint8_t HEAD_GAIN_MAGIC=0xC7;
@@ -63,8 +66,8 @@ public:
  static constexpr uint8_t HYPER_LOCAL_MAGIC=0xB6;
  static constexpr uint8_t HYPER_GROUP_MAGIC=0xB7;
  static constexpr uint8_t HYPER_FIELD_MAGIC=0xB8;
- static constexpr size_t TRIAD_ID_OFFSET=64; // heads 1..254 only
- static constexpr size_t TRIAD_MAGIC_OFFSET=65; // head 0 keeps calibration
+ static constexpr size_t TRIAD_ID_OFFSET=64;
+ static constexpr size_t TRIAD_MAGIC_OFFSET=65;
  static constexpr uint8_t TRIAD_MAGIC=0xE5;
  // Optional calibration of rank-three CP and wave tensor modulations.
  // Two float32 scales + marker use h0 [96..104], disjoint from its
@@ -147,7 +150,7 @@ private:
  }
  size_t triad_of(uint8_t head)const{
   if(head>=N)throw std::out_of_range("ingress has no cognitive triad");
-  if(head==0)return 0; // global calibration occupies head 0 byte 64
+  if(head==0)return 0;
   const auto& h=universe_.root().h[head];
   if(h.data[TRIAD_MAGIC_OFFSET]!=TRIAD_MAGIC)return head/GROUP_SIZE;
   const size_t group=h.data[TRIAD_ID_OFFSET];
@@ -275,7 +278,8 @@ private:
   const auto q=vector(universe_.root().h[candidate],48);
   std::array<double,WINDOW> scores{};
   double best=-std::numeric_limits<double>::infinity();
-  for(size_t k=0;k<s.length;++k){
+  const size_t start=s.length>ATTENTION_WINDOW?s.length-ATTENTION_WINDOW:0;
+  for(size_t k=start;k<s.length;++k){
    const uint8_t src=s.history[k];
    const auto key=vector(universe_.root().h[src],32);
    const double geometry=0.11*std::cos(universe_.covariant_phase(src,candidate));
@@ -284,8 +288,8 @@ private:
    best=std::max(best,scores[k]);
   }
   double denominator=0,aggregation=0;
-  for(size_t k=0;k<s.length;++k)denominator+=std::exp(scores[k]-best);
-  for(size_t k=0;k<s.length;++k){
+  for(size_t k=start;k<s.length;++k)denominator+=std::exp(scores[k]-best);
+  for(size_t k=start;k<s.length;++k){
    const uint8_t src=s.history[k];
    const double weight=std::exp(scores[k]-best)/denominator;
    const auto forward=universe_.query(src,candidate,PRECEDES);
@@ -308,6 +312,29 @@ private:
   const auto qc=universe_.quaternion_field().get(c,a);
   const double nonabelian=(qa*qb*qc).angle();
   return 0.5*std::cos(loop)+0.5*std::cos(nonabelian);
+ }
+ // Causal eligibility over the long-tail portion of 48 remembered bytes.
+ // A learned head-local gain is stored in the EXISTING 4-byte register gap
+ // between the teacher source vector [32,43] and target vector [48,59].
+ // This is truncated feature-gradient credit assignment, NOT full BPTT.
+ double long_context_signal(const State& s,uint8_t candidate)const{
+  if(s.length<=ATTENTION_WINDOW)return 0;
+  double value=0,denom=0;
+  const size_t older=s.length-ATTENTION_WINDOW;
+  for(size_t k=0;k<older;++k){
+   const uint8_t from=s.history[k];
+   if(from==candidate)continue;
+   const auto forward=universe_.query(from,candidate,PRECEDES);
+   const auto inverse=universe_.query(candidate,from,FOLLOWS);
+   const double support=0.5*(forward.support+inverse.support);
+   const double refute=0.5*(forward.refute+inverse.refute);
+   const double signed_evidence=(support-refute)/(1.0+support+refute);
+   const double lag=double(s.length-k);
+   const double weight=std::exp(-0.048*lag);
+   value+=weight*signed_evidence;
+   denom+=weight;
+  }
+  return denom>0?clamp(value/denom,2.0):0.0;
  }
  double hyperedge_signal(const State& s,uint8_t candidate)const{
   if(s.length<2)return 0;
@@ -409,6 +436,40 @@ private:
  // Local independent gradients, triad consensus and full-field consensus
  // all vote on one output distribution, and commit only if exact scratch
  // softmax loss improves. No second model or unvalidated live mutation.
+ bool learn_long_context_gains(const State& s,uint8_t label){
+  if(s.length<=ATTENTION_WINDOW)return false;
+  const auto distribution=predict(s);
+  const double before=-std::log(std::max(distribution.p[label],1e-300));
+  std::array<double,N> signal{},old{};
+  for(size_t c=0;c<N;++c){
+   signal[c]=long_context_signal(s,static_cast<uint8_t>(c));
+   old[c]=read_scalar(universe_.root().h[c],LONG_GAIN_OFFSET);
+   if(!std::isfinite(old[c])||std::fabs(old[c])>1.00001)
+    throw std::runtime_error("invalid persisted long-context register gain");
+  }
+  for(int retry=0;retry<8;++retry){
+   const double lr=std::ldexp(0.07,-retry);
+   std::array<float,N> proposed{};
+   std::array<double,N> logit{};
+   double maximum=-std::numeric_limits<double>::infinity();
+   for(size_t c=0;c<N;++c){
+    const double gradient=(distribution.p[c]-(c==label?1.0:0.0))*signal[c];
+    proposed[c]=static_cast<float>(std::clamp(old[c]-lr*gradient,-1.0,1.0));
+    logit[c]=std::log(std::max(distribution.p[c],1e-300))+
+             (double(proposed[c])-old[c])*signal[c];
+    maximum=std::max(maximum,logit[c]);
+   }
+   double sum=0;
+   for(double x:logit)sum+=std::exp(x-maximum);
+   const double after=std::log(sum)+maximum-logit[label];
+   if(after+1e-12<before){
+    for(size_t c=0;c<N;++c)
+     write_scalar(universe_.root().h[c],LONG_GAIN_OFFSET,proposed[c]);
+    return true;
+   }
+  }
+  return false;
+ }
  bool learn_hyper_gains(const State& s,uint8_t label){
   if(s.length<2)return false;
   const auto p=predict(s);
@@ -571,8 +632,6 @@ public:
  }
  void refresh_spectrum(){rebuild_spectrum();}
  size_t head_triad(uint8_t head)const{return triad_of(head);}
- // Only an exact improvement in the complete single-model normalized
- // probability is allowed to commit a topology self-modification.
  bool trial_swap_triads(uint8_t a,uint8_t b,const State& s,uint8_t label){
   if(a==0||b==0||a>=N||b>=N||a==b||label>=N||s.length==0)return false;
   const size_t ga=triad_of(a),gb=triad_of(b);
@@ -659,7 +718,10 @@ public:
       ((disabled&ABLATE_SPECTRAL)?0.0:double(g[2])*scales[2]*f.spectral)+
       ((disabled&ABLATE_CYCLE)?0.0:double(g[3])*scales[3]*f.cycle)+
       ((disabled&ABLATE_INVERSE_EVIDENCE)?0.0:evidence_gain_*inverse_consensus)+
-      ((disabled&ABLATE_HYPEREDGE)?0.0:hyper_gain(target)*hyperedge_signal(s,target));
+      ((disabled&ABLATE_HYPEREDGE)?0.0:hyper_gain(target)*hyperedge_signal(s,target))+
+      ((disabled&ABLATE_LONG_CONTEXT)?0.0:
+        read_scalar(universe_.root().h[target],LONG_GAIN_OFFSET)*
+        long_context_signal(s,target));
    largest=std::max(largest,logits[c]);
   }
   double z=0;
@@ -710,6 +772,7 @@ public:
     // One teacher and one higher-order field share all 255 registers.
     learn_head_gains(state,symbol);
     learn_hyper_gains(state,symbol);
+    learn_long_context_gains(state,symbol);
     learn_hyper_residual(state,symbol,initial_time+trained_);
     if(trained_%128==0)
      trial_swap_triads(prev,symbol,state,symbol);
