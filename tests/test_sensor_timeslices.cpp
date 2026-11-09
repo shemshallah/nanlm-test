@@ -146,6 +146,34 @@ int main(){
    const auto recovered_last=trace.latest();
    check(recovered_last.seq<last_sequence,"checksum accepted corrupted temporal frame");
   }
+  // Journal V2 preserves the original nanclock of each observation and
+  // intervening idle periods; re-reading facts without event timestamps
+  // would produce a different vector/tensor temporal history.
+  {
+   const auto temporal_snapshot=filename+".events";
+   SensorMemory timed(128,1000,0.8);
+   timed.ingest({"A","sparrow","ISA","bird",false,1.});
+   for(int j=0;j<40;++j)timed.tick();
+   timed.ingest({"B","bird","ISA","animal",false,1.});
+   for(int j=0;j<7;++j)timed.tick();
+   const auto original=measure_matrix(timed);
+   timed.save(temporal_snapshot);
+   SensorMemory restored(128,1000,0.8);
+   restored.load(temporal_snapshot);
+   std::filesystem::remove(temporal_snapshot);
+   const auto replayed=measure_matrix(restored);
+   check(restored.clock()==timed.clock(),"journal replay discarded idle nanclock slices");
+   check(restored.reason("sparrow","ISA","animal").inferred,
+         "temporal replay lost multi-source inference");
+   check(original.heads.size()==replayed.heads.size()&&
+         original.triads.size()==replayed.triads.size(),
+         "replayed vector/tensor supports changed");
+   for(std::size_t i=0;i<original.heads.size();++i)
+    equal_vectors(original.heads[i],replayed.heads[i]);
+   for(std::size_t i=0;i<original.triads.size();++i)
+    equal_vectors(original.triads[i],replayed.triads[i]);
+   equal_vectors(original.global_field,replayed.global_field);
+  }
   // A new recording is no longer permitted to silently use a mismatched
   // capacity, even when both files happen to have valid initial records.
   bool rejected=false;
