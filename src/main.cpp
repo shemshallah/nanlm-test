@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|recall CUE|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -79,6 +79,22 @@ int main(int argc,char** argv){
             <<" projection_accepted="<<mind.projection_accepted()
             <<" adapter_accepted="<<mind.adapter_accepted()
             <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())<<"\n";
+  }else if(operation=="memorize"){
+   if(argc!=5)throw std::invalid_argument("memorize requires TSV_FILE SOURCE");
+   std::ifstream file(argv[3],std::ios::binary);
+   if(!file)throw std::runtime_error("episodic TSV unavailable");
+   UnifiedWaveLanguage mind(universe);
+   const auto loaded=mind.memorize_tsv(file,argv[4]);
+   std::cout<<"UNIFIED_EPISODIC_IMPORT imported="<<loaded
+            <<" records="<<mind.episodic_records()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="recall"){
+   if(argc!=4)throw std::invalid_argument("recall requires exact cue");
+   UnifiedWaveLanguage mind(universe);
+   const auto* record=mind.exact_recall(argv[3]);
+   if(!record){std::cout<<"UNIFIED_EPISODIC_MISS\n";return 3;}
+   std::cout<<"UNIFIED_EPISODIC_HIT source="<<record->source
+            <<" value="<<record->value<<"\n";
   }else if(operation=="eval"){
    if(argc<4)throw std::invalid_argument("evaluation file required");
    std::ifstream file(argv[3],std::ios::binary);
@@ -102,6 +118,7 @@ int main(int argc,char** argv){
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
     {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
     {"no_triad",UnifiedWaveLanguage::ABLATE_TRIAD},
+    {"no_episodic",UnifiedWaveLanguage::ABLATE_EPISODIC},
     {"no_global_field",UnifiedWaveLanguage::ABLATE_FIELD},
     {"no_tbptt_readout",UnifiedWaveLanguage::ABLATE_BPTT_READOUT},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
@@ -160,6 +177,19 @@ int main(int argc,char** argv){
     tensor[mode]=best_scale;
     mind.set_tensor_scales(tensor);
    }
+   // Wave readout is a calibrated optional memory signal. The recurrent
+   // oscillator remains available to geometry/triad memory even at zero.
+   const double wave_choices[]={0.,0.25,0.5,0.75,1.,1.25,1.5,2.};
+   double best_wave=mind.wave_memory_scale();
+   double best_wave_loss=measure().ce();
+   for(double candidate:wave_choices){
+    mind.set_wave_memory_scale(candidate);
+    const double loss=measure().ce();
+    if(loss+1e-7<best_wave_loss){
+     best_wave_loss=loss;best_wave=candidate;
+    }
+   }
+   mind.set_wave_memory_scale(best_wave);
    // Only a development set may select the weight of the new shared
    // triad readout. Zero is a valid outcome; it means the component
    // has not earned its place in the final probability distribution.
@@ -183,7 +213,8 @@ int main(int argc,char** argv){
             <<" spectral_scale="<<chosen[2]<<" cycle_scale="<<chosen[3]
             <<" cp_scale="<<tensor[0]
             <<" inverse_wave_tensor_scale="<<tensor[1]
-            <<" triad_scale="<<mind.triad_scale()<<"\n";
+            <<" triad_scale="<<mind.triad_scale()
+            <<" wave_memory_scale="<<mind.wave_memory_scale()<<"\n";
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);
