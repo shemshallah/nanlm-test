@@ -55,12 +55,18 @@ jobs:
           The painter notices shifting clouds beyond the orchard.
           A distant melody echoes through an unfamiliar corridor.
           TEXT
+          cat > /tmp/hw0-rnn-development.txt <<'TEXT'
+          An astronomer studies new patterns above a silent valley.
+          A traveler follows a narrow path beside the sea.
+          TEXT
           ./nanlm /tmp/hw0-causal-root train-text /tmp/hw0-rnn-train.txt 2
           ./nanlm /tmp/hw0-causal-root train-rnn /tmp/hw0-rnn-train.txt 8 | tee rnn-train.log
           ./nanlm /tmp/hw0-causal-root benchmark-text /tmp/hw0-rnn-holdout.txt | tee comparison.log
           grep 'BENCH model=ngram order=0' comparison.log
           grep 'BENCH model=ngram order=5' comparison.log
           grep 'BENCH model=rnn32' comparison.log
+          ./nanlm /tmp/hw0-causal-root select-hybrid /tmp/hw0-rnn-development.txt /tmp/hw0-rnn-holdout.txt | tee selected-model.log
+          grep 'TEST selected_ce=' selected-model.log
           ./nanlm /tmp/hw0-causal-root eval-hybrid /tmp/hw0-rnn-holdout.txt 0.25 | tee hybrid-eval.log
           ./nanlm /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-1.txt
           ./nanlm /tmp/hw0-causal-root generate-hybrid 'The ' 128 17 0.25 > hybrid-2.txt
@@ -85,4 +91,5 @@ jobs:
             rnn-1.txt
             hybrid-eval.log
             hybrid-1.txt
+            selected-model.log
           if-no-files-found: warn
