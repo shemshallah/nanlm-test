@@ -1,5 +1,7 @@
 #include "nanlm/unified_wave.hpp"
 #include <cmath>
+#include <chrono>
+#include <iomanip>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +44,62 @@ int main(){
    const auto* record=mind.exact_recall(cue);
    require(record&&record->value==value&&record->source==source,
            "exact source attribution lost");
+   // Adversarial cardinality probe: identical-length distractor cues,
+   // with the exact answer deliberately inserted LAST. Phase routing may
+   // lower equality comparisons, but its CPU cost is measured separately.
+   {
+    const std::string probe_path=root+"-routing.episodes";
+    ExactEpisodicMemory many(probe_path);
+    std::ostringstream distractors;
+    for(unsigned i=0;i<180;++i){
+     distractors<<"Beacon archive X"<<std::setfill('0')<<std::setw(4)
+                <<i<<" \tDECOY-"<<i<<"\n";
+    }
+    std::istringstream source(distractors.str());
+    require(many.import_tsv(source,"routing-control")==180,
+            "distractor fixture did not import");
+    many.remember(cue,value,"late-source");
+    std::vector<uint8_t> exact_history(cue.begin(),cue.end());
+    const auto no_rank=many.probe(exact_history.data(),
+                                  exact_history.size(),false);
+    const auto ranked=many.probe(exact_history.data(),
+                                exact_history.size(),true);
+    require(no_rank.record==ranked.record&&
+            ranked.record!=ExactEpisodicMemory::NONE,
+            "resonance changed byte-verified result under distractors");
+    require(ranked.exact_compares<no_rank.exact_compares,
+            "phase routing did not reduce exact comparisons");
+    const std::string near="Beacon archive coda: ";
+    std::vector<uint8_t> wrong(near.begin(),near.end());
+    require(many.probe(wrong.data(),wrong.size(),true).record==
+            ExactEpisodicMemory::NONE,
+            "high-scoring near-miss bypassed exact verification");
+    // Time the routing algorithm itself, not the entire language engine.
+    size_t verification_sum=0;
+    const auto measure=[&](bool resonate){
+     constexpr unsigned TRIALS=50;
+     const auto start=std::chrono::steady_clock::now();
+     for(unsigned j=0;j<TRIALS;++j){
+      const auto q=many.probe(exact_history.data(),
+                              exact_history.size(),resonate);
+      verification_sum+=q.exact_compares;
+     }
+     const auto elapsed=std::chrono::duration<double,std::micro>(
+        std::chrono::steady_clock::now()-start).count();
+     return elapsed/double(TRIALS);
+    };
+    const double unranked_us=measure(false);
+    const double ranked_us=measure(true);
+    require(verification_sum>0&&std::isfinite(unranked_us)&&
+            std::isfinite(ranked_us),
+            "invalid routing timing");
+    std::cout<<"EPISODIC_DISTRACTOR_AUDIT candidates="<<ranked.routed
+             <<" scan_exact_compares="<<no_rank.exact_compares
+             <<" resonance_exact_compares="<<ranked.exact_compares
+             <<" scan_us="<<unranked_us
+             <<" resonance_us="<<ranked_us<<"\n";
+    std::error_code ignored;std::filesystem::remove(probe_path,ignored);
+   }
    require(std::filesystem::file_size(root)==ROOT_BYTES,
            "memory expanded canonical 8 MiB root");
    // Resonance is an optional hint, not an admission criterion. Every
@@ -70,7 +128,7 @@ int main(){
    std::cout<<"EPISODIC_RESONANCE_AUDIT candidates="<<phase.routed
             <<" verified_comparisons="<<phase.exact_compares
             <<" exact_match="<<int(phase.record==raw.record)
-            <<" resonance="<<phase.resonance<<"\\n";
+            <<" resonance="<<phase.resonance<<"\n";
    const auto checkpoint_bytes=std::filesystem::file_size(root+".episodes");
    {
     UnifiedWaveLanguage::State state{};

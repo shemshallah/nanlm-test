@@ -144,3 +144,13 @@ semantic paraphrase retrieval. Because the candidate list is fully sorted,
 it may use *more* CPU than direct scanning for small memory banks.
 The native test compares resonance-on and resonance-off against the same
 exact cue, then challenges both with a near-miss and contested cue.
+
+### Multi-candidate routing benchmark
+
+A separate native fixture inserts 180 equal-length decoy cues before the
+true cue, then compares baseline exact scanning with phase-ranked searching.
+Both must resolve the **same exact record** and reject a similar-looking
+nonmatch. A fixed 50-repeat microbenchmark prints equality-comparison counts
+and wall-clock microseconds for each probe. These are diagnostic CPU timings,
+not whole-model generation rates; use them to decide whether the optional
+resonance route earns its runtime cost. No blanket speedup is presumed.
