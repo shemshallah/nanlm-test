@@ -47,6 +47,11 @@ int main(){
    // Refresh the derived eigensystem after direct writes so the pre-
    // and post-restart predictors use identical persistent graph state.
    mind.refresh_spectrum();
+   // Also replay the causal wave itself: it was originally excited while
+   // pair evidence was empty, before the graph mutation.
+   context.reset();
+   mind.observe(context,'x');
+   mind.observe(context,'y');
    const auto factor=mind.predict(context);
    const auto without=mind.predict(context,UnifiedWaveLanguage::ABLATE_HYPEREDGE);
    require(std::fabs(factor.p['z']-without.p['z'])>1e-7,
