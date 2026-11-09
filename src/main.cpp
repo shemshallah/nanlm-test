@@ -79,6 +79,7 @@ int main(int argc,char** argv){
     {"no_cycle",UnifiedWaveLanguage::ABLATE_CYCLE},
     {"no_inverse_evidence",UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE},
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
+    {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
    };
    for(const auto& run:runs){
