@@ -192,3 +192,25 @@ wave execution to be switched off:
 `generate PROMPT BYTES SEED TEMPERATURE TOP_P RESONANCE WAVE_EXEC`.
 This must be evaluated for real latency/energy and CE on source-disjoint
 text before disabling waves automatically.
+
+## 85-triad approximate associative suggestions (experimental)
+
+`suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]` now
+returns **candidate cue strings and source attribution only**. It searches
+for suffixes up to three **byte** insertion/deletion/substitution errors,
+then compares 85-dimensional signed/damped triad occupancy vectors from
+the model's *current* persisted 255-head grouping. Eight highest-amplitude
+triads become routing hotspots; their overlap, whole-triad cosine, and
+four-band phase similarity rank same-edit-distance candidates.
+
+The operation does not write any memory, does not retrieve/copy a fact value,
+and does not set the predictor's exact-copy cursor. Exact byte verification
+is still the only automatic-copy admission criterion. If sources disagree,
+the candidate is labeled unverified, even with byte-perfect cue agreement.
+
+The triad map is supplied on each query from `head_triad`, so dynamic triad
+reassignment takes effect immediately without rebuilding an indexed sidecar.
+The CPU cost of searching all records is opt-in; ordinary exact lookup still
+uses the fast hash index. These features are **lexical/structural**; they do
+not amount to semantic retrieval or factual truth estimation. Unicode typos
+are counted in UTF-8 bytes, not codepoints.

@@ -731,6 +731,14 @@ public:
      const State& s,size_t limit=3)const{
   return episodic_.suggest(s.history.data(),s.length,limit,&s.wave);
  }
+ std::vector<ExactEpisodicMemory::Suggestion> suggest_triad_memory(
+     const State& s,size_t limit=3,size_t max_edits=2)const{
+  TriadCueRouter::Mapping group{};
+  for(size_t h=0;h<N;++h)
+   group[h]=static_cast<uint8_t>(triad_of(static_cast<uint8_t>(h)));
+  return episodic_.suggest_robust(
+      s.history.data(),s.length,limit,max_edits,group,&s.wave);
+ }
  void memorize(const std::string& cue,const std::string& value,
                const std::string& source){episodic_.remember(cue,value,source);}
  size_t memorize_tsv(std::istream& data,const std::string& source){

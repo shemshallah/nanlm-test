@@ -99,6 +99,48 @@ int main(){
              <<" resonance_exact_compares="<<ranked.exact_compares
              <<" hash_us="<<unranked_us
              <<" resonance_us="<<ranked_us<<"\n";
+    // Dynamic 85-group map and 8 hottest triads: noisy/recovered
+    // cue is a SUGGESTION ONLY; it never activates the copy cursor.
+    TriadCueRouter::Mapping groups{};
+    for(size_t h=0;h<groups.size();++h)
+     groups[h]=static_cast<uint8_t>(h/3);
+    const auto fuzzy=[&](const std::string& q,size_t edits=2){
+     std::vector<uint8_t> x(q.begin(),q.end());
+     return many.suggest_robust(x.data(),x.size(),5,edits,groups);
+    };
+    for(const auto& noisy:{"Beacon archive coda: ",
+                           "Beacon archive cod: ",
+                           "Beacon archive coode: "}){
+     const auto results=fuzzy(noisy);
+     require(!results.empty()&&results[0].cue==cue&&
+             results[0].edit_distance==1&&
+             !results[0].exact_verified&&
+             results[0].hot_triads<=8,
+             "one-byte typo failed 85-triad approximate suggestion");
+    }
+    const auto intact=fuzzy(cue);
+    require(!intact.empty()&&intact[0].exact_verified&&
+            intact[0].edit_distance==0&&
+            intact[0].hot_triads==TriadCueRouter::HOT,
+            "exact triad suggestion not marked verified");
+    // Changing the dynamic head->group assignment changes the
+    // triad sketch but not verification, source or model storage.
+    const auto old_hot=TriadCueRouter::encode(cue,groups);
+    std::swap(groups[uint8_t('B')],groups[uint8_t('J')]);
+    const auto new_hot=TriadCueRouter::encode(cue,groups);
+    double movement=0;
+    for(size_t i=0;i<old_hot.size();++i)
+     movement+=std::fabs(old_hot[i]-new_hot[i]);
+    require(movement>1e-4,"live triad remapping is not reflected");
+    const auto rerouted=fuzzy(cue);
+    require(!rerouted.empty()&&rerouted[0].exact_verified,
+            "head reassignment changed exact verification");
+    const auto unrelated=fuzzy("Shadows quietly drift across the shore. ");
+    require(unrelated.empty(),"far-away phrase suggested unsupported fact");
+    std::cout<<"TRIAD_ASSOCIATIVE_AUDIT noisy_tests=3"
+             <<" hot_triads="<<int(TriadCueRouter::HOT)
+             <<" mapping_change="<<movement
+             <<" copy_from_fuzzy=0\n";
     // Near-miss suggestions are explicitly unverified; source labels and
     // candidate cues can be inspected without exposing any fact value.
     const auto suggestions=many.suggest(wrong.data(),wrong.size(),5);
@@ -282,6 +324,17 @@ int main(){
    require(mind.contested_episodic("Mission ID: ")&&
            mind.exact_recall("Mission ID: ")==nullptr,
            "independent contradictory claim was overwritten");
+   UnifiedWaveLanguage::State contested_hint{};
+   for(unsigned char ch:std::string("Mission ID: "))
+    mind.observe(contested_hint,ch);
+   const auto hints_conflict=mind.suggest_triad_memory(contested_hint,4,0);
+   require(hints_conflict.size()>=2,
+           "contesting sources not both visible to suggestion operator");
+   for(const auto& hint:hints_conflict)
+    if(hint.cue=="Mission ID: ")
+     require(!hint.exact_verified,
+             "triad router legitimized contested evidence");
+
    UnifiedWaveLanguage::State contested{};
    for(unsigned char c:std::string("Mission ID: "))mind.observe(contested,c);
    require(contested.recall_record==ExactEpisodicMemory::NONE,

@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -130,6 +130,30 @@ int main(int argc,char** argv){
    for(const auto& hint:mind.suggest_memory(s,limit))
     std::cout<<"UNIFIED_MEMORY_SUGGEST verified="<<int(hint.exact_verified)
              <<" score="<<hint.resonance<<" source="<<hint.source
+             <<" cue="<<hint.cue<<"\n";
+  }else if(operation=="suggest-triad"){
+   if(argc<4||argc>7)
+    throw std::invalid_argument(
+       "suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]");
+   const size_t limit=argc>4?std::stoull(argv[4]):3u;
+   const size_t edits=argc>5?std::stoull(argv[5]):2u;
+   if(limit==0||limit>16||edits>3)
+    throw std::invalid_argument("triad suggestion count 1..16, byte edits 0..3");
+   UnifiedWaveLanguage mind(universe);
+   if(argc>6){
+    const int enabled=number(6);
+    if(enabled!=0&&enabled!=1)throw std::invalid_argument("invalid wave flag");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
+   UnifiedWaveLanguage::State s{};
+   for(unsigned char c:std::string(argv[3]))mind.observe(s,c);
+   for(const auto& hint:mind.suggest_triad_memory(s,limit,edits))
+    std::cout<<"UNIFIED_TRIAD_SUGGEST verified="<<int(hint.exact_verified)
+             <<" edit_bytes="<<hint.edit_distance
+             <<" hotspots="<<hint.hot_triads
+             <<" triad="<<hint.triad_similarity
+             <<" phase="<<hint.resonance
+             <<" source="<<hint.source
              <<" cue="<<hint.cue<<"\n";
   }else if(operation=="eval"){
    if(argc<4||argc>5)throw std::invalid_argument("eval TEXT [WAVE_EXEC_0_OR_1]");

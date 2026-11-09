@@ -1,5 +1,6 @@
 #pragma once
 #include "nanlm/utf8.hpp"
+#include "nanlm/triad_memory_router.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -41,6 +42,9 @@ public:
   std::string cue,source;
   double resonance=0;
   bool exact_verified=false;
+  size_t edit_distance=MAX_KEY+1;
+  double triad_similarity=0;
+  size_t hot_triads=0;
  };
 private:
  std::string path_;
@@ -444,6 +448,74 @@ public:
   });
   if(scored.size()>count)scored.resize(count);
   return scored;
+ }
+ // A separate read-only approximate pathway: compare the recent suffix
+ // with each candidate cue under <=3 byte edits. The *live* cognitive
+ // head-to-triad permutation (85 x 3) supplies an 85D temporal sketch;
+ // the 8 hottest triads act as a secondary routing resolution.
+ // Only the exact() method and byte-verified probe() authorize copying.
+ std::vector<Suggestion> suggest_robust(
+         const uint8_t* history,size_t length,size_t count,
+         size_t max_edits,const TriadCueRouter::Mapping& group_of,
+         const std::array<double,255>* live_wave=nullptr)const{
+  if(!history||length==0||count==0||count>16||max_edits>3)
+   return {};
+  length=std::min(length,TriadCueRouter::MAX_CUE);
+  const auto* ptr=reinterpret_cast<const char*>(history);
+  std::string_view recent(ptr,length);
+  std::vector<Suggestion> ranked;
+  ranked.reserve(entries_.size());
+  for(const auto& r:entries_){
+   const size_t n=r.cue.size();
+   const size_t first=n>max_edits?n-max_edits:1;
+   const size_t last=std::min(length,n+max_edits);
+   if(first>last)continue;
+   size_t best=max_edits+1,best_len=0;
+   for(size_t suffix=first;suffix<=last;++suffix){
+    const auto view=recent.substr(length-suffix);
+    const size_t dist=TriadCueRouter::edit_distance(
+       view,r.cue,max_edits);
+    if(dist<best){
+     best=dist;best_len=suffix;
+     if(best==0)break;
+    }
+   }
+   if(best>max_edits)continue;
+   const auto matching=recent.substr(length-best_len);
+   const auto a=TriadCueRouter::encode(matching,group_of);
+   const auto b=TriadCueRouter::encode(r.cue,group_of);
+   const double triad=TriadCueRouter::cosine(a,b);
+   const size_t hot=TriadCueRouter::hotspots(a,b);
+   double score=similarity(phase_code(matching),r.phase);
+   if(live_wave){
+    double imprint=0;
+    for(size_t j=0;j<n;++j){
+     const uint8_t h=static_cast<uint8_t>(r.cue[j]);
+     if(h<255)imprint+=(*live_wave)[h]*std::cos(0.238*double(n-j));
+    }
+    score+=0.005*std::tanh(imprint/double(n));
+   }
+   const bool verified=best==0&&!contested(r.cue);
+   Suggestion found{r.cue,r.source,score,verified,best,triad,hot};
+   ranked.push_back(std::move(found));
+  }
+  std::sort(ranked.begin(),ranked.end(),
+      [](const Suggestion& a,const Suggestion& b){
+    if(a.exact_verified!=b.exact_verified)
+     return a.exact_verified;
+    if(a.edit_distance!=b.edit_distance)
+     return a.edit_distance<b.edit_distance;
+    if(a.hot_triads!=b.hot_triads)
+     return a.hot_triads>b.hot_triads;
+    if(a.triad_similarity!=b.triad_similarity)
+     return a.triad_similarity>b.triad_similarity;
+    if(a.resonance!=b.resonance)
+     return a.resonance>b.resonance;
+    if(a.cue!=b.cue)return a.cue<b.cue;
+    return a.source<b.source;
+  });
+  if(ranked.size()>count)ranked.resize(count);
+  return ranked;
  }
  // A caller streams one symbol at a time. Once a cue matches, the active
  // record ID/offset survives truncation of the 64-byte attention window.
