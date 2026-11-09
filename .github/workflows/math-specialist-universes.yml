@@ -1,0 +1,51 @@
+name: Five mathematical specialist universes — tensor-only comparison
+on:
+  push:
+    branches: [experiment/specialist-matrix-probes-20261109]
+  pull_request:
+    paths:
+      - 'tools/matrix_probe_bank.py'
+      - 'tests/test_matrix_probe_bank.py'
+      - 'docs/MATHEMATICAL_SPECIALIST_UNIVERSES.md'
+      - '.github/workflows/math-specialist-universes.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  profile_matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify separate 8 MiB specialist universes
+        run: python3 -m unittest discover -s tests -p 'test_matrix_probe_bank.py' -v
+      - name: Train each mathematical universe on IDENTICAL WordNet-format fixture
+        run: |
+          python3 tools/matrix_probe_bank.py \
+            --data-noun tests/fixtures/data.noun \
+            --out /tmp/standalone-tensor-specialists \
+            --epochs 4 --snapshot-every 4 --hotspots 4 > /tmp/specialists-log.json
+          mkdir -p artifacts
+          cp /tmp/standalone-tensor-specialists/*.c256tensor artifacts/
+          cp /tmp/standalone-tensor-specialists/summary.json artifacts/
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("artifacts/summary.json").read_text())
+          assert s["distinct_universes"]==5
+          assert len({x["events"] for x in s["profiles"]})==1
+          assert s["upper_universe_built"] is False
+          assert s["live_wordnet_matrix_connected"] is False
+          for p in s["profiles"]:
+              print(p["profile"], "ticks",p["events"],"tensor_entries",p["entries"],
+                    "bytes",p["bytes_compressed"],"nonzero",p["nonzero"],
+                    "occupied_cells",p["active_cells_sampled"])
+          PY
+      - name: Upload ONLY tensor maps and numeric measurement summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordnet-fixture-five-mathematical-tensor-specialists
+          path: artifacts/
+          if-no-files-found: error
