@@ -52,7 +52,6 @@ private:
   uint32_t total=0;
   std::vector<std::pair<uint8_t,uint32_t>> next; // sorted by symbol
  };
- Universe& universe_;
  std::string path_;
  std::unordered_map<uint64_t,Node> nodes_;
  uint64_t tokens_=0;
@@ -179,13 +178,14 @@ private:
 public:
  ByteModel(Universe& universe,std::string root_path,double smoothing=0.35,
            double strength=4.0,FabricTeacher* teacher=nullptr,double teacher_mix=0.0):
-  universe_(universe),path_(std::move(root_path)+".byte-lm"),
+  path_(std::move(root_path)+".byte-lm"),
   smoothing_(smoothing),strength_(strength),teacher_(teacher),
   teacher_mix_(teacher_mix) {
   if(!std::isfinite(smoothing)||smoothing<=0||!std::isfinite(strength)||
      strength<=0||!std::isfinite(teacher_mix)||teacher_mix<0||teacher_mix>1||
      (teacher_mix>0&&!teacher))
    throw std::invalid_argument("invalid byte model hyperparameters");
+  (void)universe; // Explicitly bind the overlay's lifecycle to the caller's sole HW0 universe.
   load();
  }
  size_t contexts()const{return nodes_.size();}
