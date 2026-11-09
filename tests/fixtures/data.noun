@@ -1,0 +1,6 @@
+  Minimal synthetic WordNet-format fixture for deterministic CI
+00001740 03 n 02 entity 0 existence 0 0 | something that exists
+00001930 03 n 01 physical_entity 0 1 @ 00001740 n 0000 | an entity with physical existence
+00002137 03 n 01 object 0 1 @ 00001930 n 0000 | a physical object
+00002345 03 n 01 artifact 0 1 @ 00002137 n 0000 | something constructed
+00002500 03 n 01 fiction 0 1 ! 00002345 n 0000 | imaginary thing
