@@ -151,7 +151,7 @@ private:
    const uint8_t order=static_cast<uint8_t>(key>>56);
    if(order>ORDER||count>VOCAB||count==0||total==0)
     throw std::runtime_error("invalid byte context record");
-   if(order<ORDER && ((key>>(8*order))&0x00ffffffffffffffull)!=0)
+   if(order<ORDER && ((key&0x00ffffffffffffffull)>>(8*order))!=0)
     throw std::runtime_error("noncanonical context key");
    Node node;node.total=total;
    uint64_t sum=0;
