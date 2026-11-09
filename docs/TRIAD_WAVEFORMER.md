@@ -30,7 +30,8 @@ weights occupy unused locations in existing head records:
 | 108 shared Q/K/V floats | heads 0..5,8..109 [105..108] | 432 | Skip 6 and 7, whose rule quaternions can use [96..111] |
 | 85 triad adapter floats | heads 2,5,8,..,254 [100..103] | 340 | No head 0 calibration collision |
 | Layout schema marker | head 0 byte 123 | 1 | Version D6 |
-| **Total additional learned storage** | within existing head records | **1793** | No root expansion |
+| Shared triad calibration | head 0 [109..111] | 3 | Q8.8 scale and D7 marker |
+| **Total additional learned storage** | within existing head records | **1796** | No root expansion |
 
 The Universe owns head bytes [8..11] (observation state), [16..19]
 (counter), and [20..23] (accepted trials). Those locations are **not** used
@@ -115,3 +116,20 @@ Corpora and implementation change over time. The numbers above come
 from a specific passing staged CI run **before** local QKV/adapter
 optimization was added. Do not mix them with later commits without
 recording the revision.
+
+## Development-only triad gating result
+
+The `calibrate DEV_TEXT` CLI now selects a shared output scale from
+`{0, .25, .5, .75, 1, 1.25, 1.5, 2}` **using development text only**.
+The exact zero setting is equivalent to the `no_triad` readout ablation;
+all 255 head states and 85 groups remain part of the same causal system.
+
+In the first passing prose-quality run with this calibration, development
+CE changed **2.67245402 → 2.60704915** and the chosen triad scale
+was **0**. The separate held-out sample changed from uncalibrated
+**2.72790273 → 2.65678703** nats/byte; next-byte accuracy after
+calibration was **26.08%**. Because the scale selected zero, this is
+**not** evidence of benefit from triad readout. Instead it demonstrates
+that the development gate prevented a known harmful feature from being
+forced into the final output distribution. This is the critical distinction
+between merely adding capacity and improving generalization.
