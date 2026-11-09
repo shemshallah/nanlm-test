@@ -119,10 +119,16 @@ int main(int argc,char** argv){
      if(!x)throw std::out_of_range("no active measurement at requested resolution/address");
      std::cout<<(tensor?"SENSOR_TENSOR":"SENSOR_VECTOR")
               <<" level="<<f[1]<<" id="<<int(x->id)<<" data=";
-     if(tensor)for(std::size_t i=0;i<9;++i){
-      if(i)std::cout<<",";std::cout<<x->tensor[i];
-     }else for(std::size_t i=0;i<3;++i){
-      if(i)std::cout<<",";std::cout<<x->vector[i];
+     if(tensor){
+      for(std::size_t i=0;i<9;++i){
+       if(i)std::cout<<",";
+       std::cout<<x->tensor[i];
+      }
+     }else{
+      for(std::size_t i=0;i<3;++i){
+       if(i)std::cout<<",";
+       std::cout<<x->vector[i];
+      }
      }
      std::cout<<"\n";
     }else if(f[0]=="TIMELINE"){
