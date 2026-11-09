@@ -1,0 +1,46 @@
+name: Temporal C256 Tensor Sensor (isolated HW4 frame experiment)
+on:
+  push:
+    branches: [experiment/math-sensor-temporal-c256-20261109]
+  pull_request:
+    paths:
+      - 'tools/temporal_c256_sensor.py'
+      - 'tests/test_temporal_c256_sensor.py'
+      - '.github/workflows/temporal-c256-sensor.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check isolated sensor and NANNET frame codec
+        run: python -m unittest discover -s tests -p 'test_temporal_c256_sensor.py' -v
+      - name: Export tensor ONLY from an explicitly synthetic HW4-route fixture
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, tempfile, pathlib, sys
+          sys.path.insert(0, 'tests')
+          sys.path.insert(0, 'tools')
+          from test_temporal_c256_sensor import document
+          from temporal_c256_sensor import run
+          from argparse import Namespace
+          from pathlib import Path
+          with tempfile.TemporaryDirectory() as tmp:
+              feed = Path(tmp)/"synthetic-nannet-drain.json"
+              feed.write_text(json.dumps(document([1740,1930,2137,2345,2500]*8)))
+              result = run(Namespace(nannet_json=str(feed),
+                 nannet_url=None, root=str(Path(tmp)/"blank_8mb_root"),
+                 tensor="artifacts/synthetic_hw4_temporal_c256.ntc256"))
+              print("SYNTHETIC_NOT_LIVE_HW4", json.dumps(result, sort_keys=True))
+          PY
+      - name: Upload tensor values, not source data or blank universe
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-hw4-temporal-c256-tensor
+          path: artifacts/*.ntc256
+          if-no-files-found: error
