@@ -40,6 +40,26 @@ int main(){
           "numeric hot-triad tensor lost");
   require(packet.hot_field_support>0&&packet.hot_field_refute>0,
           "numeric hotspot field lost signed evidence");
+  double vector_norm=0,head_tensor_norm=0,triad_vector_norm=0;
+  for(std::size_t i=0;i<255;++i){
+   for(std::size_t k=0;k<3;++k){
+    vector_norm+=std::abs(packet.head_vectors[i][k]);
+    require(std::abs(packet.head_vectors[i][k]-sensor_float_packet(m.head_vector(std::uint8_t(i))[k]))<1e-5f,
+            "head vector readout differs from sensor");
+   }
+   for(float t:packet.head_tensors[i])head_tensor_norm+=std::abs(t);
+  }
+  for(const auto& v:packet.triad_vectors)for(float x:v)triad_vector_norm+=std::abs(x);
+  require(vector_norm>0&&head_tensor_norm>0&&triad_vector_norm>0,
+          "numeric-only packet omitted vector or 255-point tensor levels");
+  for(std::size_t k=0;k<3;++k){
+   require(std::abs(packet.global_vector[k]-sensor_float_packet(m.global().vector[k]))<1e-5f,
+           "global vector not mapped to bootstrap packet");
+   require(std::abs(packet.hot_field_vector[k]-sensor_float_packet(m.hot_field().vector[k]))<1e-5f,
+           "hot field vector not mapped to bootstrap packet");
+   require(std::abs(packet.hot_triads[0].vector[k]-sensor_float_packet(hot.vector[k]))<1e-5f,
+           "hot trihead signed vector omitted");
+  }
   require(packet.hot_count==m.hot_field().active,
           "numeric hotspot count does not match sensor");
   bool missing=false;
