@@ -28,6 +28,20 @@ int main(){
   for(auto x:packet.global_tensor)global_mass+=std::abs(x);
   require(head_mass>0&&triad_mass>0&&global_mass>0,"numeric multiresolution signal missing");
   require(packet.global_support>0&&packet.global_refute>0,"numeric polarities were collapsed");
+  require(packet.hot_count>0&&packet.hot_count<=SensorMemory::HOT_MAX,
+          "numeric packet missing dynamic hot-triad resolution");
+  require(packet.hot_link_count==packet.hot_count*(packet.hot_count-1)/2,
+          "hot-triad numeric link projection incomplete");
+  const auto hot=m.hot_triad(0);
+  require(packet.hot_triads[0].group==hot.group&&
+          packet.hot_triads[0].heads==hot.heads,
+          "numeric hot-triad mapping lost parent head identities");
+  require(std::abs(packet.hot_triads[0].tensor[0]-hot.tensor[0])<1e-5,
+          "numeric hot-triad tensor lost");
+  require(packet.hot_field_support>0&&packet.hot_field_refute>0,
+          "numeric hotspot field lost signed evidence");
+  require(packet.hot_count==m.hot_field().active,
+          "numeric hotspot count does not match sensor");
   bool missing=false;
   try{(void)bootstrap.decode(0xDEADBEEF);}catch(const std::runtime_error&){missing=true;}
   require(missing,"unknown symbol invented a text label");

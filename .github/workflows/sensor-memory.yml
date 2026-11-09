@@ -1,4 +1,4 @@
-name: Experimental three-resolution sensor memory
+name: Experimental four-resolution sensor memory
 on:
   push:
     branches: ['experiment/math-sensor-*']
@@ -38,6 +38,9 @@ jobs:
             grep -q 'QUERY state=3 inferred=1' resident.log
             grep -q 'QUERY state=3 inferred=1' resumed.log
             "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_packet.cpp -o test_sensor_packet
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_hot_triads.cpp -o test_sensor_hot_triads
+            ./test_sensor_hot_triads | tee hot-triads.log
+            grep -q 'PASS: dynamic 255/85/hot/global triad map' hot-triads.log
             ./test_sensor_packet | tee packet-test.log
             grep -q 'PASS: plaintext-free numeric 255/85/1 proof packet' packet-test.log
 
@@ -56,3 +59,4 @@ jobs:
             resident.log
             resumed.log
             packet-test.log
+            hot-triads.log

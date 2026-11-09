@@ -1,6 +1,6 @@
 #pragma once
 // Experimental sensor-derived memory: 255 addressable head branches,
-// 85 triadic aggregators, one global field, source-aware typed hyperedges.
+// 85 triadic aggregators, dynamic hot-triad overlay, one global field, source-aware typed hyperedges.
 // Lexical hashes route information, but DO NOT constitute learned semantics.
 #include "nanlm/math_sensor_primitives.hpp"
 #include <algorithm>
@@ -64,6 +64,26 @@ struct FeatureLeaf {
 struct TriadAggregate {
  std::array<double,9> tensor{};
  double support=0,refute=0,activation=0,curvature=0;
+ std::set<std::string> sources;
+};
+// Derived salience mapping. A hot triad is NOT a new head or a separate model.
+struct HotTriad {
+ std::uint8_t group=255;
+ std::array<std::uint8_t,3> heads{};
+ std::array<double,9> tensor{};
+ double score=0,activation=0,previous_activation=0;
+ double support=0,refute=0,curvature=0;
+ std::size_t source_count=0;
+};
+struct HotTriadLink {
+ std::uint8_t a=255,b=255; // original triad IDs, not ephemeral slot numbers
+ double tensor_cosine=0,phase_lock=0;
+ std::size_t shared_sources=0;
+};
+struct HotFieldAggregate {
+ std::array<double,9> tensor{};
+ double support=0,refute=0,activation=0;
+ std::size_t active=0,links=0;
 };
 struct GlobalAggregate {
  std::array<double,9> tensor{};
@@ -81,13 +101,21 @@ struct ReasoningResult {
 
 class SensorMemory {
 public:
- static constexpr std::size_t HEAD_COUNT=255,TRIAD_COUNT=85;
+ static constexpr std::size_t HEAD_COUNT=255,TRIAD_COUNT=85,HOT_MAX=12;
+ static constexpr std::size_t HOT_LINK_MAX=HOT_MAX*(HOT_MAX-1)/2;
  using Branch=std::map<StatementKey,FeatureLeaf>;
  using CurvatureSampler=std::function<double(std::uint8_t,std::uint8_t,std::uint8_t)>;
 private:
  std::array<Branch,HEAD_COUNT> head_branches_{};
  std::array<TriadAggregate,TRIAD_COUNT> triads_{};
  std::array<double,HEAD_COUNT> head_state_{};
+ std::array<double,TRIAD_COUNT> previous_triad_activity_{};
+ std::array<HotTriad,HOT_MAX> hot_{};
+ std::array<std::int8_t,TRIAD_COUNT> hot_slots_{};
+ std::vector<HotTriadLink> hot_links_{};
+ HotFieldAggregate hot_field_{};
+ std::size_t hot_count_=0,hot_budget_=HOT_MAX;
+ double hot_cutoff_=0.01;
  GlobalAggregate global_{};
  TriadMap map_=default_map();
  std::array<std::uint8_t,HEAD_COUNT> reverse_group_{};
@@ -138,7 +166,89 @@ private:
   const double depth=1.-double(distance(claim,basis(0x200000000000ULL+head)))/256.;
   return {cs*v-sn*depth,sn*v+cs*depth,depth};
  }
+ void recalc_hotspots() {
+  hot_.fill(HotTriad{});
+  hot_slots_.fill(-1);
+  hot_links_.clear();
+  hot_field_=HotFieldAggregate{};
+  hot_count_=0;
+  std::vector<std::pair<double,std::size_t>> ranked;
+  ranked.reserve(TRIAD_COUNT);
+  for(std::size_t g=0;g<TRIAD_COUNT;++g) {
+   const auto& t=triads_[g];
+   if(!(t.activation>hot_cutoff_))continue;
+   double tensor_norm2=0;
+   for(const auto x:t.tensor)tensor_norm2+=x*x;
+   // Pure sensor salience: activation, signed charge coexistence, tensor energy.
+   // Curvature is available as a feature, not a perpetual source of activity.
+   const double score=t.activation+0.25*std::min(t.support,t.refute)+
+                      0.05*std::sqrt(tensor_norm2);
+   if(std::isfinite(score))ranked.emplace_back(score,g);
+  }
+  std::sort(ranked.begin(),ranked.end(),[](const auto& a,const auto& b) {
+   if(a.first!=b.first)return a.first>b.first;
+   return a.second<b.second;
+  });
+  hot_count_=std::min(hot_budget_,ranked.size());
+  double weight_sum=0;
+  for(std::size_t slot=0;slot<hot_count_;++slot) {
+   const auto [score,g]=ranked[slot];
+   const auto& triad=triads_[g];
+   auto& out=hot_[slot];
+   out.group=static_cast<std::uint8_t>(g);
+   out.heads=map_[g];
+   out.tensor=triad.tensor;
+   out.score=score;
+   out.activation=triad.activation;
+   out.previous_activation=previous_triad_activity_[g];
+   out.support=triad.support;out.refute=triad.refute;
+   out.curvature=triad.curvature;
+   out.source_count=triad.sources.size();
+   hot_slots_[g]=static_cast<std::int8_t>(slot);
+   weight_sum+=score;
+   hot_field_.support+=score*triad.support;
+   hot_field_.refute+=score*triad.refute;
+   hot_field_.activation+=score*triad.activation;
+   for(std::size_t k=0;k<9;++k)
+    hot_field_.tensor[k]+=score*triad.tensor[k];
+  }
+  if(weight_sum>0) {
+   hot_field_.support/=weight_sum;
+   hot_field_.refute/=weight_sum;
+   hot_field_.activation/=weight_sum;
+   for(auto& x:hot_field_.tensor)x/=weight_sum;
+  }
+  // Pairwise overlays carry distinct tensor alignment, U(1)-phase alignment
+  // and shared-source count, rather than crushing them into one edge number.
+  for(std::size_t i=0;i<hot_count_;++i)
+   for(std::size_t j=i+1;j<hot_count_;++j) {
+    const auto& a=hot_[i],&b=hot_[j];
+    double dot=0,na=0,nb=0;
+    for(std::size_t k=0;k<9;++k) {
+     dot+=a.tensor[k]*b.tensor[k];
+     na+=a.tensor[k]*a.tensor[k];
+     nb+=b.tensor[k]*b.tensor[k];
+    }
+    double cosine=na>0&&nb>0?dot/std::sqrt(na*nb):0;
+    cosine=std::clamp(cosine,-1.,1.);
+    const auto& left=triads_[a.group].sources;
+    const auto& right=triads_[b.group].sources;
+    auto x=left.begin(),y=right.begin();
+    std::size_t shared=0;
+    while(x!=left.end()&&y!=right.end()) {
+     if(*x<*y)++x;
+     else if(*y<*x)++y;
+     else {++shared;++x;++y;}
+    }
+    hot_links_.push_back({a.group,b.group,cosine,
+                          std::cos(wrap(a.curvature-b.curvature)),shared});
+   }
+  hot_field_.active=hot_count_;
+  hot_field_.links=hot_links_.size();
+ }
+
  void recalc_global() {
+  recalc_hotspots();
   global_.tensor.fill(0);
   global_.support=global_.refute=global_.activation=0;
   for(const auto& t:triads_) {
@@ -191,6 +301,10 @@ public:
   };
  }
  void tick() {
+  if(clock_==std::numeric_limits<std::uint64_t>::max())
+   throw std::overflow_error("sensor nanclock overflow");
+  for(std::size_t g=0;g<TRIAD_COUNT;++g)
+   previous_triad_activity_[g]=triads_[g].activation;
   ++clock_;
   for(auto& x:head_state_)x*=leak_;
   for(auto& t:triads_){
@@ -231,6 +345,7 @@ public:
      leaf.tensor[3*i+j]+=a.confidence*xyz[i]*xyz[j];
    const auto g=reverse_group_[h];
    auto& t=triads_[g];touched[g]=true;
+   t.sources.insert(a.source);
    t.activation+=strength*a.confidence;
    if(a.refutes)t.refute+=a.confidence;
    else t.support+=a.confidence;
@@ -325,6 +440,23 @@ public:
   }
   return accepted;
  }
+ void set_hot_budget(std::size_t budget) {
+  if(budget==0||budget>HOT_MAX)throw std::invalid_argument("hot triad budget out of range");
+  hot_budget_=budget;recalc_global();
+ }
+ void set_hot_cutoff(double cutoff) {
+  if(!std::isfinite(cutoff)||cutoff<0)throw std::invalid_argument("invalid hot triad threshold");
+  hot_cutoff_=cutoff;recalc_global();
+ }
+ std::size_t hot_count()const{return hot_count_;}
+ std::size_t hot_budget()const{return hot_budget_;}
+ const HotTriad& hot_triad(std::size_t slot)const {
+  if(slot>=hot_count_)throw std::out_of_range("inactive hot triad slot");
+  return hot_[slot];
+ }
+ int hot_slot(std::uint8_t triad_id)const{return hot_slots_.at(triad_id);}
+ const std::vector<HotTriadLink>& hot_links()const{return hot_links_;}
+ const HotFieldAggregate& hot_field()const{return hot_field_;}
  double head_activity(std::uint8_t h)const{return head_state_.at(h);}
  const Branch& branch(std::uint8_t h)const {return head_branches_.at(h);}
  const TriadAggregate& triad(std::size_t g)const {return triads_.at(g);}

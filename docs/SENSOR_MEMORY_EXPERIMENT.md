@@ -102,3 +102,38 @@ still require a learned conditioned decoder and proper held-out evaluation.
 
 tests/test_sensor_packet.cpp validates the end-to-end numeric proof packet
 and source catalog under both GCC and Clang in the GitHub workflow.
+
+
+## Fourth resolution: hot triheads (derived, sparse and reversible)
+
+Hot triheads are **a dynamic salience-selected subset of the same 85
+triheads**, not a new 12-head model. The detector builds the complete
+255-point -> 85-triad -> top-K hot-triad -> global-field hierarchy on each
+ingest and NaNclock tick. All 85 trihead tensors remain independently
+accessible even when cold. Exact graph facts and source provenance are
+never removed by hotspot eviction or idle-time decay.
+
+A configurable top-K budget (default 12) selects triads above a positive
+activation cutoff. Rank uses activity, simultaneous positive+negative
+charge, and tensor energy; ties resolve by original trihead ID. These are
+deterministic exploration heuristics, not learned scores. Curvature and
+previous-activation temporal slices are reported separately and do not
+generate artificial permanent hotness. Each hot slot maps back to its
+canonical trihead ID and three original point/head IDs.
+
+The hot-triad overlay constructs bounded pairwise links among selected
+triads, measuring tensor cosine alignment, curvature phase-locking and
+shared provenance-source counts separately (rather than conflating them).
+An independent hot-field tensor is salience-weighted across selected
+triads. The global field continues to integrate all 85 triads, not
+just the hot ones. On idle ticks, hot entries naturally cool and fall
+out of the dynamic selection; later evidence can reactivate them.
+
+NumericProofPacket includes hot-triad IDs, underlying heads, tensors,
+curvature, separate support/refutation, prior activation, hotspot-to-
+hotspot links and hot-field tensor, in addition to the original 255
+head, 85 triad, and global outputs. Packet values are numerical and
+retain a synchronized bootstrap lexicon for human-language labels.
+These are read-only derived views, not yet a physical mirror-register
+temporal journal. A future NaN16-native clock-backed slice layer should
+persist deltas with provenance and an atomic replay protocol.
