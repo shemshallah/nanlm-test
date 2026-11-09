@@ -57,7 +57,9 @@ int main(int argc,char** argv){
             <<" online_ce="<<last.ce()<<" online_accuracy="<<last.accuracy()
             <<" eigenvalue="<<mind.spectral().eigenvalue
             <<" eigen_residual="<<mind.spectral().residual
-            <<" mirror_mass="<<mind.spectral().edge_mass<<"\n";
+            <<" mirror_mass="<<mind.spectral().edge_mass
+            <<" bptt_attempted="<<mind.bptt_attempted()
+            <<" bptt_accepted="<<mind.bptt_accepted()<<"\n";
   }else if(operation=="eval"){
    if(argc<4)throw std::invalid_argument("evaluation file required");
    std::ifstream file(argv[3],std::ios::binary);
@@ -80,6 +82,7 @@ int main(int argc,char** argv){
     {"no_inverse_evidence",UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE},
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
     {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
+    {"no_tbptt_readout",UnifiedWaveLanguage::ABLATE_BPTT_READOUT},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
    };
    for(const auto& run:runs){
