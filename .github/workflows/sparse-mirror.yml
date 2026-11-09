@@ -20,4 +20,4 @@ jobs:
         run: |
           ${{ matrix.compiler }} -Iinclude -O3 -std=c++20 -Wall -Wextra -Wpedantic -Werror tests/test_sparse_wave.cpp -o /tmp/test_sparse_wave
           /tmp/test_sparse_wave | tee mirror-parity.log
-          grep 'PASS: cached sparse T and T* equal dense' mirror-parity.log
+          grep -F 'PASS: cached sparse T and T* equal dense' mirror-parity.log
