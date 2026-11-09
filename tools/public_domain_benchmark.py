@@ -17,12 +17,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parents[1]
 EXE = HERE / "nanlm"
 SOURCES = {
-    "alice": ("https://www.gutenberg.org/cache/epub/11/pg11.txt", 11),
-    "carol": ("https://www.gutenberg.org/cache/epub/46/pg46.txt", 46),
+    "alice": ("https://www.gutenberg.org/cache/epub/11/pg11.txt", 11,
+              "01b38ea4c710a84bc18d0bd41271a5a1a92b94e97b2812f4dece97d4a694725e"),
+    "carol": ("https://www.gutenberg.org/cache/epub/46/pg46.txt", 46,
+              "8c36b93723d454982df045ec0efdf2664e5a48e6b5e2f670e883575f75ad0cc8"),
 }
 
 def book(name: str) -> tuple[str, dict]:
-    url, number = SOURCES[name]
+    url, number, expected_sha256 = SOURCES[name]
     request = urllib.request.Request(url, headers={
         "User-Agent": "NaNLM-public-domain-research/1.0 (noncommercial evaluation)",
         "Accept": "text/plain",
@@ -30,6 +32,11 @@ def book(name: str) -> tuple[str, dict]:
     with urllib.request.urlopen(request, timeout=60) as response:
         raw = response.read(3_000_000)
     assert 30_000 < len(raw) < 3_000_000, (name, len(raw))
+    digest = hashlib.sha256(raw).hexdigest()
+    assert digest == expected_sha256, (
+        f"Project Gutenberg text for {name} changed: expected {expected_sha256}, "
+        f"received {digest}; review and deliberately repin the source"
+    )
     text = raw.decode("utf-8-sig")
     assert f"eBook #{number}" in text or f"EBook #{number}" in text or (
         f"ebooks/{number}" in text), "unexpected Gutenberg source"
