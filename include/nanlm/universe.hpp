@@ -134,7 +134,7 @@ class Universe {
   }
  }
  void rebuild_cache() {
-  std::memset(root_->p,0,sizeof(root_->p));
+  for(auto& cell:root_->p)cell=Pair{};
   for(const auto& e:events_)project(e);
  }
  void build_leaves() {
@@ -161,7 +161,8 @@ class Universe {
   if(p==MAP_FAILED)throw std::runtime_error("mmap failed");
   root_=static_cast<Root*>(p);
   if(fresh){
-   std::memset(root_,0,ROOT_BYTES);
+   for(auto& head:root_->h)head=Head{};
+   for(auto& cell:root_->p)cell=Pair{};
    for(unsigned i=0;i<HEADS;++i){root_->h[i].data[0]=i>>6;root_->h[i].data[1]=(i>>4)&3;root_->h[i].data[2]=i&15;}
    std::memcpy(root_->h[255].data+120,identity_,8);
   }else if(std::memcmp(root_->h[255].data+120,identity_,8)!=0)
