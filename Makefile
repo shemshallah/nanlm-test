@@ -132,3 +132,11 @@ test_contextual_senses: tests/test_contextual_senses.cpp $(wildcard include/nanl
 .PHONY: test-contextual-senses
 test-contextual-senses: test_contextual_senses
 	./test_contextual_senses
+
+# Opt-in joint semantic->byte readout and guarded recurrent gradient test.
+test_joint_wave_semantics: tests/test_joint_wave_semantics.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+.PHONY: test-joint-wave-semantics
+test-joint-wave-semantics: test_joint_wave_semantics
+	./test_joint_wave_semantics
