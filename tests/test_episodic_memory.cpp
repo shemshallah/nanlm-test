@@ -278,6 +278,10 @@ int main(){
    mind.set_wave_memory_scale(0.);
    require(mind.generate(long_gap+cue,value.size(),19)==value,
            "wave readout cannot be disabled during memory recall");
+   // This explicitly tests reversible LEGACY control state, not the
+   // production default, which has BPTT disabled.
+   require(!mind.bptt_enabled(),"default unexpectedly enables BPTT");
+   mind.set_bptt_enabled(true);
    mind.set_wave_execution_enabled(false);
    require(!mind.wave_execution_enabled()&&!mind.bptt_enabled(),
            "wave compute-off mode still runs wave gradients");
