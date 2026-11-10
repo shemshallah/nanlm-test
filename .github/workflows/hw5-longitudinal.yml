@@ -1,0 +1,63 @@
+name: HW5 Gutenberg 20-to-200 native learning and dev-selected heldout audit
+on:
+  push:
+    branches: ['experiment/hw5-longitudinal-200-20261109']
+    paths:
+      - 'tools/hw5_longitudinal.py'
+      - 'tests/test_hw5_longitudinal.py'
+      - '.github/workflows/hw5-longitudinal.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hw5-longitudinal-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  long-form-transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Python audit guardrails and build native geometric learner
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_hw5_longitudinal.py -v
+          make hw5-onepass CXX=clang++
+      - name: Restore exact successful HW5 epoch-20 model and receipt
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-gutenberg-transfer-from-wordnet103
+          run-id: 42744089393
+          github-token: ${{ github.token }}
+          repository: shemshallah/nanlm-test
+          path: hw5-prior
+      - name: Download and verify pinned immutable Gutenberg book splits
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-reference.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-reference.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/hw5-reference.tar.gz" -C "$RUNNER_TEMP"
+      - name: Continue exact epoch-20 student, select by dev, test only after selection
+        run: |
+          set -euo pipefail
+          python3 tools/hw5_longitudinal.py \
+            --store "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --prior-root hw5-prior/hw5-transfer-state/learner-root \
+            --prior-report hw5-prior/hw5-transfer-state/report.json \
+            --output hw5-longitudinal-state \
+            --additional-epochs 180 --eval-every 5 --patience-checks 12 \
+            | tee hw5-longitudinal.log
+          grep '^HW5_LONGITUDINAL_FINAL ' hw5-longitudinal.log
+      - name: Archive best-dev student and final student, metrics and complete audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-longitudinal-from20-${{ github.run_id }}
+          path: |
+            hw5-longitudinal-state/
+            hw5-longitudinal.log
+          retention-days: 30
+          if-no-files-found: warn
