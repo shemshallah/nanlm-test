@@ -42,8 +42,8 @@ class MirrorContextTests(unittest.TestCase):
             self.assertGreater(scalar(data,xy),0)
             self.assertEqual(scalar(data,xy+16),scalar(data,xy))
             self.assertEqual(scalar(data,xy+4),0)
-            ab=offset(ord("a"),ord("b"))
-            self.assertGreater(scalar(data,ab+16+4),0) # skip-one a->b somewhere
+            ac=offset(ord("a"),ord("c"))
+            self.assertGreater(scalar(data,ac+16+4),0) # skip-one a->c
             # 'c' is final content in first book and 'd' first in second:
             # only an accidental concatenation would create a c->d edge.
             cd=offset(ord("c"),ord("d"))
