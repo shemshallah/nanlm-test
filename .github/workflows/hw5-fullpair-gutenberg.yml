@@ -1,0 +1,68 @@
+name: HW5 full C256 mirror-pair native Gutenberg learning
+on:
+  push:
+    branches: ['experiment/hw5-fullpair-gutenberg-20261109']
+    paths:
+      - 'include/nanlm/universe.hpp'
+      - 'tools/hw5_fullpair_native.cpp'
+      - 'tools/hw5_fullpair_experiment.py'
+      - 'tests/test_hw5_fullpair.py'
+      - 'Makefile'
+      - '.github/workflows/hw5-fullpair-gutenberg.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hw5-fullpair-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  all-pairs-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual C++ NaNLM and run pair-plane persistence tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          make hw5-fullpair CXX=clang++
+          python3 -m unittest discover -s tests -p test_hw5_fullpair.py -v
+      - name: Restore verified HW5 20-epoch persistent 8 MiB student
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-gutenberg-transfer-from-wordnet103
+          run-id: 42744089393
+          github-token: ${{ github.token }}
+          repository: shemshallah/nanlm-test
+          path: hw5-prior
+      - name: Fetch SHA-pinned immutable complete Gutenberg HW5:0 reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-reference.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-reference.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/hw5-reference.tar.gz" -C "$RUNNER_TEMP"
+      - name: Fit all 32640 native mirror pairs, benchmark, refit all books
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/hw5_fullpair_experiment.py \
+            --store "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --prior-root hw5-prior/hw5-transfer-state/learner-root \
+            --prior-report hw5-prior/hw5-transfer-state/report.json \
+            --output hw5-fullpair-state \
+            | tee hw5-fullpair.log
+          grep '^HW5_FULLPAIR_FINAL ' hw5-fullpair.log
+      - name: Preserve only final all-book 8MiB student and auditable scores
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-fullpair-gutenberg-${{ github.run_id }}
+          path: |
+            hw5-fullpair-state/
+            hw5-fullpair.log
+          retention-days: 30
+          if-no-files-found: warn
