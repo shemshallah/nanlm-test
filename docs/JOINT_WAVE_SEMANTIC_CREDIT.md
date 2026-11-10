@@ -408,3 +408,52 @@ matched shuffled labels on separately selected model initializations and
 corpus/test splits*. Keep PR #53 experimental and draft. Do not replace a
 negative attribution result with a generic "joint semantics improved language"
 claim.
+
+
+## Independent V2 readout initialization: negative attribution replication
+
+Native regression [#42855669538](https://github.com/shemshallah/nanlm-test/actions/runs/42855669538)
+passes GCC and Clang with a new independently seeded 24D projection, orientation
+and semantic-head initializer. The checksum-protected sidecar records the seed
+under the V2 marker; default-seed V1 persistence remains compatible. An
+incorrect seed is rejected on reload. Each benchmark seed initializes all
+matched readout arms identically while preserving the **same physical root**
+and its existing Alice-trained recurrent wave. Thus the experimental variation
+is in readout initialization, **not** three independently trained whole models.
+
+[Three-seed pinned audit #42855592846](https://github.com/shemshallah/nanlm-test/actions/runs/42855592846)
+passed source hashing, both native compiler builds, strict Alice DEV gates,
+heldout evaluation, all sample-count assertions, 8 MiB root and unchanged
+symbolic journal.
+
+| Training-order seed | Readout seed | True-label shared batches accepted | Shuffled shared batches accepted | True-label Dickens CE delta | Shuffled Dickens CE delta |
+|---|---:|---:|---:|---:|---:|
+| 20261109 | 271828 | 6/6 | 6/6 | -0.000003973 | -0.000054249 |
+| 20261212 | 376557 | 0/6 | 5/6 | +0.000000000 | +0.000086613 |
+| 20261315 | 481286 | 0/6 | 6/6 | +0.000000000 | -0.000162943 |
+| **Mean** | — | **2/6** | **5.67/6** | **-0.000001324** | **-0.000043526** |
+
+The shuffled-label model again outperformed the correct-label model on
+**mean** cross-author byte CE. The six-of-six true-label acceptance observed
+under the original unseeded initializer is **not robust** to new readout
+initializations. With these small fixed corpora we cannot attribute language
+transfer to meaningful semantic labels or claim generality. The naive
+unconstrained joint model also retained a **+0.014481449 nats/byte** mean
+Dickens CE penalty in the reseeded audit.
+
+The previously failing 48-step root-reload test was independently diagnosed:
+the original probe had been advanced before the graph was mutated and its
+spectral/scattering operator refreshed; post-restart replay used the **new**
+graph. Correct causal replay produces exactly equal forward/inverse wave,
+triad routing and byte prediction on GCC/Clang. That isolated test fix was
+merged as [PR #54](https://github.com/shemshallah/nanlm-test/pull/54)
+into the parent experimental development branch, without merging semantic
+learning into production.
+
+**Next experiment:** [draft PR #55](https://github.com/shemshallah/nanlm-test/pull/55)
+derives contextual word-order positive and corrupted examples from actual
+pinned Gutenberg training text and matches them against shuffled labels.
+This does not equate textual order discrimination with WordNet sense
+understanding, but directly tests whether an independently sourced,
+language-aligned auxiliary signal is better than arbitrary projected-gradient
+regularization.
