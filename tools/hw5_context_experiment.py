@@ -59,7 +59,7 @@ def parse(text:str):
     rows=[]
     for line in text.splitlines():
         if not line.startswith("HW5_CONTEXT_SCORE "):continue
-        values=dict(re.findall(r"([a-z_]+)=([^\\s]+)",line))
+        values=dict(re.findall(r"([a-z_]+)=([^\s]+)",line))
         for name in ("ce_nats","accuracy","beta","lambda","delta","kappa"):
             values[name]=float(values[name])
         values["transitions"]=int(values["transitions"])
@@ -93,14 +93,14 @@ def experiment(store:Path,student:Path,output:Path):
         raise ValueError("wrong geometric student checkpoint")
     source_root_sha=sha(gen/"gutenberg-c256.root")
     for split in splits:
-        (output/(split+".lengths")).write_text("".join(f"{d['bytes']}\\n" for d in splits[split]))
+        (output/(split+".lengths")).write_text("".join(f"{d['bytes']}\n" for d in splits[split]))
     trained_root=output/"train-only-c256.root"
     trained_triples=output/"train-only-triples.bin"
     built=command(["./hw5-context","build",str(gen/"train.txt"),
                     str(output/"train.lengths"),str(trained_root),str(trained_triples)],
                     output/"build.log")
     assert trained_root.stat().st_size==8388608
-    bank=dict(re.findall(r"([a-z_]+)=([^\\s]+)",next(line for line in built.splitlines()
+    bank=dict(re.findall(r"([a-z_]+)=([^\s]+)",next(line for line in built.splitlines()
                          if line.startswith("HW5_CONTEXT_BANK_BUILT "))))
     assert int(bank["books"])==len(splits["train"])
     assert int(bank["bytes"])==sum(d["bytes"] for d in splits["train"])
@@ -127,7 +127,7 @@ def experiment(store:Path,student:Path,output:Path):
     # BEFORE any test evaluations; source filenames and digests are logged.
     frozen={name:{k:r[k] for k in ("beta","lambda","delta","kappa")}
             for name,r in selected.items() if name not in ("pure_teacher","bigram_add05")}
-    (output/"frozen-dev-choices.json").write_text(json.dumps(frozen,indent=2,sort_keys=True)+"\\n")
+    (output/"frozen-dev-choices.json").write_text(json.dumps(frozen,indent=2,sort_keys=True)+"\n")
     test_base=score("test","fixed","test-primary",frozen["best_any"])
     final={"best_any":test_base[-1],"pure_teacher":test_base[0],"bigram_add05":test_base[1]}
     for name,cfg in frozen.items():
@@ -163,7 +163,7 @@ def experiment(store:Path,student:Path,output:Path):
             final["best_memory_only"]["ce_nats"]-final["best_geometry_positive"]["ce_nats"],
        "elapsed_seconds":time.perf_counter()-begin,
     }
-    (output/"report.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\\n")
+    (output/"report.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
     compact={k:{"ce_nats":v["ce_nats"],"accuracy":v["accuracy"],"beta":v["beta"],
                  "lambda":v["lambda"],"delta":v["delta"],"kappa":v["kappa"]}
              for k,v in final.items()}
