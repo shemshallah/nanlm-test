@@ -77,6 +77,9 @@ int main(){
    u.write('A','Y',PRECEDES,true,4.f,3);
    set_gain(u,'W',0.75f);
    set_gain(u,'Y',0.75f);
+   // The new support/refutation records change the spectral operator.
+   // Refresh the in-memory cache before comparing it with a reloaded root.
+   m.refresh_spectrum();
    const auto signed_full=m.predict(probe);
    const auto signed_off=m.predict(
       probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
