@@ -231,6 +231,25 @@ class JointWaveSemanticLearner {
   orientation_=init("orientation",0.07);
   load();
  }
+ // Copying a learner retains its existing Universe reference. Commit a
+ // candidate's complete trainable readout only after a heldout DEV gate;
+ // no NaN16 root or exact symbolic claim is changed by this operation.
+ void adopt_readout_from(JointWaveSemanticLearner& candidate){
+  if(&wave_!=&candidate.wave_||filename_!=candidate.filename_)
+   throw std::invalid_argument("cannot adopt parameters from unrelated root");
+  using std::swap;
+  swap(projection_,candidate.projection_);
+  swap(byte_heads_,candidate.byte_heads_);
+  swap(bias_,candidate.bias_);
+  swap(orientation_,candidate.orientation_);
+  swap(role_heads_,candidate.role_heads_);
+  swap(role_bias_,candidate.role_bias_);
+  swap(sense_heads_,candidate.sense_heads_);
+  swap(sense_bias_,candidate.sense_bias_);
+  swap(byte_updates_,candidate.byte_updates_);
+  swap(role_updates_,candidate.role_updates_);
+  swap(sense_updates_,candidate.sense_updates_);
+ }
  uint64_t byte_updates()const{return byte_updates_;}
  uint64_t role_updates()const{return role_updates_;}
  uint64_t sense_updates()const{return sense_updates_;}
