@@ -13,6 +13,7 @@ FIELDS = (
     "carol_late_byte_ce", "carol_late_joint_ce",
     "carol_early_pareto_ce", "carol_late_pareto_ce",
     "carol_early_frozen_ce", "carol_late_frozen_ce",
+    "carol_early_surgery_ce", "carol_late_surgery_ce",
     "carol_late_shuffled_ce", "carol_late_post_recurrence_ce",
     "pareto_batches_accepted", "pareto_batches_rejected",
     "pareto_head_only_batches", "pareto_shared_alpha_sum",
@@ -20,6 +21,11 @@ FIELDS = (
     "pareto_role_test_accuracy", "pareto_sense_test_accuracy",
     "frozen_role_test_ce", "frozen_sense_test_ce",
     "frozen_role_test_accuracy", "frozen_sense_test_accuracy",
+    "dev_surgery_ce", "surgery_batches_accepted",
+    "surgery_batches_rejected", "surgery_head_only_batches",
+    "surgery_conflicting_batches", "surgery_shared_alpha_sum",
+    "surgery_role_test_ce", "surgery_sense_test_ce",
+    "surgery_role_test_accuracy", "surgery_sense_test_accuracy",
 )
 def parse(text: str) -> list[dict]:
     parsed = []
@@ -63,6 +69,20 @@ def main():
             raise ValueError("frozen semantic head moved the shared byte readout")
         if row["frozen_role_updates"] <= 0 or row["frozen_sense_updates"] <= 0:
             raise ValueError("frozen semantic head failed to train")
+        if row["dev_surgery_ce"] > row["dev_byte_ce"] + 1e-9:
+            raise ValueError("projected-gradient arm worsened Alice DEV byte CE")
+        na = row["surgery_batches_accepted"]
+        nr = row["surgery_batches_rejected"]
+        nh = row["surgery_head_only_batches"]
+        nc = row["surgery_conflicting_batches"]
+        if (any(v != int(v) for v in (na, nr, nh, nc))
+                or na + nr != 6 or nr != nh or not 0 <= nc <= 6):
+            raise ValueError("projected-gradient batch accounting invalid")
+        if not 0 <= row["surgery_shared_alpha_sum"] <= na:
+            raise ValueError("projected-gradient alpha accounting invalid")
+        if (na == 0 and (row["surgery_shared_alpha_sum"] != 0
+                        or abs(row["dev_surgery_ce"] - row["dev_byte_ce"]) > 1e-10)):
+            raise ValueError("projected-gradient head-only update changed byte CE")
         if row["dev_pareto_ce"] > row["dev_byte_ce"] + 1e-9:
             raise ValueError("Pareto arm worsened heldout development CE")
         if row["dev_post_recurrence_ce"] > row["dev_joint_ce"] + 1e-9:
@@ -80,7 +100,7 @@ def main():
             raise ValueError("invalid nonzero shared-gradient line-search")
         if n_shared == 0 and abs(row["dev_pareto_ce"]-row["dev_byte_ce"]) > 1e-10:
             raise ValueError("head-only specialization altered byte development CE")
-    variants = ("byte", "joint", "shuffled", "pareto", "frozen", "post_recurrence")
+    variants = ("byte", "joint", "shuffled", "pareto", "frozen", "surgery", "post_recurrence")
     results = []
     for row in rows:
         n1, n2 = row["early_tokens"], row["late_tokens"]
@@ -98,6 +118,7 @@ def main():
             "paired_delta_shuffled_minus_byte": values["shuffled"] - values["byte"],
             "paired_delta_pareto_minus_byte": values["pareto"] - values["byte"],
             "paired_delta_frozen_minus_byte": values["frozen"] - values["byte"],
+            "paired_delta_surgery_minus_byte": values["surgery"] - values["byte"],
             "paired_delta_post_recurrent_minus_byte": (
                 values["post_recurrence"] - values["byte"]
             ),
@@ -120,6 +141,7 @@ def main():
           f"joint_minus_byte_max_nats={max(deltas):+.9f} " +
           f"pareto_minus_byte_mean_nats={statistics.mean(pareto_deltas):+.9f} " +
           f"frozen_minus_byte_mean_nats={statistics.mean(r['paired_delta_frozen_minus_byte'] for r in results):+.9f} " +
+          f"surgery_minus_byte_mean_nats={statistics.mean(r['paired_delta_surgery_minus_byte'] for r in results):+.9f} " +
           "significant=unassessed", flush=True)
     for r in results:
         values = r["combined_ce"]
@@ -136,12 +158,22 @@ def main():
               f"frozen_role_accuracy={r['raw']['frozen_role_test_accuracy']:.6f} "
               f"frozen_sense_accuracy={r['raw']['frozen_sense_test_accuracy']:.6f}",
               flush=True)
+        print(f"JOINT_GUTENBERG_SURGERY seed={r['seed']} "
+              f"shared_batches={int(r['raw']['surgery_batches_accepted'])} "
+              f"rejected_batches={int(r['raw']['surgery_batches_rejected'])} "
+              f"conflicting_batches={int(r['raw']['surgery_conflicting_batches'])} "
+              f"alpha_sum={r['raw']['surgery_shared_alpha_sum']:.8f} "
+              f"role_ce={r['raw']['surgery_role_test_ce']:.8f} "
+              f"sense_ce={r['raw']['surgery_sense_test_ce']:.8f} "
+              f"heldout_byte_delta={r['paired_delta_surgery_minus_byte']:+.9f}",
+              flush=True)
         print(f"JOINT_GUTENBERG_PAIR seed={r['seed']} "
               f"byte_ce={values['byte']:.9f} "
               f"joint_ce={values['joint']:.9f} "
               f"shuffled_ce={values['shuffled']:.9f} "
               f"pareto_ce={values['pareto']:.9f} "
               f"frozen_ce={values['frozen']:.9f} "
+              f"surgery_ce={values['surgery']:.9f} "
               f"post_recurrence_ce={values['post_recurrence']:.9f} "
               f"joint_minus_byte={r['paired_delta_joint_minus_byte']:+.9f} "
               f"pareto_minus_byte={r['paired_delta_pareto_minus_byte']:+.9f} "
@@ -157,6 +189,9 @@ def main():
             "joint_minus_byte_max_nats": max(deltas),
             "pareto_minus_byte_mean_nats": statistics.mean(pareto_deltas),
             "frozen_minus_byte_mean_nats": statistics.mean(r["paired_delta_frozen_minus_byte"] for r in results),
+            "surgery_minus_byte_mean_nats": statistics.mean(r["paired_delta_surgery_minus_byte"] for r in results),
+            "surgery_shared_batches_by_seed": [int(r["raw"]["surgery_batches_accepted"]) for r in results],
+            "surgery_conflicting_batches_by_seed": [int(r["raw"]["surgery_conflicting_batches"]) for r in results],
             "shared_batches_by_seed": [
                 int(r["raw"]["pareto_batches_accepted"]) for r in results
             ],
@@ -174,7 +209,10 @@ def main():
             "Test text was not included in the optimizer gate. "
             "Seeds vary training order, not model initialization. "
             "A semantic-head-only fallback is not semantic-to-byte transfer; "
-            "only a positive line-search alpha counts as shared credit."
+            "only a positive line-search alpha counts as shared credit. "
+            "Projected semantic steps remove conflicting first-order byte DEV "
+            "components without adding byte-only gradient steps; independent "
+            "nonlinear DEV and cross-author Dickens CE are also reported."
         ),
     }
     Path(sys.argv[3]).write_text(
