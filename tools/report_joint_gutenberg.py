@@ -13,6 +13,10 @@ FIELDS = (
     "carol_late_byte_ce", "carol_late_joint_ce",
     "carol_early_pareto_ce", "carol_late_pareto_ce",
     "carol_late_shuffled_ce", "carol_late_post_recurrence_ce",
+    "pareto_batches_accepted", "pareto_batches_rejected",
+    "pareto_head_only_batches", "pareto_shared_alpha_sum",
+    "pareto_role_test_ce", "pareto_sense_test_ce",
+    "pareto_role_test_accuracy", "pareto_sense_test_accuracy",
 )
 def parse(text: str) -> list[dict]:
     parsed = []
@@ -56,6 +60,19 @@ def main():
             raise ValueError("Pareto arm worsened heldout development CE")
         if row["dev_post_recurrence_ce"] > row["dev_joint_ce"] + 1e-9:
             raise ValueError("acceptance gate failed zero-regression policy")
+        # With six batches of three epochs, a positive shared-projection
+        # update and a head-only fallback are mutually exclusive outcomes.
+        n_shared = row["pareto_batches_accepted"]
+        n_rejected = row["pareto_batches_rejected"]
+        n_head = row["pareto_head_only_batches"]
+        if (n_shared != int(n_shared) or n_rejected != int(n_rejected)
+                or n_shared + n_rejected != 6 or n_rejected != n_head):
+            raise ValueError("Pareto shared/head-only accounting is invalid")
+        alpha_sum = row["pareto_shared_alpha_sum"]
+        if not 0 <= alpha_sum <= n_shared or (n_shared == 0 and alpha_sum != 0):
+            raise ValueError("invalid nonzero shared-gradient line-search")
+        if n_shared == 0 and abs(row["dev_pareto_ce"]-row["dev_byte_ce"]) > 1e-10:
+            raise ValueError("head-only specialization altered byte development CE")
     variants = ("byte", "joint", "shuffled", "pareto", "post_recurrence")
     results = []
     for row in rows:
@@ -97,6 +114,15 @@ def main():
           "significant=unassessed", flush=True)
     for r in results:
         values = r["combined_ce"]
+        print(f"JOINT_GUTENBERG_PARETO seed={r['seed']} "
+              f"shared_batches={int(r['raw']['pareto_batches_accepted'])} "
+              f"head_only_batches={int(r['raw']['pareto_head_only_batches'])} "
+              f"shared_alpha_sum={r['raw']['pareto_shared_alpha_sum']:.8f} "
+              f"role_ce={r['raw']['pareto_role_test_ce']:.8f} "
+              f"sense_ce={r['raw']['pareto_sense_test_ce']:.8f} "
+              f"role_accuracy={r['raw']['pareto_role_test_accuracy']:.6f} "
+              f"sense_accuracy={r['raw']['pareto_sense_test_accuracy']:.6f}",
+              flush=True)
         print(f"JOINT_GUTENBERG_PAIR seed={r['seed']} "
               f"byte_ce={values['byte']:.9f} "
               f"joint_ce={values['joint']:.9f} "
@@ -116,13 +142,24 @@ def main():
             "joint_minus_byte_min_nats": min(deltas),
             "joint_minus_byte_max_nats": max(deltas),
             "pareto_minus_byte_mean_nats": statistics.mean(pareto_deltas),
+            "shared_batches_by_seed": [
+                int(r["raw"]["pareto_batches_accepted"]) for r in results
+            ],
+            "head_only_batches_by_seed": [
+                int(r["raw"]["pareto_head_only_batches"]) for r in results
+            ],
+            "shared_alpha_sum_by_seed": [
+                r["raw"]["pareto_shared_alpha_sum"] for r in results
+            ],
         },
         "interpretation": (
             "This is a heldout cross-author byte-transfer and interference audit "
             "with synthetic semantic supervision, not unsupervised Gutenberg "
             "semantic acquisition or a population-level significance test. "
             "Test text was not included in the optimizer gate. "
-            "Seeds vary training order, not model initialization."
+            "Seeds vary training order, not model initialization. "
+            "A semantic-head-only fallback is not semantic-to-byte transfer; "
+            "only a positive line-search alpha counts as shared credit."
         ),
     }
     Path(sys.argv[3]).write_text(
