@@ -423,6 +423,90 @@ class JointWaveSemanticLearner {
   }
   return m;
  }
+ // A semantic loss on the terminal state, evaluated without updating
+ // weights. Used to test the semantic-to-recurrence gradient against a
+ // finite-difference reference before attempting any physical root write.
+ double sense_loss(const State& s,const Sense& row,const WordNetIndex& wn)const{
+  check_target(row);
+  const auto ids=candidates(wn,row.target);
+  const auto a=encode(s);
+  double largest=-std::numeric_limits<double>::infinity();
+  std::vector<double> logits;
+  for(uint32_t id:ids) {
+   if(!sense_heads_.count(id))throw std::invalid_argument("untrained synset");
+   const double v=dot(sense_heads_.at(id),a.h)+sense_bias_.at(id);
+   logits.push_back(v);largest=std::max(largest,v);
+  }
+  double total=0,gold=0;
+  for(size_t i=0;i<ids.size();++i){
+   const double v=std::exp(logits[i]-largest);
+   total+=v;
+   if(ids[i]==row.gold)gold=v;
+  }
+  if(gold==0)throw std::invalid_argument("invalid supervised sense");
+  return -safe_log(gold/total);
+ }
+ UnifiedWaveLanguage::WaveAdjoint sense_wave_adjoint(
+     const State& s,const Sense& row,const WordNetIndex& wn)const{
+  check_target(row);
+  const auto ids=candidates(wn,row.target);
+  const auto a=encode(s);
+  std::vector<double> scores;
+  double largest=-std::numeric_limits<double>::infinity();
+  for(uint32_t id:ids){
+   if(!sense_heads_.count(id))throw std::invalid_argument("untrained synset");
+   const double v=dot(sense_heads_.at(id),a.h)+sense_bias_.at(id);
+   scores.push_back(v);largest=std::max(largest,v);
+  }
+  double normalizer=0;
+  for(double& v:scores){v=std::exp(v-largest);normalizer+=v;}
+  V dh{};
+  bool has_gold=false;
+  for(size_t k=0;k<ids.size();++k){
+   has_gold|=(ids[k]==row.gold);
+   const double error=scores[k]/normalizer-double(ids[k]==row.gold);
+   for(size_t d=0;d<D;++d)
+    dh[d]+=error*sense_heads_.at(ids[k])[d]*(1.0-a.h[d]*a.h[d]);
+  }
+  if(!has_gold)throw std::invalid_argument("gold absent from synset candidates");
+  UnifiedWaveLanguage::WaveAdjoint gradient{};
+  for(size_t i=0;i<N;++i){
+   double dx=0;
+   for(size_t d=0;d<D;++d)dx+=dh[d]*projection_[i][d];
+   // d tanh(.25*wave+.25*inverse) / d wave == /d inverse
+   const double source=0.25*(1.0-a.x[i]*a.x[i])*dx;
+   gradient.x[i]=source;
+   gradient.y[i]=source;
+  }
+  return gradient;
+ }
+ double role_loss(const State& s,const Role& row)const{
+  const double p=role_probability(s,row);
+  if(row.label!=0&&row.label!=1)throw std::invalid_argument("bad role gold");
+  return -(row.label?safe_log(p):safe_log(1-p));
+ }
+ UnifiedWaveLanguage::WaveAdjoint role_wave_adjoint(
+     const State& s,const Role& row)const {
+  if(row.label!=0&&row.label!=1)throw std::invalid_argument("bad role gold");
+  const std::string relation=lower(row.relation);
+  const int direction=role_orientation(row);
+  const auto it=role_heads_.find(relation);
+  if(it==role_heads_.end())throw std::invalid_argument("untrained relation");
+  const auto a=encode(s,direction);
+  const double error=sigmoid(dot(it->second,a.h)+role_bias_.at(relation))-
+                     double(row.label);
+  V dh{};
+  for(size_t d=0;d<D;++d)
+   dh[d]=error*it->second[d]*(1.0-a.h[d]*a.h[d]);
+  UnifiedWaveLanguage::WaveAdjoint gradient{};
+  for(size_t i=0;i<N;++i){
+   double dx=0;
+   for(size_t d=0;d<D;++d)dx+=dh[d]*projection_[i][d];
+   const double source=0.25*(1.0-a.x[i]*a.x[i])*dx;
+   gradient.x[i]=source;gradient.y[i]=source;
+  }
+  return gradient;
+ }
  void save()const {
   std::ostringstream out;
   out<<std::setprecision(17);
