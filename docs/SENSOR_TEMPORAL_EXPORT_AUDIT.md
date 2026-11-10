@@ -12,6 +12,7 @@ reconstruct source claims or replace the source-provenance journal.
 python3 tools/sensor_temporal_export.py snapshot.sensor.tsv summary
 python3 tools/sensor_temporal_export.py snapshot.sensor.tsv.slices frames --format jsonl
 python3 tools/sensor_temporal_export.py snapshot.sensor.tsv.slices samples --format csv > samples.csv
+python3 tools/sensor_temporal_export.py snapshot.sensor.tsv.slices mirrors --format csv > mirrors.csv
 python3 tools/sensor_temporal_export.py snapshot.sensor.tsv.slices deltas --format csv > deltas.csv
 python3 tools/sensor_temporal_export.py snapshot.sensor.tsv.slices deltas --limit 32
 python3 -m unittest discover -s tests -p test_sensor_temporal_export.py -v
@@ -57,6 +58,9 @@ When the same stable row exists at both frame boundaries:
 ```text
 delta_vector = v(t2) - v(t1)
 vector_delta_norm = sqrt(sum_i delta_vector_i^2)
+delta_tensor = Q(t2) - Q(t1)
+vector_derivative = delta_vector/(t2-t1) when delta_ticks > 0
+tensor_derivative = delta_tensor/(t2-t1) when delta_ticks > 0
 tensor_delta_fro = sqrt(sum_ij (Q_ij(t2)-Q_ij(t1))^2)
 angular_change = acos(clamp(dot(v1,v2)/(||v1|| ||v2||), -1, 1))
 vector_speed_per_tick = vector_delta_norm/(t2-t1)
@@ -70,6 +74,10 @@ same NaNclock have a valid displacement but **no temporal rate**. A tick
 gap larger than one is measured using the *actual* elapsed NaNclock, not
 the number of stored samples. Sequence gaps are reported explicitly;
 the bounded ring cannot infer anything within an overwritten interval.
+
+The raw `mirrors` export includes both forward and reflected address, shared
+physical offset, directed flux, ascending-anchor canonical flux, tensor cosine,
+phase lock, and shared-source count.
 
 Mirror links are keyed by the same physical `C(256,2)` pair offset;
 direction is normalized against ascending anchor IDs before computing
