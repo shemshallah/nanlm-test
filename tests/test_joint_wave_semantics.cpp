@@ -1,0 +1,207 @@
+#include "nanlm/joint_wave_semantics.hpp"
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+#include <unistd.h>
+using namespace nanlm;
+static void require(bool cond,const char* msg){if(!cond)throw std::runtime_error(msg);}
+int main(){
+ const std::string root=(std::filesystem::temp_directory_path()/
+   ("nanlm-joint-"+std::to_string(::getpid()))).string();
+ auto cleanup=[&](){
+  for(const char* p:{"",".overlay",".so3",".episodes",".wordnet.tsv",
+                     ".joint-wave",".joint-wave.tmp","-byte.joint-wave",
+                     "-shuffle.joint-wave","-broken.joint-wave"})
+   std::filesystem::remove(root+p);
+ };
+ cleanup();
+ try{
+  {
+   std::ofstream out(root+".wordnet.tsv");
+   out<<"NANLM-WN1\t2\t0\n";
+   out<<"N\t801\t101\tbank\tfinancial institution\n";
+   out<<"N\t802\t202\tbank\triver shoreline\n";
+   out.flush();
+   require(bool(out),"wordnet fixture creation");
+  }
+  WordNetIndex wn;wn.load(root+".wordnet.tsv");
+  require(wn.lookup("bank").size()==2,"test synsets");
+  Universe universe(root);
+  UnifiedWaveLanguage wave(universe);
+  const std::string language=
+   "ada gave parcel to bea.\n"
+   "bea received parcel from ada.\n"
+   "cash was deposited at the bank.\n"
+   "water rushed past the bank.\n";
+  const std::string held=
+   "bea sent a parcel to ada.\n"
+   "the boat floated near the bank.\n";
+  {
+   std::istringstream training(language);
+   const auto m=wave.train(training);
+   require(m.tokens>10&&std::isfinite(m.ce()),"wave language initialization");
+  }
+  const size_t baseline_events=universe.event_count();
+  const std::string probe="the bank approved a loan";
+  const auto probe_state= [&](){
+   UnifiedWaveLanguage::State state{};
+   for(unsigned char c:probe)wave.observe(state,c);
+   return state;
+  }();
+  const auto baseline_wave=[&](){
+   std::istringstream in(held);
+   return wave.evaluate(in).ce();
+  }();
+  JointWaveSemanticLearner joint(wave,root);
+  JointWaveSemanticLearner byte_only(wave,root+"-byte");
+  JointWaveSemanticLearner shuffled(wave,root+"-shuffle");
+  const double projection_initial=joint.projection_norm();
+  // Identical deterministic byte warm-up for all three arms.
+  for(size_t epoch=0;epoch<4;++epoch){
+   UnifiedWaveLanguage::State state{};
+   for(unsigned char c:language){
+    if(state.length){
+     joint.teach_byte(state,c,0.02);
+     byte_only.teach_byte(state,c,0.02);
+     shuffled.teach_byte(state,c,0.02);
+    }
+    wave.observe(state,c);
+   }
+  }
+  const auto b0=joint.predict_byte(probe_state);
+  const double p0=b0.p[static_cast<uint8_t>(' ')];
+  const std::vector<JointWaveSemanticLearner::Role> roles={
+   {"ada gave parcel to bea","ada","bea","transfer",1},
+   {"ada gave parcel to bea","bea","ada","transfer",0},
+   {"bea received parcel from ada","ada","bea","transfer",1},
+   {"bea received parcel from ada","bea","ada","transfer",0},
+   {"ada followed bea","ada","bea","follow",1},
+   {"ada followed bea","bea","ada","follow",0},
+   {"bea was followed by ada","ada","bea","follow",1},
+   {"bea was followed by ada","bea","ada","follow",0}
+  };
+  const std::vector<JointWaveSemanticLearner::Role> test_roles={
+   {"cato gave parcel to dara","cato","dara","transfer",1},
+   {"cato gave parcel to dara","dara","cato","transfer",0},
+   {"dara received parcel from cato","cato","dara","transfer",1},
+   {"dara received parcel from cato","dara","cato","transfer",0},
+   {"cato followed dara","cato","dara","follow",1},
+   {"cato followed dara","dara","cato","follow",0},
+   {"dara was followed by cato","cato","dara","follow",1},
+   {"dara was followed by cato","dara","cato","follow",0}
+  };
+  const std::vector<JointWaveSemanticLearner::Sense> senses={
+   {"the bank approved a loan","bank",801},
+   {"cash was deposited at the bank","bank",801},
+   {"the bank issued credit","bank",801},
+   {"the water rushed past the bank","bank",802},
+   {"the boat floated near the bank","bank",802},
+   {"the bank was wet with river mud","bank",802}
+  };
+  const std::vector<JointWaveSemanticLearner::Sense> test_senses={
+   {"the bank offered credit","bank",801},
+   {"a loan came from the bank","bank",801},
+   {"the river passed the bank","bank",802},
+   {"mud covered the bank","bank",802}
+  };
+  // Explicit shuffled-label arm with identical waveform, byte initialization
+  // and data schedule. Gradients must not assert WordNet or journal claims.
+  for(size_t epoch=0;epoch<35;++epoch) {
+   for(size_t i=0;i<roles.size();++i){
+    const auto s=joint.state_for(roles[i].sentence);
+    joint.teach_role(s,roles[i],0.04);
+    auto random_role=roles[i];
+    random_role.label=(i+epoch)%2==0?1:0;
+    shuffled.teach_role(s,random_role,0.04);
+   }
+   for(size_t i=0;i<senses.size();++i){
+    const auto s=joint.state_for(senses[i].sentence);
+    joint.teach_sense(s,senses[i],wn,0.04);
+    auto random_sense=senses[i];
+    random_sense.gold=(i+epoch)%2==0?801:802;
+    shuffled.teach_sense(s,random_sense,wn,0.04);
+   }
+  }
+  const auto b1=joint.predict_byte(probe_state);
+  const double p1=b1.p[static_cast<uint8_t>(' ')];
+  // The semantic error must reach a parameter used by the byte readout.
+  require(std::abs(p1-p0)>1e-12,"semantic gradients do not change byte predictions");
+  require(std::abs(joint.projection_norm()-projection_initial)>1e-12,
+          "joint projection was not trained");
+  require(joint.byte_updates()>0&&joint.role_updates()>0&&joint.sense_updates()>0,
+          "missing one of three gradients");
+  require(universe.event_count()==baseline_events,
+          "neural predictions contaminated exact NaN16 evidence");
+  const auto held_joint=joint.evaluate_bytes(held);
+  const auto held_byte=byte_only.evaluate_bytes(held);
+  const auto held_shuffled=shuffled.evaluate_bytes(held);
+  const auto role_score=joint.evaluate_roles(test_roles);
+  const auto role_shuffle=shuffled.evaluate_roles(test_roles);
+  const auto sense_score=joint.evaluate_senses(test_senses,wn);
+  const auto sense_shuffle=shuffled.evaluate_senses(test_senses,wn);
+  require(held_joint.count>0&&held_byte.count==held_joint.count,
+          "byte evaluation sample parity");
+  for(double value:{held_joint.ce(),held_byte.ce(),held_shuffled.ce(),
+                    role_score.ce(),role_shuffle.ce(),sense_score.ce(),sense_shuffle.ce()})
+   require(std::isfinite(value)&&value>=0,"nonfinite heldout joint benchmark");
+  {
+   std::istringstream after(held);
+   require(std::abs(wave.evaluate(after).ce()-baseline_wave)<1e-12,
+           "experimental head altered production byte predictor");
+  }
+  joint.save();
+  {
+   JointWaveSemanticLearner restored(wave,root);
+   require(restored.byte_updates()==joint.byte_updates()&&
+           restored.role_updates()==joint.role_updates()&&
+           restored.sense_updates()==joint.sense_updates(),
+           "joint update counters not persistent");
+   const auto reload=restored.predict_byte(probe_state);
+   require(std::abs(reload.p[' ']-p1)<1e-12,
+           "joint byte distribution changed on restart");
+   require(std::abs(restored.evaluate_roles(test_roles).ce()-role_score.ce())<1e-10,
+           "joint role predictions changed on restart");
+   require(std::abs(restored.evaluate_senses(test_senses,wn).ce()-sense_score.ce())<1e-10,
+           "joint sense predictions changed on restart");
+  }
+  {
+   std::ofstream out(root+".joint-wave",std::ios::app);
+   out<<"corruption";
+   out.close();
+   bool rejected=false;
+   try{JointWaveSemanticLearner invalid(wave,root);(void)invalid;}
+   catch(const std::runtime_error&){rejected=true;}
+   require(rejected,"corrupted shared checkpoint was accepted");
+  }
+  std::cout<<"JOINT_WAVE_NATIVE PASS"
+           <<" byte_heldout_ce="<<held_joint.ce()
+           <<" byte_only_ce="<<held_byte.ce()
+           <<" shuffled_semantic_byte_ce="<<held_shuffled.ce()
+           <<" production_wave_ce="<<baseline_wave
+           <<" role_heldout_ce="<<role_score.ce()
+           <<" role_accuracy="<<role_score.accuracy()
+           <<" role_shuffled_accuracy="<<role_shuffle.accuracy()
+           <<" sense_heldout_ce="<<sense_score.ce()
+           <<" sense_accuracy="<<sense_score.accuracy()
+           <<" sense_shuffled_accuracy="<<sense_shuffle.accuracy()
+           <<" byte_probability_shift="<<(p1-p0)
+           <<" wave_state_shared=1"
+           <<" gradient_through_recurrence=0"
+           <<" byte_updates="<<joint.byte_updates()
+           <<" role_updates="<<joint.role_updates()
+           <<" sense_updates="<<joint.sense_updates()
+           <<" journal_events="<<baseline_events<<"\n";
+  cleanup();
+  return 0;
+ }catch(const std::exception& e){
+  std::cerr<<"JOINT_WAVE_NATIVE FAIL: "<<e.what()<<"\n";
+  cleanup();
+  return 1;
+ }
+}
