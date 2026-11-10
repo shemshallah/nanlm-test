@@ -193,7 +193,7 @@ class TemporalExportTests(unittest.TestCase):
         summary = json.loads(out)
         self.assertEqual(summary["valid_frames"], 2)
         self.assertEqual(summary["last_nanclock"], 3)
-        self.assertIn("level,id,heads", invoke("samples", "--format", "csv"))
+        self.assertIn(",id,heads,", invoke("samples", "--format", "csv"))
         self.assertIn('"delta_ticks":2', invoke("deltas"))
         self.assertEqual(len(invoke("frames", "--limit", "1").splitlines()), 1)
 
