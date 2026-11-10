@@ -7,7 +7,7 @@ import unittest
 import subprocess
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from hw5_cp8_experiment import check_root_preserves_memory, parse_scores
+from hw5_cp8_experiment import check_root_preserves_memory, parse_scores, parse_regimes
 
 
 def call(*args):
@@ -46,23 +46,35 @@ class GeometricCP8Tests(unittest.TestCase):
             self.assertEqual(rerun.returncode, 0, rerun.stdout)
             self.assertEqual(root2.read_bytes(), (base / "again.e02.root").read_bytes())
 
+    def test_native_gate_preserves_seen_predictions_and_mass(self):
+        result = call("./hw5-cp8", "gate-selftest")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("known_probability_immutable=1", result.stdout)
+        self.assertIn("unknown_mass_conserved=1", result.stdout)
+
     def test_native_rejects_invalid_smoothing(self):
         p = call("./hw5-cp8", "fit-cp", "/nonexistent", "/nonexistent",
                  "/nonexistent", 50, 1, 0)
         self.assertNotEqual(p.returncode, 0)
 
     def test_frozen_score_parser_and_native_origin(self):
-        line = ("HW5_CP8_SCORE mode=cp8 beta=16 rho=0.03 scale=1 "
+        line = ("HW5_CP8_SCORE mode=cp8 beta=16 rho=0.03 scale=1 gate=1 "
                 "ce_nats=2.12 accuracy=0.37 transitions=654321 "
                 "exact_model=HW5_train_only bptt_attempted=0")
         result = parse_scores(line)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["transitions"], 654321)
         self.assertAlmostEqual(result[0]["rho"], 0.03)
+        self.assertEqual(result[0]["gate"], 1)
         with self.assertRaises(ValueError):
             parse_scores(line.replace("bptt_attempted=0", "bptt_attempted=1"))
         with self.assertRaises(ValueError):
             parse_scores("incomplete")
+        regimes = " ".join([
+            "HW5_CP8_REGIME regime=seen_exact_triple transitions=10 ce_nats=2.0 accuracy=0.5",
+            "exact_model=HW5_train_only bptt_attempted=0"])
+        with self.assertRaises(ValueError):
+            parse_regimes(regimes)  # needs all three regimes
 
 if __name__ == "__main__":
     unittest.main()
