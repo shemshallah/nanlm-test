@@ -173,8 +173,10 @@ int main(int argc,char** argv) {
      std::iota(so.begin(),so.end(),0u);
      const double pareto_base_dev=pareto.evaluate_bytes(dev).ce();
      double pareto_accepted_dev=pareto_base_dev;
-     size_t pareto_batches_accepted=0;
-     size_t pareto_batches_rejected=0;
+     size_t pareto_batches_accepted=0; // nonzero shared-projection steps
+     size_t pareto_batches_rejected=0; // shared credit denied; head-only kept
+     size_t pareto_head_only_batches=0;
+     double pareto_shared_alpha_sum=0.0;
      auto pareto_candidate=std::make_unique<J>(pareto);
      for(size_t epoch=0;epoch<18;++epoch){
       std::shuffle(ro.begin(),ro.end(),rng);
@@ -195,12 +197,37 @@ int main(int argc,char** argv) {
        // Strict Pareto acceptance: if learning synthetic semantics would
        // raise the disjoint Alice byte-development CE, roll the entire
        // candidate readout back. Never consult either Dickens test slice.
-       const auto trial_ce=pareto_candidate->evaluate_bytes(dev).ce();
-       if(std::isfinite(trial_ce)&&trial_ce<=pareto_accepted_dev+1e-12){
-        pareto.adopt_readout_from(*pareto_candidate);
-        pareto_accepted_dev=trial_ce;
-        ++pareto_batches_accepted;
-       }else ++pareto_batches_rejected;
+       // Only a nonzero change to the shared projection counts as
+       // semantic-to-language credit. Try a fixed line search without
+       // consulting Dickens (which stays completely held out).
+       bool shared_accepted=false;
+       for(const double alpha : {1.0,0.25,0.0625,0.015625,0.00390625}){
+        auto trial=std::make_unique<J>(pareto);
+        trial->blend_semantics_from(*pareto_candidate,alpha);
+        const double trial_ce=trial->evaluate_bytes(dev).ce();
+        if(std::isfinite(trial_ce)&&trial_ce<=pareto_accepted_dev+1e-12){
+         pareto.adopt_readout_from(*trial);
+         pareto_accepted_dev=trial_ce;
+         ++pareto_batches_accepted;
+         pareto_shared_alpha_sum+=alpha;
+         shared_accepted=true;
+         break;
+        }
+       }
+       if(!shared_accepted){
+        // Preserve usable supervised semantic heads while leaving the
+        // shared language projection and byte readout EXACTLY unchanged.
+        // Report this as head-only specialization, NOT joint learning.
+        auto head_only=std::make_unique<J>(pareto);
+        head_only->blend_semantics_from(*pareto_candidate,0.0);
+        const double same_ce=head_only->evaluate_bytes(dev).ce();
+        check(std::isfinite(same_ce)&&
+              std::abs(same_ce-pareto_accepted_dev)<=1e-12,
+              "head-only fallback modified language cross-entropy");
+        pareto.adopt_readout_from(*head_only);
+        ++pareto_head_only_batches;
+        ++pareto_batches_rejected;
+       }
        pareto_candidate=std::make_unique<J>(pareto);
       }
      }
@@ -222,6 +249,8 @@ int main(int argc,char** argv) {
      const auto t_senses=test_senses();
      const auto role_before=joint.evaluate_roles(t_roles);
      const auto sense_before=joint.evaluate_senses(t_senses,wn);
+     const auto pareto_role=pareto.evaluate_roles(t_roles);
+     const auto pareto_sense=pareto.evaluate_senses(t_senses,wn);
      const auto role_shuf=shuffled.evaluate_roles(t_roles);
      const auto sense_shuf=shuffled.evaluate_senses(t_senses,wn);
      // Optional physical recurrent update: *only Alice dev* is consulted
@@ -257,6 +286,12 @@ int main(int argc,char** argv) {
        <<" dev_pareto_ce="<<pareto_dev.ce()
        <<" pareto_batches_accepted="<<pareto_batches_accepted
        <<" pareto_batches_rejected="<<pareto_batches_rejected
+       <<" pareto_head_only_batches="<<pareto_head_only_batches
+       <<" pareto_shared_alpha_sum="<<pareto_shared_alpha_sum
+       <<" pareto_role_test_ce="<<pareto_role.ce()
+       <<" pareto_sense_test_ce="<<pareto_sense.ce()
+       <<" pareto_role_test_accuracy="<<pareto_role.accuracy()
+       <<" pareto_sense_test_accuracy="<<pareto_sense.accuracy()
        <<" pareto_role_updates="<<pareto.role_updates()
        <<" pareto_sense_updates="<<pareto.sense_updates()
        <<" carol_early_byte_ce="<<before_early.byte.ce()
