@@ -1,7 +1,7 @@
 name: HW5 native NaN16 geometric hypermatrix context and held-out corpus controls
 on:
   push:
-    branches: ['experiment/hw5-hypercredit-context-20261109', 'experiment/hw5-paired-attribution-20261109', 'experiment/hw5-native-cp8-geometry-20261109', 'experiment/hw5-cp8-novelty-gate-20261109']
+    branches: ['experiment/hw5-hypercredit-context-20261109', 'experiment/hw5-paired-attribution-20261109', 'experiment/hw5-native-cp8-geometry-20261109', 'experiment/hw5-cp8-novelty-gate-20261109', 'experiment/hw5-fresh-gutenberg-holdout-20261109']
     paths:
       - 'tools/hw5_context_mirror_native.cpp'
       - 'tools/hw5_context_experiment.py'
@@ -11,6 +11,8 @@ on:
       - 'tools/hw5_cp8_native.cpp'
       - 'tools/hw5_cp8_experiment.py'
       - 'tests/test_hw5_cp8_native.py'
+      - 'tools/hw5_fresh_books.py'
+      - 'tests/test_hw5_fresh_books.py'
       - 'Makefile'
       - '.github/workflows/hw5-hypercredit-context.yml'
   workflow_dispatch:
@@ -38,13 +40,20 @@ jobs:
           python3 -m py_compile tools/hw5_paired_attribution.py tests/test_hw5_paired_attribution.py
           python3 -m unittest tests.test_hw5_paired_attribution -v
       - name: Compile and test rank-eight native CP8 train-only geometric credit
-        if: contains(fromJSON('["experiment/hw5-native-cp8-geometry-20261109","experiment/hw5-cp8-novelty-gate-20261109"]'), github.ref_name)
+        if: contains(fromJSON('["experiment/hw5-native-cp8-geometry-20261109","experiment/hw5-cp8-novelty-gate-20261109","experiment/hw5-fresh-gutenberg-holdout-20261109"]'), github.ref_name)
         shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile tools/hw5_cp8_experiment.py tests/test_hw5_cp8_native.py
           make hw5-cp8 CXX=clang++
           python3 -m unittest tests.test_hw5_cp8_native -v
+      - name: "HW5:0 test independent fresh Gutenberg source intake"
+        if: github.ref_name == 'experiment/hw5-fresh-gutenberg-holdout-20261109'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/hw5_fresh_books.py tests/test_hw5_fresh_books.py
+          python3 -m unittest tests.test_hw5_fresh_books -v
       - name: Download exact immutable HW5 reference without exposing all-books counts to the learner
         shell: bash
         run: |
@@ -81,7 +90,7 @@ jobs:
             --hw5-artifact hw5-context-state \
             --output hw5-paired-attribution-state | tee hw5-paired-attribution-summary.log
       - name: "HW5:0 native train-only CP8 learning, dev-selected checkpoint, test-once audit"
-        if: contains(fromJSON('["experiment/hw5-native-cp8-geometry-20261109","experiment/hw5-cp8-novelty-gate-20261109"]'), github.ref_name)
+        if: contains(fromJSON('["experiment/hw5-native-cp8-geometry-20261109","experiment/hw5-cp8-novelty-gate-20261109","experiment/hw5-fresh-gutenberg-holdout-20261109"]'), github.ref_name)
         shell: bash
         run: |
           set -euo pipefail
@@ -90,6 +99,17 @@ jobs:
             --student previous-artifact/hw5-transfer-state/learner-root \
             --hw5-artifact hw5-context-state \
             --output hw5-cp8-state | tee hw5-cp8-summary.log
+      - name: "HW5:0 frozen geometric model versus new out-of-source Gutenberg books"
+        if: github.ref_name == 'experiment/hw5-fresh-gutenberg-holdout-20261109'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/hw5_fresh_books.py \
+            --reference "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --student previous-artifact/hw5-transfer-state/learner-root \
+            --hw5-artifact hw5-context-state \
+            --cp8-artifact hw5-cp8-state \
+            --output hw5-fresh-holdout-state | tee hw5-fresh-holdout-summary.log
       - name: Preserve train-only C256 reference, sparse triples, frozen dev choices and actual test controls
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,5 +122,7 @@ jobs:
             hw5-paired-attribution-summary.log
             hw5-cp8-state/
             hw5-cp8-summary.log
+            hw5-fresh-holdout-state/
+            hw5-fresh-holdout-summary.log
           retention-days: 30
           if-no-files-found: warn
