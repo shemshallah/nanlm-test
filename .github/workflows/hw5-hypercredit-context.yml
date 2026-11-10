@@ -1,7 +1,7 @@
 name: HW5 native NaN16 geometric hypermatrix context and held-out corpus controls
 on:
   push:
-    branches: ['experiment/hw5-hypercredit-context-20261109']
+    branches: ['experiment/hw5-hypercredit-context-20261109', 'experiment/hw5-c256-complete-20261109']
     paths:
       - 'tools/hw5_context_mirror_native.cpp'
       - 'tools/hw5_context_experiment.py'

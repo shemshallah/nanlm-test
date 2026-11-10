@@ -32,6 +32,10 @@ using Counts=std::array<Row,V>;
 using Prob=std::array<double,V>;
 using TripleMap=std::unordered_map<uint32_t,uint32_t>;
 constexpr char MAGIC[8]={'H','W','5','T','R','I','0','1'};
+constexpr unsigned HW5_PAIRS=HW5_HEADS*(HW5_HEADS-1)/2;
+// H5P1 identifies every physical unordered C(256,2) slot, including zero-
+// evidence slots and 255 reserved gateway-pairs. Never fabricate counts.
+constexpr uint32_t PAIR_TAG=0x31503548U;
 static uint32_t key(unsigned a,unsigned b,unsigned c){
  if(a>=V||b>=V||c>=V)throw std::invalid_argument("invalid triple head");
  return (a<<16)|(b<<8)|c;
@@ -51,6 +55,36 @@ static size_t pair_id(unsigned a,unsigned b){
 static size_t base(unsigned a,unsigned b){
  const auto x=std::min(a,b), y=std::max(a,b);
  return HW5_HEADS*HEAD_BYTES+(pair_id(x,y)-1)*PAIR_BYTES;
+}
+// Every physical slot is explicitly addressable, including unseen pairs.
+// All statistical evidence must originate in the training books.
+static void address_all_pairs(std::vector<uint8_t>& root){
+ uint32_t addressed=0;
+ for(unsigned a=0;a<HW5_HEADS;++a)for(unsigned b=a+1;b<HW5_HEADS;++b){
+  const size_t at=base(a,b);
+  write32(root,at+160,a);write32(root,at+164,b);
+  write32(root,at+168,PAIR_TAG);
+  ++addressed;
+ }
+ if(addressed!=HW5_PAIRS ||
+    HW5_HEADS*HEAD_BYTES+HW5_PAIRS*PAIR_BYTES!=HW5_ROOT_BYTES)
+  throw std::runtime_error("incomplete C256 physical addressing");
+}
+static void verify_all_pairs(const std::vector<uint8_t>& root){
+ uint32_t addressed=0;
+ for(unsigned a=0;a<HW5_HEADS;++a)for(unsigned b=a+1;b<HW5_HEADS;++b){
+  const size_t at=base(a,b);
+  if(read32(root,at+160)!=a||read32(root,at+164)!=b||
+     read32(root,at+168)!=PAIR_TAG)
+   throw std::runtime_error("missing or corrupted C256 physical pair identity");
+  if(b==255){
+   for(size_t off=0;off<88;off+=4)
+    if(read32(root,at+off)!=0)
+     throw std::runtime_error("gateway pair has training evidence");
+  }
+  ++addressed;
+ }
+ if(addressed!=HW5_PAIRS)throw std::runtime_error("incomplete pair ledger");
 }
 static uint32_t pair_read(const std::vector<uint8_t>& root,
                           unsigned a,unsigned b,unsigned lane){
@@ -113,6 +147,7 @@ struct Bank{
   }
  }
  void finish(){
+  address_all_pairs(root);
   for(unsigned a=0;a<V;++a){
    write32(root,a*HEAD_BYTES,a);
    write32(root,a*HEAD_BYTES+4,static_cast<uint32_t>(out[a]));
@@ -130,6 +165,7 @@ struct Bank{
   if(std::any_of(root.begin()+255*HEAD_BYTES,root.begin()+256*HEAD_BYTES,
                   [](uint8_t x){return x!=0;}))
    throw std::runtime_error("gateway head not empty");
+  verify_all_pairs(root);
  }
  void save(const std::string& rootpath,const std::string& triplepath)const{
   std::ofstream r(rootpath,std::ios::binary|std::ios::trunc);
@@ -155,6 +191,7 @@ struct Bank{
   r.read(reinterpret_cast<char*>(root.data()),HW5_ROOT_BYTES);
   if(static_cast<size_t>(r.gcount())!=HW5_ROOT_BYTES||r.peek()!=EOF)
    throw std::runtime_error("wrong training projection size");
+  verify_all_pairs(root);
   for(unsigned a=0;a<V;++a){
    if(read32(root,a*HEAD_BYTES)!=a)throw std::runtime_error("wrong canonical head");
    out[a]=read32(root,a*HEAD_BYTES+4);
@@ -324,12 +361,26 @@ int main(int argc,char** argv){
    const auto n=visit(argv[2],lengths(argv[3]),[&](const std::vector<uint8_t>& bytes){bank.learn(bytes);});
    bank.finish();
    bank.save(argv[4],argv[5]);
-   uint64_t occupied=0;
-   for(unsigned a=0;a<V;++a)for(unsigned b=a+1;b<V;++b){
-    occupied+=(bank.adjacent[a][b]||bank.adjacent[b][a]||bank.skip[a][b]||bank.skip[b][a]);
+   uint64_t occupied=0,occupied_adjacent=0,occupied_skip=0;
+   uint64_t directed_adjacent=0,directed_skip=0,self_adjacent=0;
+   for(unsigned a=0;a<V;++a){
+    self_adjacent+=bank.adjacent[a][a]!=0;
+    for(unsigned b=0;b<V;++b){
+     directed_adjacent+=bank.adjacent[a][b]!=0;
+     directed_skip+=bank.skip[a][b]!=0;
+     if(a>=b)continue;
+     occupied+=(bank.adjacent[a][b]||bank.adjacent[b][a]||bank.skip[a][b]||bank.skip[b][a]);
+     occupied_adjacent+=(bank.adjacent[a][b]||bank.adjacent[b][a]);
+     occupied_skip+=(bank.skip[a][b]||bank.skip[b][a]);
+    }
    }
    std::cout<<"HW5_CONTEXT_BANK_BUILT bytes="<<n
      <<" books="<<bank.books<<" pairs="<<occupied
+     <<" addressed_pairs="<<HW5_PAIRS<<" reserved_pairs="<<HW5_HEADS-1
+     <<" evidence_pairs="<<occupied<<" absent_active_pairs="<<(HW5_PAIRS-(HW5_HEADS-1)-occupied)
+     <<" adjacent_mirror_pairs="<<occupied_adjacent<<" skip_mirror_pairs="<<occupied_skip
+     <<" directed_adjacent_pairs="<<directed_adjacent<<" directed_skip_pairs="<<directed_skip
+     <<" self_adjacent_heads="<<self_adjacent
      <<" distinct_triples="<<bank.triple.size()
      <<" adjacent="<<bank.transitions<<" lag2="<<bank.lag2
      <<" root_bytes="<<HW5_ROOT_BYTES<<" gateway_head=255\n";
