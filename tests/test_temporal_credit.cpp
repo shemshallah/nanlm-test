@@ -119,6 +119,12 @@ int main(){
    // the same derived operator before the in-process measurement so
    // restart/reload compares identical model states.
    m.refresh_spectrum();
+   // This probe was built BEFORE the two new W/Y edges were asserted.
+   // Refreshing derived spectral/arc caches does not retroactively advance
+   // causal activations. Replay the exact context under the current graph
+   // so both in-process and reopened predictions share the same operator.
+   probe.reset();
+   for(unsigned char b:context)m.observe(probe,b);
    const auto signed_full=m.predict(probe);
    const auto signed_off=m.predict(
       probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
@@ -196,7 +202,11 @@ int main(){
     std::cerr<<"TEMPORAL_RELOAD_SPECTRAL mode="<<i
              <<" before="<<before_modes[i]
              <<" after="<<m.spectral().eigenvalues[i]<<"\n";
-   check(std::fabs(restored-saved)<1e-7,
+   for(size_t i=0;i<ablations.size();++i)
+    check(std::abs(before_ablations[i]-
+                   m.predict(probe,ablations[i]).p['Z'])<1e-12,
+          "individual wave ablation changed after root reload");
+   check(std::fabs(restored-saved)<1e-12,
          "48-step causal credit changed after root reload");
   }
   for(const auto& ext:{"",".so3",".overlay",".overlay.tmp"})
