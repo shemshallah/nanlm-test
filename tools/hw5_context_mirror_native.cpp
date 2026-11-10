@@ -24,7 +24,7 @@
 
 using namespace nanlm;
 static_assert(std::endian::native == std::endian::little);
-constexpr unsigned V=255, HW5_HEADS=256, HW5_PAIRS=32640;
+constexpr unsigned V=255, HW5_HEADS=256;
 constexpr size_t HEAD_BYTES=128, PAIR_BYTES=256, HW5_ROOT_BYTES=8388608;
 constexpr unsigned CONTEXTS=V*V;
 using Row=std::array<uint32_t,V>;
