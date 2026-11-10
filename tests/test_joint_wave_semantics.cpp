@@ -156,6 +156,44 @@ int main(){
           "missing one of three gradients");
   require(universe.event_count()==baseline_events,
           "neural predictions contaminated exact NaN16 evidence");
+  // A semantic head-only fallback must not change language predictions.
+  // A positive shared-projection blend must reproduce the candidate at 1.0.
+  {
+   auto proposal=byte_only;
+   for(size_t i=0;i<10;++i){
+    proposal.teach_role(proposal.state_for(roles[0].sentence),roles[0],0.04);
+    proposal.teach_sense(proposal.state_for(senses[0].sentence),senses[0],wn,0.04);
+   }
+   const double original_ce=byte_only.evaluate_bytes(held).ce();
+   const auto original_prob=byte_only.predict_byte(probe_state);
+   auto head_only=byte_only;
+   head_only.blend_semantics_from(proposal,0.0);
+   const auto no_credit=head_only.predict_byte(probe_state);
+   for(size_t i=0;i<original_prob.p.size();++i)
+    require(no_credit.p[i]==original_prob.p[i],
+            "head-only blend changed byte probability");
+   require(head_only.evaluate_bytes(held).ce()==original_ce,
+           "head-only blend changed heldout byte CE");
+   require(head_only.role_updates()>0&&head_only.sense_updates()>0,
+           "head-only specialization lost semantic training");
+   auto full=byte_only;
+   full.blend_semantics_from(proposal,1.0);
+   const auto full_prob=full.predict_byte(probe_state);
+   const auto direct=proposal.predict_byte(probe_state);
+   for(size_t i=0;i<direct.p.size();++i)
+    require(std::abs(full_prob.p[i]-direct.p[i])<1e-14,
+            "full semantic blend differs from proposal");
+   require(std::abs(full_prob.p[' ']-original_prob.p[' '])>1e-12,
+           "positive shared blend produced no byte change");
+   bool invalid=false;
+   try{head_only.blend_semantics_from(proposal,-0.1);}
+   catch(const std::invalid_argument&){invalid=true;}
+   require(invalid,"negative semantic blend accepted");
+   invalid=false;
+   try{head_only.blend_semantics_from(joint,0.5);}
+   catch(const std::invalid_argument&){invalid=true;}
+   require(invalid,"unrelated readout semantics were blended");
+  }
   const auto held_joint=joint.evaluate_bytes(held);
   const auto held_byte=byte_only.evaluate_bytes(held);
   const auto held_shuffled=shuffled.evaluate_bytes(held);
