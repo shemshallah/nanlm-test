@@ -45,7 +45,8 @@ def parse_scores(output: str):
             raise ValueError("native attribution contract violated")
         row = {k: float(vals[k]) for k in ("beta", "rho", "scale", "ce_nats", "accuracy")}
         row["transitions"] = int(vals["transitions"])
-        if not (row["beta"] == 16.0 and 0 <= row["rho"] <= 1 and
+        row["gate"] = int(vals["gate"])
+        if not (row["beta"] == 16.0 and row["gate"] in (0, 1) and 0 <= row["rho"] <= 1 and
                 0 <= row["scale"] <= 4 and 0 < row["ce_nats"] < 10 and
                 0 <= row["accuracy"] <= 1 and row["transitions"] > 0):
             raise ValueError("invalid native CP8 scores")
@@ -53,6 +54,24 @@ def parse_scores(output: str):
     if not results:
         raise ValueError("native scorer emitted no CP8 evaluation rows")
     return results
+
+
+def parse_regimes(output: str):
+    names = ("seen_exact_triple", "seen_context_unseen_continuation", "unseen_context")
+    found = {}
+    for line in output.splitlines():
+        if not line.startswith("HW5_CP8_REGIME "):
+            continue
+        vals = dict(re.findall(r"([a-z0-9_]+)=([^\s]+)", line))
+        name = vals["regime"]
+        if name not in names or name in found or vals["exact_model"] != "HW5_train_only":
+            raise ValueError("invalid native CP8 support stratum")
+        found[name] = {"transitions": int(vals["transitions"]),
+                       "ce_nats": float(vals["ce_nats"]),
+                       "accuracy": float(vals["accuracy"])}
+    if set(found) != set(names):
+        raise ValueError("not all native geometric support strata reported")
+    return found
 
 
 def check_root_preserves_memory(source: Path, candidate: Path):
@@ -115,20 +134,21 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
                            str(triples), str(gen / "dev.txt"), str(output / "dev.lengths")],
                           logs / f"dev-epoch-{epoch:02d}.log")
             candidates = parse_scores(text)
-            if len(candidates) != 19:  # rho=0 once + six positive rhos * three scales
+            if len(candidates) != 37:  # no-geometry + 18 global + 18 novelty-gated
                 raise ValueError("incomplete or modified dev-only search grid")
             for row in candidates:
                 if row["transitions"] != expected_dev:
                     raise ValueError("dev boundary ledger invalid")
                 row["epoch"] = epoch
                 dev_scores.append(row)
-        best = min(dev_scores, key=lambda r: (r["ce_nats"], r["epoch"], r["rho"], r["scale"]))
+        best = min(dev_scores, key=lambda r: (r["ce_nats"], r["epoch"], r["gate"], r["rho"], r["scale"]))
         selected_path = output / "selected-geometric-cp8.root"
         shutil.copyfile(Path(str(prefix) + f".e{best['epoch']:02d}.root"), selected_path)
         selected_sha = check_root_preserves_memory(bank, selected_path)
     # Everything above is TRAIN or DEV only. Freeze parameters and SHA BEFORE
     # reading or evaluating any test book. Never tune on the test readout.
     freeze = {"beta": best["beta"], "rho": best["rho"], "scale": best["scale"],
+              "gate": best["gate"],
               "epoch": best["epoch"], "selected_cp8_root_sha256": selected_sha,
               "selected_exclusively_on": "development_books"}
     (output / "frozen-dev-choice.json").write_text(json.dumps(freeze, indent=2, sort_keys=True) + "\n")
@@ -136,14 +156,18 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
     expected_test = sum(int(d["bytes"]) - 2 for d in splits["test"])
     scored = native(["./hw5-cp8", "score-cp", str(student), str(selected_path),
                      str(triples), str(gen / "test.txt"), str(output / "test.lengths"),
-                     str(freeze["beta"]), str(freeze["rho"]), str(freeze["scale"])],
+                     str(freeze["beta"]), str(freeze["rho"]), str(freeze["scale"]),
+                     str(freeze["gate"])],
                     logs / "test-single-frozen-choice.log")
     actual = parse_scores(scored)
     if len(actual) != 1 or actual[0]["transitions"] != expected_test:
         raise ValueError("native HW5:0 test coverage or output changed")
-    for field in ("beta", "rho", "scale"):
+    for field in ("beta", "rho", "scale", "gate"):
         if actual[0][field] != freeze[field]:
             raise ValueError("native test configuration changed after freeze")
+    test_regimes = parse_regimes(scored)
+    if sum(x["transitions"] for x in test_regimes.values()) != expected_test:
+        raise ValueError("CP8 test support strata do not partition test transitions")
     if {k: sha(v) for k, v in
             {"student": student, "bank": bank, "triples": triples}.items()} != source_digests:
         raise ValueError("native training/evaluation mutated preexisting evidence")
@@ -163,6 +187,8 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
         "baseline_immutable_hw5_test": {
             "ce_nats": baseline["ce_nats"], "accuracy": baseline["accuracy"]},
         "test_native_cp8": actual[0],
+        "test_support_strata": test_regimes,
+        "test_split_reused_for_exploratory_research": True,
         "test_delta_ce_memory_minus_cp8": baseline["ce_nats"] - actual[0]["ce_nats"],
         "test_delta_accuracy_cp8_minus_memory":
             actual[0]["accuracy"] - baseline["accuracy"],
@@ -177,6 +203,7 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
         "memory_test_ce": baseline["ce_nats"],
         "trained_cp8_test_ce": actual[0]["ce_nats"],
         "trained_cp8_test_accuracy": actual[0]["accuracy"],
+        "test_support_strata": test_regimes,
         "delta_ce": result["test_delta_ce_memory_minus_cp8"],
         "student_immutable": True, "mirror_immutable": True,
     }, sort_keys=True), flush=True)

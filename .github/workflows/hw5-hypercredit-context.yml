@@ -1,7 +1,7 @@
 name: HW5 native NaN16 geometric hypermatrix context and held-out corpus controls
 on:
   push:
-    branches: ['experiment/hw5-hypercredit-context-20261109', 'experiment/hw5-paired-attribution-20261109', 'experiment/hw5-native-cp8-geometry-20261109']
+    branches: ['experiment/hw5-hypercredit-context-20261109', 'experiment/hw5-paired-attribution-20261109', 'experiment/hw5-native-cp8-geometry-20261109', 'experiment/hw5-cp8-novelty-gate-20261109']
     paths:
       - 'tools/hw5_context_mirror_native.cpp'
       - 'tools/hw5_context_experiment.py'
@@ -38,7 +38,7 @@ jobs:
           python3 -m py_compile tools/hw5_paired_attribution.py tests/test_hw5_paired_attribution.py
           python3 -m unittest tests.test_hw5_paired_attribution -v
       - name: Compile and test rank-eight native CP8 train-only geometric credit
-        if: github.ref_name == 'experiment/hw5-native-cp8-geometry-20261109'
+        if: contains(fromJSON('["experiment/hw5-native-cp8-geometry-20261109","experiment/hw5-cp8-novelty-gate-20261109"]'), github.ref_name)
         shell: bash
         run: |
           set -euo pipefail
@@ -81,7 +81,7 @@ jobs:
             --hw5-artifact hw5-context-state \
             --output hw5-paired-attribution-state | tee hw5-paired-attribution-summary.log
       - name: "HW5:0 native train-only CP8 learning, dev-selected checkpoint, test-once audit"
-        if: github.ref_name == 'experiment/hw5-native-cp8-geometry-20261109'
+        if: contains(fromJSON('["experiment/hw5-native-cp8-geometry-20261109","experiment/hw5-cp8-novelty-gate-20261109"]'), github.ref_name)
         shell: bash
         run: |
           set -euo pipefail

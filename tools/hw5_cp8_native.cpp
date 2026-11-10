@@ -478,15 +478,48 @@ struct CP8 {
 // A single readout distribution: native exact triple memory + one trained
 // rank-eight pair-conditioned geometric backoff. Development-only beta/rho/
 // scale selection; no updates or model choice during evaluation.
+// Exact-support gate: known train triples keep their original probability.
+// Geometry ONLY redistributes the probability mass assigned to unseen
+// continuations; it cannot steal probability from a known exact triple.
+// 0 = ordinary global mixture; 1 = novelty/unknown-only mixture.
+static Prob geometric_gate(const Prob& memory,const Prob& geometry,
+                           const std::array<uint8_t,V>& seen,
+                           double rho,unsigned gate) {
+ if(rho<0||rho>1||gate>1)throw std::invalid_argument("invalid geometric gate");
+ Prob out{};
+ if(gate==0){
+  for(unsigned j=0;j<V;++j)out[j]=(1-rho)*memory[j]+rho*geometry[j];
+ }else{
+  double unknown_memory_mass=0,unknown_geometry_mass=0;
+  for(unsigned j=0;j<V;++j)if(!seen[j]){
+   unknown_memory_mass+=memory[j];
+   unknown_geometry_mass+=geometry[j];
+  }
+  if(!(unknown_memory_mass>0&&unknown_geometry_mass>0))
+   throw std::runtime_error("invalid unknown continuation support");
+  for(unsigned j=0;j<V;++j){
+   if(seen[j])out[j]=memory[j];
+   else out[j]=(1-rho)*memory[j]+rho*unknown_memory_mass*
+                        geometry[j]/unknown_geometry_mass;
+  }
+ }
+ const double sum=std::accumulate(out.begin(),out.end(),0.);
+ if(!std::isfinite(sum)||std::abs(sum-1.)>1e-8)
+  throw std::runtime_error("native geometric gate lost probability mass");
+ return out;
+}
 static Scores cp_score(const Eval& e,const CP8& cp,
-                       double beta,double rho,double scale) {
- if(beta<=0||rho<0||rho>1||scale<0||scale>4)
+                       double beta,double rho,double scale,unsigned gate,
+                       std::array<Scores,3>* by_regime=nullptr) {
+ if(beta<=0||rho<0||rho>1||scale<0||scale>4||gate>1)
   throw std::invalid_argument("invalid CP8 dev-frozen interpolation");
  Scores answer{};
+ std::array<Scores,3> strata{};
  for(const auto& [ab,labels]:e.observed){
   const unsigned a=ab/V,b=ab%V;
   const double support=double(e.bank.triple_context[ab]);
-  Prob q{},p{};
+  Prob q{},memory{};
+  std::array<uint8_t,V> seen{};
   double z=0;
   for(unsigned j=0;j<V;++j){
    q[j]=e.bi[b][j]*std::exp(std::clamp(scale*cp.dot(a,b,j),-12.0,12.0));
@@ -495,35 +528,86 @@ static Scores cp_score(const Eval& e,const CP8& cp,
   if(!(z>0&&std::isfinite(z)))throw std::runtime_error("invalid CP8 probability mass");
   for(unsigned j=0;j<V;++j){
    q[j]/=z;
-   const double exact=(double(e.bank.get(a,b,j))+beta*e.bi[b][j])/(support+beta);
-   p[j]=(1-rho)*exact+rho*q[j];
+   const auto count=e.bank.get(a,b,j);
+   seen[j]=uint8_t(count>0);
+   memory[j]=(double(count)+beta*e.bi[b][j])/(support+beta);
   }
+  const auto p=geometric_gate(memory,q,seen,rho,gate);
   const unsigned best=unsigned(std::max_element(p.begin(),p.end())-p.begin());
   for(unsigned j=0;j<V;++j)if(labels[j]){
+   const double nll=-double(labels[j])*std::log(std::max(p[j],1e-300));
    answer.items+=labels[j];
    answer.correct+=labels[j]*(best==j);
-   answer.nll-=double(labels[j])*std::log(std::max(p[j],1e-300));
+   answer.nll+=nll;
+   const unsigned stratum=seen[j]?0:(support>0?1:2);
+   strata[stratum].items+=labels[j];
+   strata[stratum].correct+=labels[j]*(best==j);
+   strata[stratum].nll+=nll;
   }
  }
  if(answer.items!=e.n||!std::isfinite(answer.nll))
   throw std::runtime_error("CP8 scoring coverage mismatch");
+ if(by_regime){
+  uint64_t count=0;
+  for(auto& stratum:strata)count+=stratum.items;
+  if(count!=answer.items)throw std::runtime_error("CP8 support strata missed transitions");
+  *by_regime=strata;
+ }
  return answer;
 }
-static void cp_output(const Scores& scores,double beta,double rho,double scale) {
+static void cp_output(const Scores& scores,double beta,double rho,
+                      double scale,unsigned gate) {
  std::cout<<std::setprecision(12)
           <<"HW5_CP8_SCORE mode=cp8 beta="<<beta
-          <<" rho="<<rho<<" scale="<<scale
+          <<" rho="<<rho<<" scale="<<scale<<" gate="<<gate
           <<" ce_nats="<<scores.nll/double(scores.items)
           <<" accuracy="<<double(scores.correct)/double(scores.items)
           <<" transitions="<<scores.items
           <<" exact_model=HW5_train_only bptt_attempted=0\n";
+}
+static void cp_regime_output(const std::array<Scores,3>& s) {
+ constexpr std::array<const char*,3> names{
+  "seen_exact_triple","seen_context_unseen_continuation","unseen_context"};
+ for(unsigned i=0;i<3;++i){
+  std::cout<<std::setprecision(12)
+           <<"HW5_CP8_REGIME regime="<<names[i]
+           <<" transitions="<<s[i].items
+           <<" ce_nats="<<(s[i].items?s[i].nll/double(s[i].items):0.)
+           <<" accuracy="<<(s[i].items?double(s[i].correct)/double(s[i].items):0.)
+           <<" exact_model=HW5_train_only bptt_attempted=0\n";
+ }
+}
+static void cp_gate_selftest() {
+ Prob memory{},geometry{};
+ std::array<uint8_t,V> seen{};
+ memory[0]=0.7;memory[1]=0.2;memory[2]=0.1;
+ geometry[0]=0.05;geometry[1]=0.15;geometry[2]=0.8;
+ seen[0]=1;
+ for(double rho:{0.,0.2,0.5,1.}){
+  const auto global=geometric_gate(memory,geometry,seen,rho,0);
+  const auto novelty=geometric_gate(memory,geometry,seen,rho,1);
+  if(std::abs(novelty[0]-0.7)>1e-14)
+   throw std::runtime_error("novelty gate modified seen target");
+  if(std::abs(novelty[1]+novelty[2]-0.3)>1e-14)
+   throw std::runtime_error("novelty gate modified unknown probability budget");
+  if(std::abs(global[0]-((1-rho)*0.7+rho*0.05))>1e-14)
+   throw std::runtime_error("global geometric mixture mismatch");
+  if(rho==0&&(std::abs(novelty[1]-0.2)>1e-14||
+              std::abs(novelty[2]-0.1)>1e-14))
+   throw std::runtime_error("zero-geometry identity violated");
+ }
+ std::cout<<"HW5_CP8_GATE_TEST status=passed known_probability_immutable=1"
+          <<" unknown_mass_conserved=1 normalization=1\n";
 }
 
 int main(int argc,char** argv){
  try{
   if(argc<2)throw std::invalid_argument("build TRAIN LENGTHS ROOT TRIPLES | score STUDENT ROOT TRIPLES EVAL LENGTHS sweep|fixed [BETA LAMBDA DELTA KAPPA]");
   const std::string mode=argv[1];
-  if(mode=="fit-cp"){
+  if(mode=="gate-selftest"){
+   if(argc!=2)throw std::invalid_argument("gate-selftest takes no args");
+   cp_gate_selftest();
+  }else if(mode=="fit-cp"){
    if(argc!=8)throw std::invalid_argument("fit-cp TRAIN_ROOT TRIPLES CHECKPOINT_PREFIX EPOCHS SEED ALPHA");
    Bank bank;bank.load(argv[2],argv[3]);
    CP8 cp;cp.initialize(std::stoull(argv[6]));
@@ -545,18 +629,23 @@ int main(int argc,char** argv){
    Bank bank;bank.load(argv[3],argv[4]);
    const CP8 cp=CP8::from_root(bank);
    const Eval e(bank,argv[2],argv[5],lengths(argv[6]));
-   for(double rho:{0.,0.01,0.03,0.1,0.2,0.4,0.7})
-    for(double scale:{0.5,1.,2.}){
-     if(rho==0.&&scale!=1.)continue;
-     cp_output(cp_score(e,cp,16.,rho,scale),16.,rho,scale);
-    }
+   for(unsigned gate:{0u,1u})
+    for(double rho:{0.,0.01,0.03,0.1,0.2,0.4,0.7})
+     for(double scale:{0.5,1.,2.}){
+      if(rho==0.&&(scale!=1.||gate!=0u))continue;
+      cp_output(cp_score(e,cp,16.,rho,scale,gate),16.,rho,scale,gate);
+     }
   }else if(mode=="score-cp"){
-   if(argc!=10)throw std::invalid_argument("score-cp STUDENT CP8_ROOT TRIPLES EVAL LENGTHS BETA RHO SCALE");
+   if(argc!=11)throw std::invalid_argument("score-cp STUDENT CP8_ROOT TRIPLES EVAL LENGTHS BETA RHO SCALE GATE");
    Bank bank;bank.load(argv[3],argv[4]);
    const CP8 cp=CP8::from_root(bank);
    const Eval e(bank,argv[2],argv[5],lengths(argv[6]));
    const double beta=std::stod(argv[7]),rho=std::stod(argv[8]),scale=std::stod(argv[9]);
-   cp_output(cp_score(e,cp,beta,rho,scale),beta,rho,scale);
+   const unsigned gate=unsigned(std::stoul(argv[10]));
+   std::array<Scores,3> strata{};
+   const auto total=cp_score(e,cp,beta,rho,scale,gate,&strata);
+   cp_output(total,beta,rho,scale,gate);
+   cp_regime_output(strata);
   }else if(mode=="build"){
    if(argc!=6)throw std::invalid_argument("build TRAIN LENGTHS ROOT TRIPLES");
    Bank bank;
