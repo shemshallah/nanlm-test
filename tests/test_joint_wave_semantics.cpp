@@ -205,6 +205,22 @@ int main(){
    require(std::isfinite(surgery.evaluate_bytes(surgery_dev).ce())&&
            surgery.shared_displacement_norm(byte_only)>0,
            "nonzero projected semantic direction disappeared");
+   // Independent 3-point forward difference verifies the actual CE
+   // directional derivative rather than comparing two analytic formulas.
+   const double d_analytic=
+     byte_only.shared_byte_directional_derivative(proposal,surgery_dev);
+   auto finite_one=byte_only;
+   auto finite_two=byte_only;
+   finite_one.blend_semantics_from(proposal,0.001);
+   finite_two.blend_semantics_from(proposal,0.002);
+   const double f0=byte_only.evaluate_bytes(surgery_dev).ce();
+   const double f1=finite_one.evaluate_bytes(surgery_dev).ce();
+   const double f2=finite_two.evaluate_bytes(surgery_dev).ce();
+   const double d_numerical=(-3.0*f0+4.0*f1-f2)/0.002;
+   require(std::isfinite(d_numerical)&&
+           std::abs(d_analytic-d_numerical)<
+             1e-7+0.02*std::abs(d_numerical),
+           "byte shared gradient failed independent finite differences");
    const double directional=
      byte_only.shared_byte_directional_derivative(surgery,surgery_dev);
    const double raw_directional=

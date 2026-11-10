@@ -243,17 +243,20 @@ int main(int argc,char** argv) {
         ++pareto_batches_rejected;
        }
        pareto_candidate=std::make_unique<J>(pareto);
-      // Sixth arm: semantic gradient displacement projected onto the
-      // non-conflicting Alice DEV half-space; exact CE still decides.
+      // Sixth arm: semantic displacement projected using Alice TRAIN byte
+      // gradients only; independent Alice DEV CE remains the nonlinear
+      // acceptance gate, and Dickens remains a never-consulted test.
       // Never add byte-gradient descent, or consult Dickens at this gate.
+      // Calibrate projection on Alice TRAIN, not on the independent
+      // Alice development gate. The disjoint DEV text selects alpha only.
       const double alignment=surgery.shared_byte_directional_derivative(
-          *surgery_candidate,dev);
+          *surgery_candidate,train);
       check(std::isfinite(alignment),"nonfinite semantic-byte alignment");
       if(alignment>0)++surgery_conflicting_batches;
       bool surgery_shared=false;
       for(const double alpha : {1.0,0.25,0.0625,0.015625,0.00390625}){
        auto trial=std::make_unique<J>(surgery);
-       trial->blend_projected_semantics_from(*surgery_candidate,dev,alpha);
+       trial->blend_projected_semantics_from(*surgery_candidate,train,alpha);
        if(trial->shared_displacement_norm(surgery)<=1e-12)continue;
        const double trial_ce=trial->evaluate_bytes(dev).ce();
        if(std::isfinite(trial_ce)&&trial_ce<=surgery_accepted_dev+1e-12){
@@ -267,7 +270,7 @@ int main(int argc,char** argv) {
       }
       if(!surgery_shared){
        auto head_only=std::make_unique<J>(surgery);
-       head_only->blend_projected_semantics_from(*surgery_candidate,dev,0.0);
+       head_only->blend_projected_semantics_from(*surgery_candidate,train,0.0);
        const double same_ce=head_only->evaluate_bytes(dev).ce();
        check(std::abs(same_ce-surgery_accepted_dev)<=1e-12,
              "projected rejection modified byte probabilities");
