@@ -1,5 +1,7 @@
 #include "nanlm/unified_wave.hpp"
+#include <array>
 #include <cmath>
+#include <iomanip>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -23,6 +25,15 @@ int main(){
   ("nanlm-temporal-credit-"+std::to_string(::getpid()))).string();
  try{
   double saved=0;
+  std::array<double,7> old_features{};
+  constexpr std::array<unsigned,7> ablations{
+   0u,UnifiedWaveLanguage::ABLATE_ALL,
+   UnifiedWaveLanguage::ABLATE_TRIAD,
+   UnifiedWaveLanguage::ABLATE_FIELD,
+   UnifiedWaveLanguage::ABLATE_WAVE,
+   UnifiedWaveLanguage::ABLATE_SPECTRAL,
+   UnifiedWaveLanguage::ABLATE_LONG_CONTEXT
+  };
   const std::string context="A"+std::string(40,'b');
   {
    Universe u(path);
@@ -96,6 +107,8 @@ int main(){
    check(u.root().h[255].data[UnifiedWaveLanguage::LONG_GAIN_OFFSET]==0,
          "sign-consensus probe modified network ingress");
    saved=m.predict(probe).p['Z'];
+   for(size_t i=0;i<ablations.size();++i)
+    old_features[i]=m.predict(probe,ablations[i]).p['Z'];
    u.sync();
   }
   {
@@ -103,7 +116,22 @@ int main(){
    UnifiedWaveLanguage m(u);
    UnifiedWaveLanguage::State probe{};
    for(unsigned char b:context)m.observe(probe,b);
-   check(std::fabs(m.predict(probe).p['Z']-saved)<1e-7,
+   const double reopened=m.predict(probe).p['Z'];
+   if(std::fabs(reopened-saved)>=1e-7){
+    std::cerr<<std::setprecision(12)
+             <<"TEMPORAL_RELOAD_DIAGNOSTIC saved="<<saved
+             <<" reopened="<<reopened
+             <<" delta="<<reopened-saved<<"\\n";
+    for(size_t i=0;i<ablations.size();++i){
+     const double actual=m.predict(probe,ablations[i]).p['Z'];
+     std::cerr<<std::setprecision(12)
+              <<"TEMPORAL_RELOAD_MODE mask="<<ablations[i]
+              <<" saved="<<old_features[i]
+              <<" reopened="<<actual
+              <<" delta="<<actual-old_features[i]<<"\\n";
+    }
+   }
+   check(std::fabs(reopened-saved)<1e-7,
          "48-step causal credit changed after root reload");
   }
   for(const auto& ext:{"",".so3",".overlay",".overlay.tmp"})
