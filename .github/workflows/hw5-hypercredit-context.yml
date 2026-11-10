@@ -1,0 +1,62 @@
+name: HW5 native NaN16 geometric hypermatrix context and held-out corpus controls
+on:
+  push:
+    branches: ['experiment/hw5-hypercredit-context-20261109']
+    paths:
+      - 'tools/hw5_context_mirror_native.cpp'
+      - 'tools/hw5_context_experiment.py'
+      - 'tests/test_hw5_context_native.py'
+      - 'Makefile'
+      - '.github/workflows/hw5-hypercredit-context.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  hw5-native-context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native C256 mirror/trigram readout and validate offline boundary invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/hw5_context_experiment.py tests/test_hw5_context_native.py
+          make hw5-context CXX=clang++
+          python3 -m unittest tests.test_hw5_context_native -v
+      - name: Download exact immutable HW5 reference without exposing all-books counts to the learner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-release.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-release.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/hw5-release.tar.gz" -C "$RUNNER_TEMP"
+      - name: Restore exact 123-update WordNet-to-Gutenberg geometric student
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-gutenberg-transfer-from-wordnet103
+          run-id: 42744089393
+          github-token: ${{ github.token }}
+          path: previous-artifact
+      - name: Build train-only physical mirror memory and score frozen hybrid hypermatrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f previous-artifact/hw5-transfer-state/learner-root
+          python3 tools/hw5_context_experiment.py \
+            --reference "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --student previous-artifact/hw5-transfer-state/learner-root \
+            --output hw5-context-state | tee hw5-context-summary.log
+      - name: Preserve train-only C256 reference, sparse triples, frozen dev choices and actual test controls
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-native-context-hypermatrix-dev-frozen
+          path: |
+            hw5-context-state/
+            hw5-context-summary.log
+          retention-days: 30
+          if-no-files-found: warn

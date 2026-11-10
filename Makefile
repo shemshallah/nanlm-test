@@ -112,3 +112,7 @@ hw4-onepass: tools/hw4_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
 # HW5 Gutenberg full-document byte-transition geometric learner and read-only eval.
 hw5-onepass: tools/hw5_geometric_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# HW5 context: trained ONLY on Gutenberg train titles; native NaN16 mirror bank + sparse exact triples.
+hw5-context: tools/hw5_context_mirror_native.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
