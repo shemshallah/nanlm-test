@@ -1,0 +1,220 @@
+name: HW4:0 hundred additional full WordNet geometric-credit epochs
+on:
+  push:
+    branches: ['experiment/hw4-hundredepochs-geometric-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  hw4-hundred-full-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate immutable HW4 source tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+          python3 -m py_compile tools/hw4_reference_corpus.py
+      - name: Download SHA256-pinned HW4 WordNet 3.1 reference, verify and export entire corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" | tee hw4-source.log
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'hw4-complete'
+          manifest=json.loads((base/'all.manifest.json').read_text())
+          source=json.loads((base/'hw4-corpus.manifest.json').read_text())
+          assert source['source_owner']=='NaNROUTER/MC0:0' and source['teacher_immutable'] is True
+          assert manifest['split']=='all' and manifest['no_bptt']
+          assert manifest['source_route']=='nan://GM0:SC0:MC0:BS0:0:HW4:0'
+          assert (manifest['synsets'],manifest['senses'],manifest['relations'],manifest['synonyms'])==(117791,207235,378203,53869)
+          assert manifest['corpus_bytes']==58341529
+          text=base/'all.txt'
+          assert text.stat().st_size==58341529
+          h=hashlib.sha256()
+          with text.open('rb') as f:
+            for block in iter(lambda:f.read(1<<20),b''): h.update(block)
+          assert h.hexdigest()==manifest['corpus_sha256'],(h.hexdigest(),manifest['corpus_sha256'])
+          print('HW4_THREEEPOCHS_SOURCE_VERIFIED',json.dumps({'bytes':text.stat().st_size,'sha256':h.hexdigest(),'synsets':manifest['synsets']},sort_keys=True))
+          PY
+      - name: Build native 8 MiB NaNLM and no-BPTT geometric credit optimizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm hw4-onepass CXX=clang++
+      - name: Restore and verify prior three-epoch student model
+        uses: actions/download-artifact@v4
+        with:
+          name: hw4-threeepochs-student
+          run-id: 42738710163
+          github-token: ${{ github.token }}
+          path: hw4-base-artifact
+      - name: Continue exactly 100 additional full-corpus geometric-credit epochs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee hw4-hundredepochs-run.log
+          import hashlib, json, math, os, re, shutil, subprocess, time
+          from pathlib import Path
+          started=time.perf_counter()
+          base=Path('hw4-base-artifact/hw4-threeepochs-state')
+          prior=json.loads((base/'report.json').read_text())
+          source=Path(os.environ['RUNNER_TEMP'])/'hw4-complete'
+          manifest=json.loads((source/'all.manifest.json').read_text())
+          corpus=source/'all.txt'
+          assert prior['completed_epochs']==3 and prior['bptt_attempted']==0
+          assert prior['source_reference_immutable'] is True
+          assert prior['corpus_sha256']==manifest['corpus_sha256']
+          assert prior['full_corpus_bytes']==manifest['corpus_bytes']==58341529
+          assert prior['final_model_root_sha256']=='108ab11cb2e3f51312d0842130e6af12a42814fa52f841c9ac77af4d5dc0dcd6'
+          state=Path('hw4-hundredepochs-state')
+          state.mkdir(exist_ok=False)
+          root=state/'learner-root'
+          shutil.copy2(base/'learner-root',root)
+          def sha(path):
+              d=hashlib.sha256()
+              with Path(path).open('rb') as fh:
+                  for b in iter(lambda:fh.read(1048576),b''): d.update(b)
+              return d.hexdigest()
+          assert root.stat().st_size==8388608
+          assert sha(root)==prior['final_model_root_sha256']
+          assert corpus.stat().st_size==manifest['corpus_bytes']
+          def run(command,name):
+              t=time.perf_counter()
+              p=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,check=False)
+              seconds=time.perf_counter()-t
+              (state/name).write_text(p.stdout)
+              if p.returncode:
+                  print('HW4_100_EPOCHS_COMMAND_FAILED',json.dumps({
+                      'command':command[0],'log':str(state/name),'exit_code':p.returncode,
+                      'output_tail':p.stdout[-1200:]}),flush=True)
+                  raise RuntimeError(f'{name}: native command failed')
+              return p.stdout,seconds
+          def fields(log,prefix):
+              lines=[line for line in log.splitlines() if line.startswith(prefix+' ')]
+              if len(lines)!=1: raise ValueError(f'{prefix} not uniquely reported')
+              return dict(re.findall(r'([a-z_]+)=([^\s]+)',lines[0]))
+          fixture='tests/fixtures/unified_quality_heldout.txt'
+          def eval_prose(label):
+              text,secs=run(['./nanlm',str(root),'eval',fixture],label+'-prose.log')
+              f=fields(text,'UNIFIED_EVAL')
+              return {'ce_nats':float(f['ce_nats']),'top1_accuracy':float(f['accuracy']),
+                      'bytes':int(f['bytes']),'evaluation_seconds':secs}
+          before=eval_prose('restored-epoch-3')
+          assert before['bytes']>=100
+          rows=[]
+          record={
+              'schema':'nanlm-test.hw4-hundredepochs-geometric.v1',
+              'source_route':manifest['source_route'],
+              'source_owner':manifest['source_owner'],
+              'source_reference_immutable':True,
+              'source_hw4_root_sha256':manifest['source_hw4_root_sha256'],
+              'source_hw4_sqlite_sha256':manifest['source_hw4_sqlite_sha256'],
+              'hw4_release_sha256':'87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695',
+              'corpus_sha256':manifest['corpus_sha256'],
+              'full_corpus_bytes_per_epoch':manifest['corpus_bytes'],
+              'source_synsets':manifest['synsets'],'source_senses':manifest['senses'],
+              'source_relations':manifest['relations'],'source_synonyms':manifest['synonyms'],
+              'restored_from_run_id':42738710163,
+              'restored_after_epochs':3,
+              'restored_student_sha256':prior['final_model_root_sha256'],
+              'requested_additional_epochs':100,
+              'completed_additional_epochs':0,
+              'total_cumulative_epochs':3,
+              'aggregate_geometric_steps_accepted':0,
+              'bptt_attempted':0,
+              'per_byte_trail_steps_claimed':0,
+              'method':'100 complete sequential WordNet scans and 100 native aggregate rank-3 geometric-credit updates; no per-byte TRAIL/BPTT',
+              'prose_before':before,
+              'epochs':rows,
+          }
+          previous_after=float(prior['epochs'][-1]['train_after_ce'])
+          first_before=None
+          checkpoint_epochs={1,5,10,20,30,40,50,60,70,80,90,100}
+          for epoch in range(1,101):
+              output,training_seconds=run(
+                  ['./hw4-onepass',str(root),str(corpus)],f'epoch-{epoch:03d}-train.log')
+              f=fields(output,'HW4_FULL_GEOMETRIC_PASS')
+              assert int(f['input_bytes'])==manifest['corpus_bytes']
+              assert int(f['transitions'])==manifest['corpus_bytes']-1
+              assert int(f['bptt_attempted'])==0
+              assert int(f['aggregate_step_accepted'])==1
+              assert int(f['root_bytes'])==root.stat().st_size==8388608
+              start_ce=float(f['train_before_ce'])
+              end_ce=float(f['train_after_ce'])
+              start_acc=float(f['train_before_accuracy'])
+              end_acc=float(f['train_after_accuracy'])
+              assert all(map(math.isfinite,(start_ce,end_ce,start_acc,end_acc)))
+              assert end_ce<start_ce,(epoch,start_ce,end_ce)
+              assert abs(start_ce-previous_after)<5e-6,(
+                  epoch,'CE continuity',start_ce,previous_after)
+              previous_after=end_ce
+              if first_before is None: first_before=start_ce
+              row={
+                  'additional_epoch':epoch,'cumulative_epoch':epoch+3,
+                  'input_bytes':int(f['input_bytes']),
+                  'transitions':int(f['transitions']),
+                  'train_before_ce':start_ce,'train_after_ce':end_ce,
+                  'train_before_accuracy':start_acc,'train_after_accuracy':end_acc,
+                  'gradient_max':float(f['gradient_max']),
+                  'step':float(f['step']),
+                  'nonzero_byte_pairs':int(f['nonzero_pairs']),
+                  'training_seconds':training_seconds,
+                  'aggregate_step_accepted':True,
+              }
+              if epoch in checkpoint_epochs:
+                  row['prose_evaluation']=eval_prose(f'epoch-{epoch:03d}')
+                  row['model_root_sha256']=sha(root)
+              rows.append(row)
+              record['completed_additional_epochs']=epoch
+              record['total_cumulative_epochs']=3+epoch
+              record['aggregate_geometric_steps_accepted']=epoch
+              record['total_input_bytes_scanned']=epoch*manifest['corpus_bytes']
+              record['total_transitions_scored']=epoch*(manifest['corpus_bytes']-1)
+              record['total_training_seconds']=sum(r['training_seconds'] for r in rows)
+              record['final_model_root_sha256']=sha(root) if 'model_root_sha256' not in row else row['model_root_sha256']
+              (state/'report.json').write_text(json.dumps(record,sort_keys=True,indent=2)+'\n')
+              print('HW4_100_EPOCHS_EPOCH',json.dumps(row,sort_keys=True),flush=True)
+          assert record['completed_additional_epochs']==100
+          assert record['total_input_bytes_scanned']==5834152900
+          assert record['total_transitions_scored']==5834152800
+          assert record['aggregate_geometric_steps_accepted']==100
+          assert record['final_model_root_sha256']!=prior['final_model_root_sha256']
+          summary={
+             'completed_additional_epochs':100,'cumulative_epochs':103,
+             'source_bytes_per_epoch':manifest['corpus_bytes'],
+             'total_source_bytes_scanned':record['total_input_bytes_scanned'],
+             'initial_train_ce':first_before,'final_train_ce':rows[-1]['train_after_ce'],
+             'initial_train_accuracy':rows[0]['train_before_accuracy'],
+             'final_train_accuracy':rows[-1]['train_after_accuracy'],
+             'prose_before':before,'prose_after':rows[-1]['prose_evaluation'],
+             'native_training_seconds':record['total_training_seconds'],
+             'workflow_step_elapsed_seconds':time.perf_counter()-started,
+             'final_student_sha256':record['final_model_root_sha256'],
+             'bptt_attempted':0,'source_reference_immutable':True,
+          }
+          (state/'summary.json').write_text(json.dumps(summary,sort_keys=True,indent=2)+'\n')
+          print('HW4_100_EPOCHS_FINAL',json.dumps(summary,sort_keys=True),flush=True)
+          PY
+      - name: Archive 8 MiB learner root, every epoch log and report; never source corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-hundredepochs-student
+          path: |
+            hw4-hundredepochs-state/
+            hw4-hundredepochs-run.log
+            hw4-source.log
+          retention-days: 30
+          if-no-files-found: warn
