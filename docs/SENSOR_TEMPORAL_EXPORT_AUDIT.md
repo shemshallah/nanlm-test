@@ -20,7 +20,10 @@ python3 -m unittest discover -s tests -p test_sensor_temporal_export.py -v
 
 The CLI accepts the actual `.slices` path or the snapshot filename (it
 appends `.slices`). The default output is one compact JSON object per
-line. CSV rows describe measured numerical data; none contain source text.
+line. CSV rows contain separate numeric component columns (for example,
+\`vector_0\`..\`vector_2\`, \`tensor_0\`..\`tensor_8\`, and
+\`vector_delta_0\`..\`vector_delta_2\`), ready for matrix analysis.
+Neither export format contains source text.
 
 ## Native compatibility
 
