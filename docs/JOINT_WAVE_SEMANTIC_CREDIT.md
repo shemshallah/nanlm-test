@@ -68,9 +68,15 @@ The unchanged production UnifiedWave byte CE was 4.22618. In this one small seed
 
 This is a valid initial mechanistic/control result, but these data do not resolve significance, robust improvement across seeds, generalization to unseen relations, or natural semantics. The next benchmark must report confidence intervals and absolute/proportional deltas across independently generated heldout examples.
 
+## Recurrent semantic adjoint (experimental verification)
+
+The next commit adds a **read-only, eight-transition reverse-mode derivative through the actual UnifiedWave oscillator**. This is a separate capability from training the 24D readout. The semantic role/synset softmax supplies a terminal gradient with respect to 255 forward and 255 inverse wave activations; UnifiedWave propagates these gradients through both second-order recurrences, directed scattering, the input-gain register and frequency shift. It does not differentiate unrelated teacher, attention or triad parameters.
+
+The native test uses a complete eight-byte causal tape and independently perturbs the *existing* input-gain register by plus/minus 0.005, replaying the exact physical wave from the tape's fixed starting state. Raw original gain-register bytes, including the magic marker, are restored after each test. The analytic role and sense derivatives must agree with the central difference within a numerical tolerance. The test does **not** yet accept any persistent recurrent update. A gradient audit, even when it succeeds, does not prove a safe optimizer or a general language benefit.
+
 ## Next required experiment
 
 1. Connect the preceding shared contextual lexical embeddings to the wave readout, preserving end-to-end derivatives to both roles and senses instead of creating parallel encoders.
-2. Compute and finite-difference-check a semantic adjoint through the truncated eight-step UnifiedWave recurrent tape; compare with detached readout.
+2. After the read-only semantic recurrence gradient is verified, implement guarded, replay-validated root updates and compare with detached readout on heldout byte loss.
 3. Compare multiple fixed seeds and label permutations; evaluate unseen templates, unseen predicates and real Gutenberg heldout books, with corpus disjointness and leakage controls.
 4. Gate acceptance on non-interference in language CE and exact WordNet reasoning. Keep exact claims separate from probabilistic outputs.
