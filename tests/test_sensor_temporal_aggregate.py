@@ -75,13 +75,14 @@ class AggregateTests(unittest.TestCase):
         self.journal.write_text('NANLM_SENSOR_V2\t4\n'
             'src_a\t+\tpenguin\tISA\tbird\t0x1p+0\t1\n'
             'src_b\t+\tpenguin\tISA\tanimal\t0x1p+0\t2\n'
-            'src_a\t-\tpenguin\tISA\tanimal\t0x1p+0\t3\n', encoding='utf-8')
+            'src_a\t+\tbird\tISA\tanimal\t0x1p+0\t3\n'
+            'src_a\t-\tpenguin\tISA\tanimal\t0x1p+0\t4\n', encoding='utf-8')
         make_sidecar(self.sidecar, [encoded_frame(3, (999., 999., 999.)),
                                          encoded_frame(4, (888., 888., 888.))])
         frames, _ = exp.load(self.sidecar)
         final_tick, events = ag.read_journal(self.journal)
         c = ag.concepts(frames, final_tick, events)
-        self.assertEqual(len(c), 2)
+        self.assertEqual(len(c), 3)
         both = next(x for x in c if x['object'] == 'animal')
         self.assertEqual(both['evidence_state'], 'both')
         self.assertEqual(both['support_sources'], ['src_b'])
@@ -89,7 +90,7 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(both['phrase'], 'penguin is an animal')
         # Does not hallucinate arbitrary '999'/'888' lexical meaning.
         self.assertFalse(any('999' in x['phrase'] for x in c))
-        self.assertEqual(both['aligned_sequences'], [1])
+        self.assertEqual(both['aligned_sequences'], [2])
         self.assertIn('not attribution', both['temporal_alignment'])
 
     def test_journal_crosscheck_rejects_mismatched_sources(self):
