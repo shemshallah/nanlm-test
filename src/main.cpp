@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -72,6 +72,7 @@ int main(int argc,char** argv){
             <<" eigenvalue="<<mind.spectral().eigenvalue
             <<" eigen_residual="<<mind.spectral().residual
             <<" mirror_mass="<<mind.spectral().edge_mass
+            <<" temporal_credit_accepted="<<mind.temporal_credit_accepted()
             <<" bptt_enabled="<<int(mind.bptt_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
             <<" bptt_accepted="<<mind.bptt_accepted()
@@ -170,6 +171,35 @@ int main(int argc,char** argv){
    std::cout<<std::setprecision(9)<<"UNIFIED_EVAL bytes="<<result.tokens
             <<" ce_nats="<<result.ce()
             <<" accuracy="<<result.accuracy()<<"\n";
+  }else if(operation=="eval-credit"){
+   if(argc<4||argc>5)
+    throw std::invalid_argument("eval-credit TEXT [WAVE_EXEC_0_OR_1]");
+   UnifiedWaveLanguage mind(universe);
+   if(argc==5){
+    const int enabled=number(4);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("wave execution flag must be 0 or 1");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
+   const auto measure=[&](unsigned disabled){
+    std::ifstream file(argv[3],std::ios::binary);
+    if(!file)throw std::runtime_error("credit evaluation file unavailable");
+    return mind.evaluate(file,disabled);
+   };
+   const auto full=measure(0);
+   const auto no_credit=measure(UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
+   if(full.tokens==0||full.tokens!=no_credit.tokens||
+      !std::isfinite(full.ce())||!std::isfinite(no_credit.ce()))
+    throw std::runtime_error("invalid paired temporal-credit evaluation");
+   std::cout<<std::setprecision(10)
+            <<"UNIFIED_CREDIT_EVAL tokens="<<full.tokens
+            <<" full_ce="<<full.ce()
+            <<" no_credit_ce="<<no_credit.ce()
+            <<" delta_no_credit_minus_full="<<no_credit.ce()-full.ce()
+            <<" full_accuracy="<<full.accuracy()
+            <<" no_credit_accuracy="<<no_credit.accuracy()
+            <<" wave_execution="<<int(mind.wave_execution_enabled())
+            <<" bptt_attempted="<<mind.bptt_attempted()<<"\n";
   }else if(operation=="audit"){
    if(argc<4)throw std::invalid_argument("audit file required");
    UnifiedWaveLanguage mind(universe);

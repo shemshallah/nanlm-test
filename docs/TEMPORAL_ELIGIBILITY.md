@@ -51,3 +51,19 @@ change while BPTT attempted/accepted counts remain zero.
 This does not create another TRAIL implementation; the forward/inverse rail
 semantics of NaNLM's already-existing local credit are a separate parity
 question, and no new geometric advantage is claimed.
+
+## Measured existing geometric readout (no new learner)
+
+The existing temporal eligibility learner now exposes a per-process
+`temporal_credit_accepted` count of scratch-validated long-context head
+gain updates. Default training must show **zero BPTT attempts**, yet can
+accept existing temporal-credit updates in the same 8 MiB root. The native
+regression checks positive credit acceptance and a finite paired readout
+ablation after a long-distance training sample.
+
+`nanlm ROOT eval-credit HELDOUT.txt [WAVE_EXEC_0_OR_1]` measures the
+SAME model root on the SAME held-out bytes with the existing long-context
+readout enabled and disabled. It emits `UNIFIED_CREDIT_EVAL` with CE,
+accuracy, token parity and the signed held-out loss difference. It does not
+train or create a new TRAIL implementation. A positive signed delta means
+the stored geometric readout helped; a negative delta means it hurt.

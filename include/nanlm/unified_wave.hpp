@@ -163,6 +163,7 @@ private:
  std::array<double,N> in_degree_{},out_degree_{};
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
+ uint64_t temporal_credit_accepted_=0;
  bool bptt_enabled_=false; // Legacy reverse-mode comparison is opt-in.
  bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
  TriadWaveFormer::Parameters triad_parameters_{};
@@ -593,6 +594,7 @@ private:
    if(after+1e-12<before){
     for(size_t c=0;c<N;++c)
      write_scalar(universe_.root().h[c],LONG_GAIN_OFFSET,proposed[c]);
+    ++temporal_credit_accepted_;
     return true;
    }
   }
@@ -797,6 +799,7 @@ public:
  bool bptt_enabled()const{return bptt_enabled_&&wave_execution_enabled_;}
  void set_frequency_learning_enabled(bool enabled){frequency_learning_enabled_=enabled;}
  bool frequency_learning_enabled()const{return frequency_learning_enabled_;}
+ uint64_t temporal_credit_accepted()const{return temporal_credit_accepted_;}
  uint64_t bptt_accepted()const{return bptt_accepted_;}
  uint64_t bptt_attempted()const{return bptt_attempted_;}
  double recurrent_input_gain(uint8_t head)const{return input_gain(head);}

@@ -43,12 +43,24 @@ int main(){
    check(fit.tokens>200&&std::isfinite(fit.ce()),"long-context training failed");
    check(m.bptt_attempted()==0&&m.bptt_accepted()==0,
          "default local/geometric credit entered reverse-mode tape");
+   check(m.temporal_credit_accepted()>0,
+         "existing temporal credit never accepted an update");
    check(std::fabs(gain(u,'Z'))>1e-6,
          "distant native pair evidence did not change mapped credit gain");
    UnifiedWaveLanguage::State probe{};
    for(unsigned char b:context)m.observe(probe,b);
    const auto full=m.predict(probe);
    const auto ablated=m.predict(probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
+   std::istringstream eval_full(context+"Z"+context+"Z");
+   std::istringstream eval_without(context+"Z"+context+"Z");
+   const auto exact_full=m.evaluate(eval_full);
+   const auto exact_ablated=m.evaluate(
+      eval_without,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
+   check(exact_full.tokens==exact_ablated.tokens&&
+         std::isfinite(exact_full.ce())&&std::isfinite(exact_ablated.ce()),
+         "credit-on/off paired evaluation invalid");
+   check(std::fabs(exact_full.ce()-exact_ablated.ce())>1e-9,
+         "existing temporal readout has no measurable effect");
    check(std::fabs(full.p['Z']-ablated.p['Z'])>1e-8,
          "long-context contribution is inert on distant evidence");
    check(u.root().h[255].data[UnifiedWaveLanguage::LONG_GAIN_OFFSET]==0,
