@@ -112,3 +112,7 @@ hw4-onepass: tools/hw4_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
 # HW5 Gutenberg full-document byte-transition geometric learner and read-only eval.
 hw5-onepass: tools/hw5_geometric_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# Grounded semantics on the same NaN16 Universe; separate from byte-only accuracy.
+test_semantic_bridge: tests/test_semantic_bridge.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
