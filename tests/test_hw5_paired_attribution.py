@@ -42,11 +42,11 @@ class PairedAttributionTests(unittest.TestCase):
             p = Path(t) / "triples.bin"
             p.write_bytes(b"HW5TRI01" + struct.pack("<QII", 1, triple_key, 2))
             triples, contexts = read_triplets(p)
-            stats = coverage(b"abcabca", triples, contexts)
-            self.assertEqual(stats["transitions"], 5)
-            self.assertEqual(stats["seen_exact_triple_count"], 2)
-            self.assertEqual(stats["seen_pair_context_count"], 2)
-            self.assertAlmostEqual(stats["exact_triple_fraction"], 0.4)
+            stats = coverage(b"abc" * 40, triples, contexts)
+            self.assertEqual(stats["transitions"], 118)
+            self.assertEqual(stats["seen_exact_triple_count"], 40)
+            self.assertEqual(stats["seen_pair_context_count"], 40)
+            self.assertAlmostEqual(stats["exact_triple_fraction"], 40 / 118)
             self.assertNotIn((ord("b") << 16) | (ord("a") << 8) | ord("c"), triples)
 
     def test_malformed_duplicate_record_rejected(self):
