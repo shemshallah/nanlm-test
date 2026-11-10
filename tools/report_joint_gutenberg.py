@@ -12,11 +12,14 @@ FIELDS = (
     "carol_early_shuffled_ce", "carol_early_post_recurrence_ce",
     "carol_late_byte_ce", "carol_late_joint_ce",
     "carol_early_pareto_ce", "carol_late_pareto_ce",
+    "carol_early_frozen_ce", "carol_late_frozen_ce",
     "carol_late_shuffled_ce", "carol_late_post_recurrence_ce",
     "pareto_batches_accepted", "pareto_batches_rejected",
     "pareto_head_only_batches", "pareto_shared_alpha_sum",
     "pareto_role_test_ce", "pareto_sense_test_ce",
     "pareto_role_test_accuracy", "pareto_sense_test_accuracy",
+    "frozen_role_test_ce", "frozen_sense_test_ce",
+    "frozen_role_test_accuracy", "frozen_sense_test_accuracy",
 )
 def parse(text: str) -> list[dict]:
     parsed = []
@@ -56,6 +59,10 @@ def main():
                 raise ValueError("mismatched heldout byte count")
         if row["dev_tokens"] != manifest["splits"]["dev_alice"]["bytes"] - 1:
             raise ValueError("mismatched development byte count")
+        if abs(row["dev_frozen_ce"]-row["dev_byte_ce"]) > 1e-10:
+            raise ValueError("frozen semantic head moved the shared byte readout")
+        if row["frozen_role_updates"] <= 0 or row["frozen_sense_updates"] <= 0:
+            raise ValueError("frozen semantic head failed to train")
         if row["dev_pareto_ce"] > row["dev_byte_ce"] + 1e-9:
             raise ValueError("Pareto arm worsened heldout development CE")
         if row["dev_post_recurrence_ce"] > row["dev_joint_ce"] + 1e-9:
@@ -73,7 +80,7 @@ def main():
             raise ValueError("invalid nonzero shared-gradient line-search")
         if n_shared == 0 and abs(row["dev_pareto_ce"]-row["dev_byte_ce"]) > 1e-10:
             raise ValueError("head-only specialization altered byte development CE")
-    variants = ("byte", "joint", "shuffled", "pareto", "post_recurrence")
+    variants = ("byte", "joint", "shuffled", "pareto", "frozen", "post_recurrence")
     results = []
     for row in rows:
         n1, n2 = row["early_tokens"], row["late_tokens"]
@@ -90,6 +97,7 @@ def main():
             "paired_delta_joint_minus_byte": values["joint"] - values["byte"],
             "paired_delta_shuffled_minus_byte": values["shuffled"] - values["byte"],
             "paired_delta_pareto_minus_byte": values["pareto"] - values["byte"],
+            "paired_delta_frozen_minus_byte": values["frozen"] - values["byte"],
             "paired_delta_post_recurrent_minus_byte": (
                 values["post_recurrence"] - values["byte"]
             ),
@@ -111,6 +119,7 @@ def main():
           f"joint_minus_byte_min_nats={min(deltas):+.9f} " +
           f"joint_minus_byte_max_nats={max(deltas):+.9f} " +
           f"pareto_minus_byte_mean_nats={statistics.mean(pareto_deltas):+.9f} " +
+          f"frozen_minus_byte_mean_nats={statistics.mean(r['paired_delta_frozen_minus_byte'] for r in results):+.9f} " +
           "significant=unassessed", flush=True)
     for r in results:
         values = r["combined_ce"]
@@ -121,13 +130,18 @@ def main():
               f"role_ce={r['raw']['pareto_role_test_ce']:.8f} "
               f"sense_ce={r['raw']['pareto_sense_test_ce']:.8f} "
               f"role_accuracy={r['raw']['pareto_role_test_accuracy']:.6f} "
-              f"sense_accuracy={r['raw']['pareto_sense_test_accuracy']:.6f}",
+              f"sense_accuracy={r['raw']['pareto_sense_test_accuracy']:.6f} "
+              f"frozen_role_ce={r['raw']['frozen_role_test_ce']:.8f} "
+              f"frozen_sense_ce={r['raw']['frozen_sense_test_ce']:.8f} "
+              f"frozen_role_accuracy={r['raw']['frozen_role_test_accuracy']:.6f} "
+              f"frozen_sense_accuracy={r['raw']['frozen_sense_test_accuracy']:.6f}",
               flush=True)
         print(f"JOINT_GUTENBERG_PAIR seed={r['seed']} "
               f"byte_ce={values['byte']:.9f} "
               f"joint_ce={values['joint']:.9f} "
               f"shuffled_ce={values['shuffled']:.9f} "
               f"pareto_ce={values['pareto']:.9f} "
+              f"frozen_ce={values['frozen']:.9f} "
               f"post_recurrence_ce={values['post_recurrence']:.9f} "
               f"joint_minus_byte={r['paired_delta_joint_minus_byte']:+.9f} "
               f"pareto_minus_byte={r['paired_delta_pareto_minus_byte']:+.9f} "
@@ -142,6 +156,7 @@ def main():
             "joint_minus_byte_min_nats": min(deltas),
             "joint_minus_byte_max_nats": max(deltas),
             "pareto_minus_byte_mean_nats": statistics.mean(pareto_deltas),
+            "frozen_minus_byte_mean_nats": statistics.mean(r["paired_delta_frozen_minus_byte"] for r in results),
             "shared_batches_by_seed": [
                 int(r["raw"]["pareto_batches_accepted"]) for r in results
             ],
