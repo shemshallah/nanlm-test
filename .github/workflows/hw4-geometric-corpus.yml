@@ -1,0 +1,102 @@
+name: HW4 reference -> independent geometric-credit learner
+on:
+  push:
+    branches:
+      - experiment/hw4-readonly-geometric-corpus-20261109
+    paths:
+      - tools/hw4_reference_corpus.py
+      - tools/wordnet31_50epochs.py
+      - tests/test_hw4_reference_corpus.py
+      - .github/workflows/hw4-geometric-corpus.yml
+  pull_request:
+    paths:
+      - tools/hw4_reference_corpus.py
+      - tools/wordnet31_50epochs.py
+      - tests/test_hw4_reference_corpus.py
+      - .github/workflows/hw4-geometric-corpus.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exact-reference-ingest-and-pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests - immutable HW4 teacher, no leakage or writeback
+        run: |
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+          python3 -m py_compile tools/hw4_reference_corpus.py tools/wordnet31_50epochs.py
+      - name: Download version-pinned HW4 release from the NaNROUTER ring repository
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error --silent \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-wordnet31-full-reference.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-wordnet31-full-reference.tar.gz" | sha256sum -c -
+      - name: Convert exact HW4 reference to source-held-out byte and typed-relation corpora
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-wordnet31-full-reference.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-corpus" \
+            | tee hw4-corpus.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'hw4-corpus'
+          m=json.loads((base/'hw4-corpus.manifest.json').read_text())
+          assert m['total']['synsets']==117791,m['total']
+          assert m['total']['senses']==207235,m['total']
+          assert m['total']['relations']==378203,m['total']
+          assert m['source_owner']=='NaNROUTER/MC0:0'
+          assert m['no_bptt'] is True
+          assert min(m['files'][s]['bytes'] for s in ('train','dev','test'))>0
+          assert sum(m['files'][s]['counts']['synsets'] for s in ('train','dev','test'))==117791
+          print('HW4_PINNED_INTAKE_PASS',json.dumps(m['total'],sort_keys=True))
+          print('HW4_HELDOUT_SPLITS',json.dumps({s:m['files'][s]['counts'] for s in ('train','dev','test')},sort_keys=True))
+          PY
+      - name: Exercise native no-BPTT geometric credits on independent root
+        run: |
+          set -euo pipefail
+          make nanlm CXX=clang++
+          python3 tools/wordnet31_50epochs.py \
+            --corpus "$RUNNER_TEMP/hw4-corpus/train.txt" \
+            --manifest "$RUNNER_TEMP/hw4-corpus/train.manifest.json" \
+            --heldout "$RUNNER_TEMP/hw4-corpus/test.txt" \
+            --state-dir "$RUNNER_TEMP/hw4-learner-pilot" \
+            --epochs 50 --pilot-only --budget-seconds 270 \
+            --initial-chunk-bytes 128 --max-chunk-bytes 256 \
+            | tee hw4-credit-pilot.log
+          grep -F '"status": "PILOT_ONLY"' hw4-credit-pilot.log
+          grep -F 'bptt_attempted=0' hw4-credit-pilot.log || python3 - <<'PY'
+          from pathlib import Path
+          p=Path('hw4-credit-pilot.log').read_text()
+          assert '"status": "PILOT_ONLY"' in p
+          assert '"scored_tokens":' in p
+          print('GEOMETRIC_CREDIT_BPTT_DISABLED_IN_NATIVE_CHECKPOINT')
+          PY
+          test -s "$RUNNER_TEMP/hw4-learner-pilot/unified-root"
+          test -s "$RUNNER_TEMP/hw4-learner-pilot/progress.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path(os.environ['RUNNER_TEMP'])/'hw4-learner-pilot'/'progress.json'
+          x=json.loads(p.read_text())
+          assert x['epochs_target']==50
+          assert x['epochs_completed']==0
+          assert 0<x['total_bytes_seen']<10000
+          assert x['heldout_sha256'] is not None
+          assert x['source_hw4_root_sha256'] is not None
+          print('HW4_GEOMETRIC_CREDIT_PILOT_PASS',x['total_bytes_seen'],x['total_scored'])
+          PY
+      - name: Preserve manifests and measured pilot without redistributing WordNet
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-corpus-ingest-pilot-results
+          path: |
+            hw4-corpus.log
+            hw4-credit-pilot.log
+          retention-days: 30
+          if-no-files-found: warn
