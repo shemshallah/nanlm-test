@@ -1,0 +1,156 @@
+name: Experimental sensor temporal export audit
+on:
+  pull_request:
+    paths:
+      - 'tools/sensor_temporal_export.py'
+      - 'tests/test_sensor_temporal_export.py'
+      - 'tests/test_sensor_temporal_aggregate.py'
+      - 'tests/test_sensor_temporal_concept_probe.py'
+      - 'tests/test_sensor_temporal_compositional_probe.py'
+      - 'tests/test_sensor_temporal_wave_forecast.py'
+      - 'tests/test_sensor_temporal_role_decoder.py'
+      - 'tests/test_sensor_temporal_reason_bridge.py'
+      - 'tests/test_sensor_temporal_full_readout.py'
+      - 'tools/sensor_temporal_aggregate.py'
+      - 'tools/sensor_temporal_concept_probe.py'
+      - 'tools/sensor_temporal_compositional_probe.py'
+      - 'tools/sensor_temporal_wave_forecast.py'
+      - 'tools/sensor_temporal_role_decoder.py'
+      - 'tools/sensor_temporal_reason_bridge.py'
+      - 'tools/sensor_temporal_full_readout.py'
+      - 'docs/SENSOR_GROUNDED_REASON_BRIDGE.md'
+      - 'src/sensor_role_probe.cpp'
+      - 'docs/SENSOR_ROLE_DECODER_AUDIT.md'
+      - 'docs/SENSOR_WAVE_PREDICTION_AUDIT.md'
+      - 'docs/SENSOR_COMPOSITION_ABLATION.md'
+      - 'docs/SENSOR_TEMPORAL_CONCEPT_BRIDGE.md'
+      - '.github/workflows/sensor-temporal-export.yml'
+      - 'include/nanlm/sensor_timeslices.hpp'
+      - 'src/sensor_resident.cpp'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: temporal-export-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  verified-temporal-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit test strict numerical reader and temporal changes
+        run: |
+          python3 -m unittest discover -s tests -p 'test_sensor_temporal_*.py' -v
+      - name: Native GCC/Clang measurement to Python decoder interoperability
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${{ matrix.cxx }}" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
+            src/sensor_resident.cpp -o sensor-resident
+          SNAP=$(mktemp /tmp/nanlm-temporal-XXXXXX)
+          rm -f "$SNAP"
+          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices" "$SNAP.probe" "$SNAP.probe.tmp" "$SNAP.probe.slices" "$SNAP.compose" "$SNAP.compose.tmp" "$SNAP.compose.slices" "$SNAP.wave" "$SNAP.wave.tmp" "$SNAP.wave.slices"' EXIT
+          printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_c\t-\tpenguin\tISA\tanimal\nTICK\nMEASURE\nTIMELINE\t8\nQUIT\n' | ./sensor-resident "$SNAP" | tee native-resident.log
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" summary | tee temporal-summary.jsonl
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" frames | tee temporal-frames.jsonl
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" deltas --format csv > temporal-deltas.csv
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" samples --format csv > temporal-samples.csv
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" mirrors --format csv > temporal-mirrors.csv
+          python3 tools/sensor_temporal_aggregate.py "$SNAP.slices" aggregate --format csv > temporal-aggregates.csv
+          python3 tools/sensor_temporal_aggregate.py "$SNAP.slices" concepts --journal "$SNAP" > temporal-concepts.jsonl
+          test "$(stat -c%s "$SNAP.slices")" = 8388608
+          python3 -c 'import json; rows=[json.loads(x) for x in open("temporal-concepts.jsonl")]; assert len(rows)==3,rows; assert any(r["phrase"]=="penguin is a bird" and r["evidence_state"]=="supports" for r in rows),rows; print("PASS: source-grounded concept labels, no geometric word inversion")'
+          grep -q 'mean_vector_0' temporal-aggregates.csv
+          grep -q 'GLOBAL' temporal-aggregates.csv
+          printf 'QUERY\tpenguin\tISA\tanimal\nQUIT\n' | ./sensor-resident "$SNAP" > native-reason.log
+          grep -q 'QUERY state=3 inferred=1 proof=penguin->bird->animal' native-reason.log
+          python3 tools/sensor_temporal_reason_bridge.py "$SNAP.slices" \
+            --journal "$SNAP" --subject penguin --relation ISA --object animal | tee temporal-reason.json
+          python3 -c 'import json; r=json.load(open("temporal-reason.json")); assert r["evidence_state"]=="both",r; assert r["inferred"],r; assert r["proof_nodes"]==["penguin","bird","animal"],r; assert r["proof_sources"]==["src_a","src_b"],r; assert r["refute_sources"]==["src_c"],r; print("PASS: journal-provenanced conceptual language matches native ISA proof and contradiction")'
+
+          printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_a\t+\tbird\tISA\tanimal\nINGEST\tsrc_a\t-\tpenguin\tISA\tanimal\nINGEST\tsrc_b\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_b\t-\tpenguin\tISA\tanimal\nQUIT\n' | ./sensor-resident "$SNAP.probe" > native-concept-probe.log
+          python3 tools/sensor_temporal_concept_probe.py "$SNAP.probe.slices" --journal "$SNAP.probe" | tee temporal-concept-probe.json
+          python3 -c 'import json; r=json.load(open("temporal-concept-probe.json")); assert r["eligible_known_concept_events"]==6,r; assert r["predicted"]==6,r; assert r["correct"]==6,r; assert r["accuracy_all_eligible"]>r["most_frequent_training_label_baseline"],r; print("PASS: source-disjoint numeric concept retrieval beats majority baseline")'
+          test "$(stat -c%s "$SNAP.probe.slices")" = 8388608
+          python3 - <<'PY' | ./sensor-resident "$SNAP.compose" > native-composition.log
+          training = [
+              ("penguin", "ISA", "bird"), ("eagle", "ISA", "animal"),
+              ("whale", "ISA", "fish"), ("penguin", "LIKES", "fish"),
+              ("eagle", "LIKES", "bird"), ("whale", "LIKES", "animal"),
+          ]
+          heldout = [
+              ("penguin", "ISA", "animal"), ("eagle", "ISA", "fish"),
+              ("whale", "ISA", "bird"), ("penguin", "LIKES", "animal"),
+              ("eagle", "LIKES", "fish"), ("whale", "LIKES", "bird"),
+          ]
+          for idx, (subject, relation, obj) in enumerate(training + heldout, 1):
+              print(f"INGEST\tsrc_{idx}\t+\t{subject}\t{relation}\t{obj}")
+          print("QUIT")
+          PY
+          ! grep -q '^ERROR' native-composition.log
+          python3 tools/sensor_temporal_compositional_probe.py "$SNAP.compose.slices" \
+            --journal "$SNAP.compose" --training-events 6 | tee temporal-composition.json
+          python3 -c 'import json; r=json.load(open("temporal-composition.json")); assert r["candidate_product"]==18,r; assert r["test_events"]==6,r; assert r["temporal_exact"]==6,r; assert r["static_exact"]<6,r; assert r["shuffled_exact"]<6,r; assert r["abstentions"]==0,r; assert r["pair_index_exact"]==6,r; assert r["one_missing_head_exact"]==6,r; assert r["one_replaced_head_exact"]==6,r; print("PASS: native unseen-triple readout plus C(256,2) one-head loss/replacement recovery")'
+          test "$(stat -c%s "$SNAP.compose.slices")" = 8388608
+          "${{ matrix.cxx }}" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
+            src/sensor_role_probe.cpp -o sensor-role-probe
+          ./sensor-role-probe "$SNAP.compose" > native-role-probe.tsv
+          ! grep -Eq 'penguin|eagle|whale|ISA|LIKES' native-role-probe.tsv
+          test "$(wc -l < native-role-probe.tsv)" = 12
+          python3 tools/sensor_temporal_role_decoder.py "$SNAP.compose.slices" \
+            --journal "$SNAP.compose" --role-trace native-role-probe.tsv \
+            --training-events 6 | tee temporal-role-decoder.json
+          python3 -c 'import json; r=json.load(open("temporal-role-decoder.json")); assert r["test_events"]==6,r; assert r["source_disjoint"],r; assert r["correct"]==6,r; assert r["one_missing_head_correct"]==6,r; assert r["time_shuffled_correct"]<6,r; assert r["role_swapped_correct"]<6,r; print("PASS: C++ numeric role telemetry to SGD supervised decoder of unseen complete claims")'
+          python3 tools/sensor_temporal_full_readout.py "$SNAP.compose.slices" \
+            --journal "$SNAP.compose" --role-trace native-role-probe.tsv \
+            --training-events 6 | tee temporal-full-readout.json
+          python3 -c 'import json; r=json.load(open("temporal-full-readout.json")); assert r["decoded_items"]==6,r; assert r["source_disjoint_training"],r; assert r["items"][0]["phrase"]=="penguin is an animal",r; assert r["items"][0]["evidence_state_before_tick"]=="unknown",r; assert r["items"][0]["evidence_state_at_tick"]=="supports",r; assert r["items"][0]["journal_sources"]["support"]==["src_7"],r; print("PASS: integrated numeric->words->evidence readout without semantic conflation")'
+
+
+          {
+            printf 'INGEST\twave_a\t+\tpenguin\tISA\tbird\n'
+            printf 'INGEST\twave_b\t+\tbird\tISA\tanimal\n'
+            printf 'INGEST\twave_c\t-\tpenguin\tISA\tanimal\n'
+            for i in $(seq 1 55); do printf 'TICK\n'; done
+            printf 'QUIT\n'
+          } | ./sensor-resident "$SNAP.wave" > native-wave.log
+          ! grep -q '^ERROR' native-wave.log
+          python3 tools/sensor_temporal_wave_forecast.py "$SNAP.wave.slices" \
+            --level GLOBAL --id 255 --min-ticks 32 --holdout-ticks 10 | tee temporal-wave.json
+          python3 -c 'import json; r=json.load(open("temporal-wave.json")); assert r["status"]=="evaluated",r; assert r["retained_distinct_ticks"]>=50,r; assert not r["oscillatory_predictive_candidate"],r; assert r["holdout_rmse"]["known_leak"] <= r["holdout_rmse"]["persistence"],r; print("PASS: long native idle decay is NOT classified as a standing wave")'
+          test "$(stat -c%s "$SNAP.wave.slices")" = 8388608
+          python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
+          grep -q '^MATRIX\|^SLICE' native-resident.log
+          grep -q 'GLOBAL' temporal-deltas.csv
+          grep -q 'physical_offset' temporal-mirrors.csv
+      - name: Persist reproducible audit outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-export-${{ matrix.cxx }}
+          path: |
+            native-resident.log
+            native-reason.log
+            temporal-reason.json
+            temporal-summary.jsonl
+            temporal-frames.jsonl
+            temporal-deltas.csv
+            temporal-samples.csv
+            temporal-mirrors.csv
+            temporal-aggregates.csv
+            temporal-concepts.jsonl
+            temporal-concept-probe.json
+            native-concept-probe.log
+            native-composition.log
+            temporal-composition.json
+            native-role-probe.tsv
+            temporal-role-decoder.json
+            temporal-full-readout.json
+            native-wave.log
+            temporal-wave.json
+          if-no-files-found: ignore
