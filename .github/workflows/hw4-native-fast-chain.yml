@@ -1,0 +1,119 @@
+name: HW4:0 native fast chain - resume latest verified student
+on:
+  push:
+    branches: ['experiment/hw4-native-fast-resume-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hw4-native-fast-chain-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile original native aggregate learner and validate tools
+        run: |
+          set -euo pipefail
+          make nanlm hw4-onepass CXX=clang++
+          python3 -m py_compile tools/hw4_fast_resume.py tools/hw4_reference_corpus.py
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+      - name: Find newest completed, successful fast-chain artifact (fallback pinned epoch 303)
+        id: parent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          parent_id=42743877955
+          parent_name=hw4-native-fast-continuation-42743877955
+          mapfile -t candidate_ids < <(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select((.name | startswith("hw4-native-chain-")) and (.expired == false) and (.workflow_run.head_branch == "experiment/hw4-native-fast-resume-20261109"))] | sort_by(.created_at) | reverse | .[].workflow_run.id')
+          for candidate in "${candidate_ids[@]}"; do
+            test -n "$candidate" || continue
+            outcome="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate" --jq '.conclusion')"
+            if [[ "$outcome" == success ]]; then
+              parent_id="$candidate"
+              parent_name="hw4-native-chain-$candidate"
+              break
+            fi
+          done
+          echo "run_id=$parent_id" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$parent_name" >> "$GITHUB_OUTPUT"
+          echo "HW4_FAST_CHAIN_PARENT run=$parent_id artifact=$parent_name"
+      - name: Restore exactly one prior full-root checkpoint
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARENT_RUN: ${{ steps.parent.outputs.run_id }}
+          PARENT_ARTIFACT: ${{ steps.parent.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          gh run download "$PARENT_RUN" --repo "$GITHUB_REPOSITORY" --name "$PARENT_ARTIFACT" --dir hw4-parent
+          test -f hw4-parent/hw4-native-receipts/report.json
+          mkdir -p hw4-native-state
+          cp -p hw4-parent/hw4-native-state/learner-root* hw4-native-state/
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          prior=json.loads(Path('hw4-parent/hw4-native-receipts/report.json').read_text())
+          assert prior['schema']=='nanlm-test.hw4-fast-continuation.v1'
+          assert prior['status'] in ('completed','optimizer_plateau')
+          assert prior['completed_additional_epochs']>0
+          assert prior['bptt_attempted']==0
+          assert prior['corpus_sha256']=='6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604'
+          root=Path('hw4-native-state/learner-root')
+          assert root.stat().st_size==8388608
+          model_sha=hashlib.sha256(root.read_bytes()).hexdigest()
+          assert model_sha==prior['final_student_sha256']
+          assert prior['final_cumulative_epoch']>=303
+          assert 0<prior['last_train_ce']<20
+          with open(os.environ['GITHUB_ENV'],'a') as out:
+            out.write(f"START_SHA={model_sha}\n")
+            out.write(f"START_EPOCH={prior['final_cumulative_epoch']}\n")
+            out.write(f"START_CE={prior['last_train_ce']}\n")
+          print('HW4_FAST_CHAIN_PARENT_VERIFIED',json.dumps({
+            'epoch':prior['final_cumulative_epoch'],'sha256':model_sha,
+            'train_ce':prior['last_train_ce']},sort_keys=True))
+          PY
+      - name: Read-only verification of entire HW4 WordNet source
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" > hw4-chain-source.log
+          echo "6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604  $RUNNER_TEMP/hw4-complete/all.txt" | sha256sum -c -
+      - name: Train another 200 full-corpus native geometric updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_fast_resume.py \
+            --root hw4-native-state/learner-root \
+            --corpus "$RUNNER_TEMP/hw4-complete/all.txt" \
+            --output hw4-native-receipts \
+            --start-epoch "$START_EPOCH" \
+            --start-sha "$START_SHA" \
+            --start-ce "$START_CE" \
+            --additional-epochs 200 --prose-every 20 \
+            | tee hw4-native-chain.log
+          grep '^HW4_FAST_RESUME_FINAL ' hw4-native-chain.log
+      - name: Archive final checkpoint and all receipts, excluding WordNet source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-native-chain-${{ github.run_id }}
+          path: |
+            hw4-native-state/
+            hw4-native-receipts/
+            hw4-native-chain.log
+            hw4-chain-source.log
+          retention-days: 30
+          if-no-files-found: warn
