@@ -8,6 +8,7 @@ on:
       - tools/hw4_credit_benchmark.py
       - tools/wordnet31_50epochs.py
       - tests/test_hw4_reference_corpus.py
+      - tests/test_hw4_heldout_sampling.py
       - .github/workflows/hw4-geometric-corpus.yml
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - tools/hw4_credit_benchmark.py
       - tools/wordnet31_50epochs.py
       - tests/test_hw4_reference_corpus.py
+      - tests/test_hw4_heldout_sampling.py
       - .github/workflows/hw4-geometric-corpus.yml
   workflow_dispatch:
 permissions:
@@ -27,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Unit tests - immutable HW4 teacher, no leakage or writeback
         run: |
-          python3 -m unittest tests.test_hw4_reference_corpus -v
+          python3 -m unittest tests.test_hw4_reference_corpus tests.test_hw4_heldout_sampling -v
           python3 -m py_compile tools/hw4_reference_corpus.py tools/wordnet31_50epochs.py
       - name: Download version-pinned HW4 release from the NaNROUTER ring repository
         run: |
