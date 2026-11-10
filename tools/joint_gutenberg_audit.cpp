@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <sstream>
@@ -42,7 +43,7 @@ static std::string fixture(const std::string& root){
 static void cleanup(const std::string& name){
  for(const char* suffix:{"",".overlay",".overlay.tmp",".so3",".episodes",
    ".wordnet.tsv",".joint-wave",".joint-wave.tmp",
-   "-byte.joint-wave","-shuffle.joint-wave"})
+   "-byte.joint-wave","-shuffle.joint-wave","-pareto.joint-wave"})
   std::filesystem::remove(name+suffix);
 }
 struct Triple { J::Metrics byte,joint,shuffle; };
@@ -131,6 +132,7 @@ int main(int argc,char** argv) {
      J control(wave,root+"-byte");
      J joint(wave,root);
      J shuffled(wave,root+"-shuffle");
+     J pareto(wave,root+"-pareto");
      std::mt19937_64 rng(seed);
      // Randomize *whole causal chunks* of training text; do not reverse
      // or shuffle bytes inside sentences, and keep seed order matched.
@@ -147,6 +149,7 @@ int main(int argc,char** argv) {
         control.teach_byte(state,ch,0.02);
         joint.teach_byte(state,ch,0.02);
         shuffled.teach_byte(state,ch,0.02);
+        pareto.teach_byte(state,ch,0.02);
        }
        wave.observe(state,ch);
       }
@@ -168,6 +171,11 @@ int main(int argc,char** argv) {
      std::vector<size_t> ro(role_data.size()),so(sense_data.size());
      std::iota(ro.begin(),ro.end(),0u);
      std::iota(so.begin(),so.end(),0u);
+     const double pareto_base_dev=pareto.evaluate_bytes(dev).ce();
+     double pareto_accepted_dev=pareto_base_dev;
+     size_t pareto_batches_accepted=0;
+     size_t pareto_batches_rejected=0;
+     auto pareto_candidate=std::make_unique<J>(pareto);
      for(size_t epoch=0;epoch<18;++epoch){
       std::shuffle(ro.begin(),ro.end(),rng);
       std::shuffle(so.begin(),so.end(),rng);
@@ -175,19 +183,41 @@ int main(int argc,char** argv) {
        const auto state=joint.state_for(role_data[i].sentence);
        joint.teach_role(state,role_data[i],0.035);
        shuffled.teach_role(state,randomized_roles[i],0.035);
+       pareto_candidate->teach_role(state,role_data[i],0.035);
       }
       for(size_t i:so){
        const auto state=joint.state_for(sense_data[i].sentence);
        joint.teach_sense(state,sense_data[i],wn,0.035);
        shuffled.teach_sense(state,randomized_senses[i],wn,0.035);
+       pareto_candidate->teach_sense(state,sense_data[i],wn,0.035);
+      }
+      if((epoch+1)%3==0){
+       // Strict Pareto acceptance: if learning synthetic semantics would
+       // raise the disjoint Alice byte-development CE, roll the entire
+       // candidate readout back. Never consult either Dickens test slice.
+       const auto trial_ce=pareto_candidate->evaluate_bytes(dev).ce();
+       if(std::isfinite(trial_ce)&&trial_ce<=pareto_accepted_dev+1e-12){
+        pareto.adopt_readout_from(*pareto_candidate);
+        pareto_accepted_dev=trial_ce;
+        ++pareto_batches_accepted;
+       }else ++pareto_batches_rejected;
+       pareto_candidate=std::make_unique<J>(pareto);
       }
      }
      // Check this is a matched comparison of a *single* fixed language
      // wave; the semantic heads are three separate in-memory readouts.
      check(universe.event_count()==events,"semantic head modified symbolic journal");
      const auto control_dev=compare(control,joint,shuffled,dev);
+     const auto pareto_dev=pareto.evaluate_bytes(dev);
+     check(pareto_dev.ce()<=control_dev.byte.ce()+1e-10,
+           "Pareto semantic readout worsened byte-development baseline");
      const auto before_early=compare(control,joint,shuffled,early);
      const auto before_late=compare(control,joint,shuffled,late);
+     const auto pareto_early=pareto.evaluate_bytes(early);
+     const auto pareto_late=pareto.evaluate_bytes(late);
+     check(pareto_early.count==before_early.byte.count&&
+           pareto_late.count==before_late.byte.count,
+           "Pareto model changed heldout sample sizes");
      const auto t_roles=test_roles();
      const auto t_senses=test_senses();
      const auto role_before=joint.evaluate_roles(t_roles);
@@ -224,13 +254,20 @@ int main(int argc,char** argv) {
        <<" dev_joint_ce="<<control_dev.joint.ce()
        <<" dev_shuffled_ce="<<control_dev.shuffle.ce()
        <<" dev_post_recurrence_ce="<<after_dev.ce()
+       <<" dev_pareto_ce="<<pareto_dev.ce()
+       <<" pareto_batches_accepted="<<pareto_batches_accepted
+       <<" pareto_batches_rejected="<<pareto_batches_rejected
+       <<" pareto_role_updates="<<pareto.role_updates()
+       <<" pareto_sense_updates="<<pareto.sense_updates()
        <<" carol_early_byte_ce="<<before_early.byte.ce()
        <<" carol_early_joint_ce="<<before_early.joint.ce()
        <<" carol_early_shuffled_ce="<<before_early.shuffle.ce()
+       <<" carol_early_pareto_ce="<<pareto_early.ce()
        <<" carol_early_post_recurrence_ce="<<after_early.ce()
        <<" carol_late_byte_ce="<<before_late.byte.ce()
        <<" carol_late_joint_ce="<<before_late.joint.ce()
        <<" carol_late_shuffled_ce="<<before_late.shuffle.ce()
+       <<" carol_late_pareto_ce="<<pareto_late.ce()
        <<" carol_late_post_recurrence_ce="<<after_late.ce()
        <<" semantic_role_accuracy="<<role_before.accuracy()
        <<" semantic_role_shuffle_accuracy="<<role_shuf.accuracy()
