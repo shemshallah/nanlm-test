@@ -1,7 +1,5 @@
 name: Experimental sensor temporal export audit
 on:
-  push:
-    branches: ['experiment/sensor-temporal-*']
   pull_request:
     paths:
       - 'tools/sensor_temporal_export.py'
@@ -14,7 +12,7 @@ permissions:
   contents: read
 concurrency:
   group: temporal-export-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   verified-temporal-analysis:
     runs-on: ubuntu-latest
