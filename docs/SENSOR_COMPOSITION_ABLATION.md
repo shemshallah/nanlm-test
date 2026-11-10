@@ -57,7 +57,8 @@ Every test triple is new, but every component word and relation appeared in
 training. The runner builds the actual C++ `sensor-resident`, ingests twelve
 source-separated assertions, independently decodes the real 8 MiB sidecar,
 and evaluates the Python readout against the V2 journal. Both GCC and Clang
-must pass before reporting measured results.
+must pass before reporting measured results. A hash-blind local role-credit
+comparator is also measured against random-candidate ranking (1/18).
 
 ```sh
 python3 tools/sensor_temporal_compositional_probe.py recording.slices \
@@ -72,6 +73,12 @@ python3 tools/sensor_temporal_compositional_probe.py recording.slices \
   baseline, not the strongest possible frozen-vector/tensor comparator.
 - **Temporal-shuffle control:** rotate the six held-out event signatures
   among test labels; preserves feature counts, destroys label alignment.
+- **Hash-blind role-credit comparator:** each 255D event signature supplies a
+  local residual shared across subject, relation and object prototypes; no
+  backpropagation through time or hash re-encoder is involved in this comparator.
+  It is a simple linear surrogate, **not** the production NaNLM geometric-credit
+  mechanism. Its candidate rankings may fail because the native hash route
+  deliberately discards additive compositional structure.
 - **Claim-disjoint known-label prototype:** the previous nearest-neighbor
   probe necessarily abstains on statements not in its training label set;
   this new experiment uses known *components* to form unseen combinations.
