@@ -1,0 +1,109 @@
+name: HW4 -> separate learner, resumable 50 geometric-credit epochs
+on:
+  workflow_dispatch:
+    inputs:
+      resume_run:
+        description: Prior run ID containing hw4-student-state checkpoint (blank = new student)
+        required: false
+        default: ''
+      budget_seconds:
+        description: Native training time budget for this run (60..900)
+        required: false
+        default: '600'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hw4-student-single-writer-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate budget input
+        env:
+          BUDGET: ${{ inputs.budget_seconds }}
+        run: |
+          python3 - <<'PY'
+          import os
+          b=int(os.environ["BUDGET"])
+          assert 60<=b<=900, "HW4 student budget outside 60..900 seconds"
+          PY
+      - name: Rebuild and verify exact immutable HW4 corpus
+        run: |
+          set -euo pipefail
+          make nanlm CXX=clang++
+          python3 tools/hw4_reference_corpus.py \
+            --download-release --output "$RUNNER_TEMP/hw4-student-corpus" \
+            | tee hw4-source.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          d=Path(os.environ['RUNNER_TEMP'])/'hw4-student-corpus'
+          m=json.loads((d/'hw4-corpus.manifest.json').read_text())
+          assert m['total']['synsets']==117791
+          assert m['total']['senses']==207235
+          assert m['total']['relations']==378203
+          assert m['source_owner']=='NaNROUTER/MC0:0'
+          print('HW4_TRAINING_SOURCE_VERIFIED',m['hw4_root_sha256'])
+          PY
+      - name: Restore one previous student root if requested
+        if: ${{ inputs.resume_run != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_ID: ${{ inputs.resume_run }}
+        run: |
+          set -euo pipefail
+          mkdir -p hw4-student-state
+          gh run download "$RESUME_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "hw4-student-state-$RESUME_ID" --dir hw4-student-state
+          test -s hw4-student-state/progress.json
+          test -s hw4-student-state/unified-root
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('hw4-student-state/progress.json').read_text())
+          assert p['epochs_target']==50
+          assert p['total_bytes_seen']>=0
+          assert p.get('learner_artifact_sha256'), "checkpoint lacks paired root hashes"
+          print('HW4_STUDENT_RESUME_CURSOR',p['epochs_completed'],p['offset'])
+          PY
+      - name: Continue SAME independent student with native geometric credits, not BPTT
+        env:
+          BUDGET: ${{ inputs.budget_seconds }}
+        run: |
+          set -euo pipefail
+          python3 tools/wordnet31_50epochs.py \
+            --corpus "$RUNNER_TEMP/hw4-student-corpus/train.txt" \
+            --manifest "$RUNNER_TEMP/hw4-student-corpus/train.manifest.json" \
+            --heldout "$RUNNER_TEMP/hw4-student-corpus/test.txt" \
+            --heldout-eval-bytes 8192 \
+            --state-dir hw4-student-state --epochs 50 \
+            --budget-seconds "$BUDGET" --max-overlay-bytes 268435456 \
+            --initial-chunk-bytes 256 --max-chunk-bytes 8192 \
+            | tee hw4-training.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          s=json.loads(Path("hw4-student-state/summary.json").read_text())
+          p=json.loads(Path("hw4-student-state/progress.json").read_text())
+          assert p['epochs_completed']<=50
+          assert s['bytes_actually_seen']==p['total_bytes_seen']
+          assert s['source']['source_hw4_root_sha256'] is not None
+          assert p['learner_artifact_sha256'], "missing paired artifact checksum"
+          print('HW4_STUDENT_REAL_PROGRESS',s['epochs_completed'],
+                s['bytes_actually_seen'],s['scored_tokens'],s['status'])
+          PY
+      - name: Preserve only model, bounded progress, proofs and metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-student-state-${{ github.run_id }}
+          path: |
+            hw4-student-state/
+            hw4-source.log
+            hw4-training.log
+          retention-days: 30
+          if-no-files-found: warn
