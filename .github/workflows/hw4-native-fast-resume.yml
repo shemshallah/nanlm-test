@@ -1,0 +1,86 @@
+name: HW4:0 fast native geometric continuation from epoch 103
+on:
+  push:
+    branches: ['experiment/hw4-native-fast-resume-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hw4-native-fast-continuation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  resume-hw4-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native trainer and continuation script
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm hw4-onepass CXX=clang++
+          python3 -m py_compile tools/hw4_fast_resume.py tools/hw4_reference_corpus.py
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+      - name: Restore verified epoch-103 root from the successful fast learner, not TRAIL
+        uses: actions/download-artifact@v4
+        with:
+          name: hw4-hundredepochs-student
+          run-id: 42741208752
+          github-token: ${{ github.token }}
+          repository: shemshallah/nanlm-test
+          path: hw4-base-artifact
+      - name: Verify continuity and prepare exactly one student model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p hw4-native-state
+          cp -p hw4-base-artifact/hw4-hundredepochs-state/learner-root* hw4-native-state/
+          test "$(stat -c '%s' hw4-native-state/learner-root)" -eq 8388608
+          echo 'e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1  hw4-native-state/learner-root' | sha256sum -c -
+          test -f hw4-base-artifact/hw4-hundredepochs-state/report.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('hw4-base-artifact/hw4-hundredepochs-state/report.json').read_text())
+          assert report['completed_additional_epochs']==100
+          assert report['total_cumulative_epochs']==103
+          assert report['final_model_root_sha256']=='e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1'
+          assert report['bptt_attempted']==0
+          assert report['corpus_sha256']=='6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604'
+          print('HW4_FAST_START_CHECKPOINT_VERIFIED epoch=103')
+          PY
+      - name: Download SHA256-pinned immutable HW4 reference and reproduce complete corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" > hw4-fast-source.log
+          echo "6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604  $RUNNER_TEMP/hw4-complete/all.txt" | sha256sum -c -
+          test "$(stat -c '%s' "$RUNNER_TEMP/hw4-complete/all.txt")" -eq 58341529
+      - name: Continue native aggregate credit from epoch 103 (up to 200 more)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_fast_resume.py \
+            --root hw4-native-state/learner-root \
+            --corpus "$RUNNER_TEMP/hw4-complete/all.txt" \
+            --output hw4-native-receipts \
+            --additional-epochs 200 --prose-every 20 | tee hw4-native-continuation.log
+          grep '^HW4_FAST_RESUME_FINAL ' hw4-native-continuation.log
+      - name: Archive final root and reproducibility receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-native-fast-continuation-${{ github.run_id }}
+          path: |
+            hw4-native-state/
+            hw4-native-receipts/
+            hw4-native-continuation.log
+            hw4-fast-source.log
+          retention-days: 30
+          if-no-files-found: warn
