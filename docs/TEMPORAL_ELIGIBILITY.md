@@ -81,3 +81,10 @@ per wave mode. Positive `delta_no_credit_minus_full` indicates held-out
 benefit from the existing geometric credit; negative indicates harm.
 The two wave conditions allow an explicit interaction test. This remains
 a small author-disjoint experiment rather than a broad generalization claim.
+
+The native regression now also verifies **signed** directed evidence: a
+positive PRECEDES relation must increase the corresponding head's log-odds
+relative to the `no_long_context` counterfactual, while an explicit
+refutation must decrease those log-odds. Head 255 remains untouched. The
+CLI smoke test additionally hashes the mapped 8 MiB root before and after
+`eval-credit`, ensuring that the paired readout audit itself is read-only.

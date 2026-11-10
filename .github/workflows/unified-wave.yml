@@ -43,7 +43,10 @@ jobs:
           ./nanlm /tmp/unified-hw0 train /tmp/unified-train.txt 2 | tee train.log
           ./nanlm /tmp/unified-hw0 spectrum | tee spectrum.log
           ./nanlm /tmp/unified-hw0 eval /tmp/unified-heldout.txt | tee heldout.log
+          root_before="$(sha256sum /tmp/unified-hw0 | cut -d' ' -f1)"
           ./nanlm /tmp/unified-hw0 eval-credit /tmp/unified-heldout.txt | tee credit.log
+          root_after="$(sha256sum /tmp/unified-hw0 | cut -d' ' -f1)"
+          test "$root_before" = "$root_after"
           grep -q 'temporal_credit_accepted=' train.log
           grep -q 'bptt_enabled=0 bptt_attempted=0 bptt_accepted=0' train.log
           grep -q '^UNIFIED_CREDIT_EVAL tokens=' credit.log

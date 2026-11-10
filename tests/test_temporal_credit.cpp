@@ -14,6 +14,10 @@ static float gain(const Universe& u,uint8_t head){
  std::memcpy(&result,u.root().h[head].data+UnifiedWaveLanguage::LONG_GAIN_OFFSET,4);
  return result;
 }
+static void set_gain(Universe& u,uint8_t head,float value){
+ std::memcpy(u.root().h[head].data+
+             UnifiedWaveLanguage::LONG_GAIN_OFFSET,&value,4);
+}
 int main(){
  const auto path=(std::filesystem::temp_directory_path()/
   ("nanlm-temporal-credit-"+std::to_string(::getpid()))).string();
@@ -65,7 +69,30 @@ int main(){
          "long-context contribution is inert on distant evidence");
    check(u.root().h[255].data[UnifiedWaveLanguage::LONG_GAIN_OFFSET]==0,
          "reserved ingress head was mutated");
-   saved=full.p['Z'];
+   // Geometric sign consistency: explicit PRECEDES support raises its
+   // readout's relative log-odds; explicit refutation lowers them.
+   // Compare SAME state/root with the SAME other experts enabled to
+   // isolate only the existing geometric eligibility readout.
+   u.write('A','W',PRECEDES,false,4.f,3);
+   u.write('A','Y',PRECEDES,true,4.f,3);
+   set_gain(u,'W',0.75f);
+   set_gain(u,'Y',0.75f);
+   const auto signed_full=m.predict(probe);
+   const auto signed_off=m.predict(
+      probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
+   const auto odds_delta=[&](uint8_t candidate){
+    return (std::log(signed_full.p[candidate])-
+            std::log(signed_full.p['X']))-
+           (std::log(signed_off.p[candidate])-
+            std::log(signed_off.p['X']));
+   };
+   check(odds_delta('W')>1e-5,
+         "positive directed geometric credit lost support sign");
+   check(odds_delta('Y')< -1e-5,
+         "negative directed geometric credit lost refutation sign");
+   check(u.root().h[255].data[UnifiedWaveLanguage::LONG_GAIN_OFFSET]==0,
+         "sign-consensus probe modified network ingress");
+   saved=m.predict(probe).p['Z'];
    u.sync();
   }
   {
