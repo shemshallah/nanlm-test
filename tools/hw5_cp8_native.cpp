@@ -540,6 +540,16 @@ int main(int argc,char** argv){
              <<" root="<<out<<" input=train_only"
              <<" rank=8 bptt_attempted=0\n";
    }
+  }else if(mode=="score-cp-sweep"){
+   if(argc!=7)throw std::invalid_argument("score-cp-sweep STUDENT CP8_ROOT TRIPLES DEV LENGTHS");
+   Bank bank;bank.load(argv[3],argv[4]);
+   const CP8 cp=CP8::from_root(bank);
+   const Eval e(bank,argv[2],argv[5],lengths(argv[6]));
+   for(double rho:{0.,0.01,0.03,0.1,0.2,0.4,0.7})
+    for(double scale:{0.5,1.,2.}){
+     if(rho==0.&&scale!=1.)continue;
+     cp_output(cp_score(e,cp,16.,rho,scale),16.,rho,scale);
+    }
   }else if(mode=="score-cp"){
    if(argc!=10)throw std::invalid_argument("score-cp STUDENT CP8_ROOT TRIPLES EVAL LENGTHS BETA RHO SCALE");
    Bank bank;bank.load(argv[3],argv[4]);
