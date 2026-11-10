@@ -1,0 +1,64 @@
+name: HW5 Gutenberg epoch-200 to epoch-1000 native geometric convergence audit
+on:
+  push:
+    branches: ['experiment/hw5-longitudinal-1000-20261109']
+    paths:
+      - 'tools/hw5_post200.py'
+      - 'tests/test_hw5_post200.py'
+      - '.github/workflows/hw5-post200.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: hw5-post200-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native-post200:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit lineage tests and compile original native geometric learner
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_hw5_longitudinal.py -v
+          python3 -m unittest discover -s tests -p test_hw5_post200.py -v
+          make hw5-onepass CXX=clang++
+      - name: Restore verified 200-epoch student; never reset
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-longitudinal-from20-42745053257
+          run-id: 42745053257
+          repository: shemshallah/nanlm-test
+          github-token: ${{ github.token }}
+          path: hw5-prior
+      - name: Re-verify original immutable HW5 Gutenberg book corpus
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-reference.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-reference.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/hw5-reference.tar.gz" -C "$RUNNER_TEMP"
+      - name: Run 800 more native passes with dev-only checkpoint selection
+        run: |
+          set -euo pipefail
+          python3 tools/hw5_post200.py \
+            --store "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --prior-root hw5-prior/hw5-longitudinal-state/best-dev-root \
+            --prior-report hw5-prior/hw5-longitudinal-state/report.json \
+            --output hw5-post200-state \
+            --additional-epochs 800 --eval-every 10 --patience-checks 20 \
+            | tee hw5-post200.log
+          grep '^HW5_POST200_FINAL ' hw5-post200.log
+      - name: Preserve reproducible full audit and both model roots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-post200-${{ github.run_id }}
+          path: |
+            hw5-post200-state/
+            hw5-post200.log
+          retention-days: 30
+          if-no-files-found: warn
