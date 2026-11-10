@@ -63,8 +63,8 @@ def parse_kv(line:str)->dict:
     return result
 
 
-def evaluate(root:Path)->dict:
-    held=HERE/"tests/fixtures/unified_quality_heldout.txt"
+def evaluate(root:Path, heldout:Path | None = None)->dict:
+    held=heldout or HERE/"tests/fixtures/unified_quality_heldout.txt"
     if not held.is_file():
         return {}
     output,seconds=run([str(EXECUTABLE),str(root),"eval",str(held)],timeout=300)
@@ -83,15 +83,23 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
     state_dir.mkdir(parents=True,exist_ok=True)
     root=state_dir/"unified-root"
     progress_file=state_dir/"progress.json"
+    heldout_path=args.heldout
+    heldout_digest=sha(heldout_path) if heldout_path is not None else None
+    if heldout_digest is not None and source.get("heldout_sha256", heldout_digest)!=heldout_digest:
+        raise RuntimeError("heldout corpus digest does not match pinned HW4 manifest")
     if progress_file.is_file():
         p=json.loads(progress_file.read_text())
         if (p["corpus_sha256"]!=fingerprint or p["corpus_bytes"]!=size or
-            p["epochs_target"]!=args.epochs):
+            p["epochs_target"]!=args.epochs or
+            p.get("heldout_sha256")!=heldout_digest or
+            p.get("source_hw4_root_sha256")!=source.get("source_hw4_root_sha256")):
             raise RuntimeError("resumption is not using exactly the original full corpus")
     else:
         if root.exists():
             raise RuntimeError("root exists without a progress journal; refusing unsafe replay")
         p={"corpus_sha256":fingerprint,"corpus_bytes":size,"epochs_target":args.epochs,
+           "heldout_sha256":heldout_digest,
+           "source_hw4_root_sha256":source.get("source_hw4_root_sha256"),
            "epochs_completed":0,"offset":0,"total_bytes_seen":0,
            "total_scored":0,"chunks":0,"total_runtime_seconds":0.0,
            "epoch_nll":0.0,"epoch_scored":0,"epoch_credit_accepted":0,
@@ -108,7 +116,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
     if not root.exists() and p["total_bytes_seen"]>0:
         raise RuntimeError("checkpoint exists without 8 MiB model root")
     if not args.pilot_only and p["initial_eval"] is None:
-        p["initial_eval"]=evaluate(root)
+        p["initial_eval"]=evaluate(root,heldout_path)
         atomic_json(progress_file,p)
     target_chunks=1 if args.pilot_only else 1000000000
     chunk_size=min(args.initial_chunk_bytes,args.max_chunk_bytes,MAX_STEP_BYTES)
@@ -168,7 +176,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
             p["epoch_nll"]=0.0
             p["epoch_scored"]=0
             p["epoch_credit_accepted"]=0
-            p["recent_eval"]=evaluate(root)
+            p["recent_eval"]=evaluate(root,heldout_path)
             print("WORDNET31_EPOCH "+json.dumps({
                 **p["epoch_history"][-1],"heldout":p["recent_eval"]
             },sort_keys=True),flush=True)
@@ -186,7 +194,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
         target_chunks-=1
     if not args.pilot_only and root.is_file():
         try:
-            p["recent_eval"]=evaluate(root)
+            p["recent_eval"]=evaluate(root,heldout_path)
             atomic_json(progress_file,p)
         except Exception as e:
             print(f"WORDNET31_EVAL_ERROR {type(e).__name__}: {e}",flush=True)
@@ -218,6 +226,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
 def main()->None:
     a=argparse.ArgumentParser()
     a.add_argument("--corpus",type=Path,required=True)
+    a.add_argument("--heldout",type=Path,default=None,help="source-disjoint heldout HW4 text; immutable and never trained")
     a.add_argument("--manifest",type=Path,required=True)
     a.add_argument("--state-dir",type=Path,required=True)
     a.add_argument("--epochs",type=int,default=50)
