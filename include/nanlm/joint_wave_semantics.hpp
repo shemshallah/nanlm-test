@@ -48,6 +48,7 @@ class JointWaveSemanticLearner {
  std::map<uint32_t,V> sense_heads_;
  std::map<uint32_t,double> sense_bias_;
  uint64_t byte_updates_=0,role_updates_=0,sense_updates_=0;
+ uint64_t initialization_seed_=0;
  static uint64_t fnv(const std::string& s) {
   uint64_t h=14695981039346656037ull;
   for(unsigned char c:s){h^=c;h*=1099511628211ull;}
@@ -62,9 +63,11 @@ class JointWaveSemanticLearner {
   for(unsigned char c:s)if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'))
    throw std::invalid_argument("joint identity must be ASCII word");
  }
- static V init(const std::string& tag,double scale) {
+ static V init(const std::string& tag,double scale,uint64_t init_seed=0) {
   V v{};
-  const uint64_t seed=fnv(tag);
+  // Zero preserves historical NJOINTWAVE1 initializer bit-for-bit.
+  const uint64_t seed=fnv(init_seed?
+      tag+":seed:"+std::to_string(init_seed):tag);
   for(size_t d=0;d<D;++d)
    v[d]=scale*std::sin(double((seed%100003u)+uint64_t(17*d+1))*0.0131);
   return v;
@@ -184,8 +187,18 @@ class JointWaveSemanticLearner {
   if(!hash.eof())throw std::runtime_error("joint checksum trailing data");
   std::istringstream in(body);
   std::string tag;
-  if(!(in>>tag>>byte_updates_>>role_updates_>>sense_updates_)||tag!="NJOINTWAVE1")
-   throw std::runtime_error("unsupported joint version");
+  if(!(in>>tag))throw std::runtime_error("missing joint version");
+  if(tag=="NJOINTWAVE1"){
+   if(initialization_seed_!=0)
+    throw std::runtime_error("seeded readout cannot load unseeded checkpoint");
+  }else if(tag=="NJOINTWAVE2"){
+   uint64_t stored_seed=0;
+   if(!(in>>stored_seed)||stored_seed==0||
+      stored_seed!=initialization_seed_)
+    throw std::runtime_error("joint initialization-seed mismatch");
+  }else throw std::runtime_error("unsupported joint version");
+  if(!(in>>byte_updates_>>role_updates_>>sense_updates_))
+   throw std::runtime_error("invalid joint update counters");
   if(!(in>>tag)||tag!="BIAS")throw std::runtime_error("missing joint bias");
   vector_in(in,bias_);
   if(!(in>>tag)||tag!="ORDER")throw std::runtime_error("missing joint order");
@@ -225,17 +238,21 @@ class JointWaveSemanticLearner {
   if(!in.eof())throw std::runtime_error("unexpected joint checkpoint fields");
  }
  public:
- explicit JointWaveSemanticLearner(UnifiedWaveLanguage& wave,const std::string& root):
-  wave_(wave),filename_(root+".joint-wave"){
-  for(size_t i=0;i<N;++i)projection_[i]=init("wave:"+std::to_string(i),0.008);
-  orientation_=init("orientation",0.07);
+ explicit JointWaveSemanticLearner(UnifiedWaveLanguage& wave,
+     const std::string& root,uint64_t initial_seed=0):
+  wave_(wave),filename_(root+".joint-wave"),
+  initialization_seed_(initial_seed){
+  for(size_t i=0;i<N;++i)
+   projection_[i]=init("wave:"+std::to_string(i),0.008,initial_seed);
+  orientation_=init("orientation",0.07,initial_seed);
   load();
  }
  // Copying a learner retains its existing Universe reference. Commit a
  // candidate's complete trainable readout only after a heldout DEV gate;
  // no NaN16 root or exact symbolic claim is changed by this operation.
  void adopt_readout_from(JointWaveSemanticLearner& candidate){
-  if(&wave_!=&candidate.wave_||filename_!=candidate.filename_)
+  if(&wave_!=&candidate.wave_||filename_!=candidate.filename_||
+    initialization_seed_!=candidate.initialization_seed_)
    throw std::invalid_argument("cannot adopt parameters from unrelated root");
   using std::swap;
   swap(projection_,candidate.projection_);
@@ -256,6 +273,7 @@ class JointWaveSemanticLearner {
  // ablation, not language transfer. Byte readout weights never change.
  void blend_semantics_from(const JointWaveSemanticLearner& candidate,double alpha){
   if(&wave_!=&candidate.wave_||filename_!=candidate.filename_||
+     initialization_seed_!=candidate.initialization_seed_||
      byte_updates_!=candidate.byte_updates_)
    throw std::invalid_argument("cannot blend unrelated semantic state");
   if(!std::isfinite(alpha)||alpha<0||alpha>1)
@@ -327,6 +345,7 @@ class JointWaveSemanticLearner {
      const JointWaveSemanticLearner& proposal,
      const std::string& byte_dev)const {
   if(&wave_!=&proposal.wave_||filename_!=proposal.filename_||
+     initialization_seed_!=proposal.initialization_seed_||
      byte_updates_!=proposal.byte_updates_)
    throw std::invalid_argument("unrelated semantic proposal");
   const auto g=byte_development_gradient(byte_dev);
@@ -346,6 +365,7 @@ class JointWaveSemanticLearner {
      const JointWaveSemanticLearner& proposal,
      const std::string& byte_dev,double alpha) {
   if(&wave_!=&proposal.wave_||filename_!=proposal.filename_||
+     initialization_seed_!=proposal.initialization_seed_||
      byte_updates_!=proposal.byte_updates_)
    throw std::invalid_argument("unrelated projected semantic state");
   if(!std::isfinite(alpha)||alpha<0||alpha>1)
@@ -369,7 +389,8 @@ class JointWaveSemanticLearner {
   blend_semantics_from(proposal,0.0);
  }
  double shared_displacement_norm(const JointWaveSemanticLearner& other)const {
-  if(&wave_!=&other.wave_||filename_!=other.filename_)
+  if(&wave_!=&other.wave_||filename_!=other.filename_||
+    initialization_seed_!=other.initialization_seed_)
    throw std::invalid_argument("unrelated shared displacement");
   double n=0;
   for(size_t i=0;i<N;++i)for(size_t d=0;d<D;++d){
@@ -381,6 +402,7 @@ class JointWaveSemanticLearner {
   }
   return std::sqrt(n);
  }
+ uint64_t initialization_seed()const{return initialization_seed_;}
  uint64_t byte_updates()const{return byte_updates_;}
  uint64_t role_updates()const{return role_updates_;}
  uint64_t sense_updates()const{return sense_updates_;}
@@ -449,7 +471,7 @@ class JointWaveSemanticLearner {
   const int direction=role_orientation(row);
   if(!role_heads_.count(rel)) {
    if(role_heads_.size()>=1000)throw std::runtime_error("joint relation capacity");
-   role_heads_.emplace(rel,init("role:"+rel,0.20));
+   role_heads_.emplace(rel,init("role:"+rel,0.20,initialization_seed_));
    role_bias_[rel]=0;
   }
   auto& head=role_heads_.at(rel);
@@ -498,7 +520,7 @@ class JointWaveSemanticLearner {
   for(uint32_t id:ids){
    if(!sense_heads_.count(id)){
     if(sense_heads_.size()>=100000)throw std::runtime_error("joint sense capacity");
-    sense_heads_[id]=init("sense:"+std::to_string(id),0.20);
+    sense_heads_[id]=init("sense:"+std::to_string(id),0.20,initialization_seed_);
     sense_bias_[id]=0;
    }
    const double v=dot(sense_heads_.at(id),a.h)+sense_bias_.at(id);
@@ -766,7 +788,10 @@ class JointWaveSemanticLearner {
  void save()const {
   std::ostringstream out;
   out<<std::setprecision(17);
-  out<<"NJOINTWAVE1 "<<byte_updates_<<" "<<role_updates_<<" "<<sense_updates_<<"\n";
+  if(initialization_seed_)
+   out<<"NJOINTWAVE2 "<<initialization_seed_<<" ";
+  else out<<"NJOINTWAVE1 ";
+  out<<byte_updates_<<" "<<role_updates_<<" "<<sense_updates_<<"\n";
   out<<"BIAS";vector_out(out,bias_);
   out<<"ORDER";vector_out(out,orientation_);
   for(size_t i=0;i<N;++i){out<<"P "<<i;vector_out(out,projection_[i]);}
