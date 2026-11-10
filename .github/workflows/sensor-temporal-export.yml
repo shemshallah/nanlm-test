@@ -8,10 +8,14 @@ on:
       - 'tests/test_sensor_temporal_concept_probe.py'
       - 'tests/test_sensor_temporal_compositional_probe.py'
       - 'tests/test_sensor_temporal_wave_forecast.py'
+      - 'tests/test_sensor_temporal_role_decoder.py'
       - 'tools/sensor_temporal_aggregate.py'
       - 'tools/sensor_temporal_concept_probe.py'
       - 'tools/sensor_temporal_compositional_probe.py'
       - 'tools/sensor_temporal_wave_forecast.py'
+      - 'tools/sensor_temporal_role_decoder.py'
+      - 'src/sensor_role_probe.cpp'
+      - 'docs/SENSOR_ROLE_DECODER_AUDIT.md'
       - 'docs/SENSOR_WAVE_PREDICTION_AUDIT.md'
       - 'docs/SENSOR_COMPOSITION_ABLATION.md'
       - 'docs/SENSOR_TEMPORAL_CONCEPT_BRIDGE.md'
@@ -82,6 +86,16 @@ jobs:
             --journal "$SNAP.compose" --training-events 6 | tee temporal-composition.json
           python3 -c 'import json; r=json.load(open("temporal-composition.json")); assert r["candidate_product"]==18,r; assert r["test_events"]==6,r; assert r["temporal_exact"]==6,r; assert r["static_exact"]<6,r; assert r["shuffled_exact"]<6,r; assert r["abstentions"]==0,r; assert r["pair_index_exact"]==6,r; assert r["one_missing_head_exact"]==6,r; assert r["one_replaced_head_exact"]==6,r; print("PASS: native unseen-triple readout plus C(256,2) one-head loss/replacement recovery")'
           test "$(stat -c%s "$SNAP.compose.slices")" = 8388608
+          "${{ matrix.cxx }}" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
+            src/sensor_role_probe.cpp -o sensor-role-probe
+          ./sensor-role-probe "$SNAP.compose" > native-role-probe.tsv
+          ! grep -Eq 'penguin|eagle|whale|ISA|LIKES' native-role-probe.tsv
+          test "$(wc -l < native-role-probe.tsv)" = 12
+          python3 tools/sensor_temporal_role_decoder.py "$SNAP.compose.slices" \
+            --journal "$SNAP.compose" --role-trace native-role-probe.tsv \
+            --training-events 6 | tee temporal-role-decoder.json
+          python3 -c 'import json; r=json.load(open("temporal-role-decoder.json")); assert r["test_events"]==6,r; assert r["source_disjoint"],r; assert r["correct"]==6,r; assert r["one_missing_head_correct"]==6,r; assert r["time_shuffled_correct"]<6,r; assert r["role_swapped_correct"]<6,r; print("PASS: C++ numeric role telemetry to SGD supervised decoder of unseen complete claims")'
+
           {
             printf 'INGEST\twave_a\t+\tpenguin\tISA\tbird\n'
             printf 'INGEST\twave_b\t+\tbird\tISA\tanimal\n'
@@ -116,6 +130,8 @@ jobs:
             native-concept-probe.log
             native-composition.log
             temporal-composition.json
+            native-role-probe.tsv
+            temporal-role-decoder.json
             native-wave.log
             temporal-wave.json
           if-no-files-found: ignore
