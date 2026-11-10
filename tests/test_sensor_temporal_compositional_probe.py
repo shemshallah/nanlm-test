@@ -81,6 +81,48 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(r['shuffled_exact'], 0)
         self.assertEqual(r['static_exact'], 0)
         self.assertEqual(r['abstentions'], 0)
+        self.assertEqual(r['pair_index_exact'], 6)
+        self.assertEqual(r['one_missing_head_exact'], 6)
+        self.assertEqual(r['one_replaced_head_exact'], 6)
+
+
+    def test_canonical_pair_posting_recovers_one_missing_or_replaced_head(self):
+        train = [{'truth': ('penguin', 'ISA', 'bird')},
+                 {'truth': ('eagle', 'ISA', 'animal')},
+                 {'truth': ('whale', 'LIKES', 'fish')}]
+        index, _, _ = cp.candidate_index(train)
+        postings = cp.build_pair_postings(index)
+        target = ('penguin', 'ISA', 'animal')
+        sig = cp.expected_heads(*target)
+        missing = frozenset(sorted(sig)[1:])
+        corrupted = missing | {next(i for i in range(255) if i not in sig)}
+        self.assertEqual(len(cp.canonical_pairs(sig)), 15)
+        self.assertTrue(all(0 <= k < 32640 for k in cp.canonical_pairs(sig)))
+        self.assertEqual(cp.decode_pair_votes(postings, sig)[:2],
+                         (target, 'unique_pair_support'))
+        self.assertEqual(cp.decode_pair_votes(postings, missing)[:2],
+                         (target, 'unique_pair_support'))
+        self.assertEqual(cp.decode_pair_votes(postings, corrupted)[:2],
+                         (target, 'unique_pair_support'))
+        unknown = cp.expected_heads('unknown', 'ISA', 'animal')
+        self.assertIsNone(cp.decode_pair_votes(postings, unknown)[0])
+        self.assertIsNone(cp.decode_pair_votes(postings, frozenset())[0])
+
+    def test_4096_bounded_candidate_pairs_and_ambiguity(self):
+        training = [{'truth': (f'subject{i}', f'REL{i}', f'object{i}')}
+                    for i in range(16)]
+        index, _, count = cp.candidate_index(training, max_candidates=4096)
+        self.assertEqual(count, 4096)
+        self.assertEqual(len(index), 4096)  # fixed synthetic corpus, not universal
+        first_sig, first_label = next(iter(index.items()))
+        self.assertEqual(len(first_label), 1)
+        postings = cp.build_pair_postings(index)
+        self.assertLessEqual(len(postings), 32640)
+        self.assertEqual(cp.decode_pair_votes(postings, first_sig)[0],first_label[0])
+        # A deliberate full-route collision must abstain, not arbitrarily pick.
+        bad_index = {first_sig: [('alpha','ISA','beta'), ('gamma','ISA','delta')]}
+        self.assertEqual(cp.decode_pair_votes(cp.build_pair_postings(bad_index), first_sig)[1],
+                         'ambiguous_pair_votes')
 
     def test_static_field_is_not_an_event_change(self):
         old = {'rows': [{'id': 1, 'level': 'HEAD', 'support': 1., 'refute': 0.},
