@@ -73,6 +73,17 @@ python3 tools/sensor_temporal_compositional_probe.py recording.slices \
   baseline, not the strongest possible frozen-vector/tensor comparator.
 - **Temporal-shuffle control:** rotate the six held-out event signatures
   among test labels; preserves feature counts, destroys label alignment.
+- **C(256,2) canonical-pair posting readout:** six coactive head IDs
+  generate 15 unordered head pairs, each mapped by the same canonical
+  `pair_index(a,b)` formula as the NaN16 mirror topology. This is a **virtual
+  read-only Python index**, not a write to the 8 MiB root or NaNROUTER ring.
+  Candidate triple labels receive one vote for each pair also observed.
+  With one missing or replaced head, 5 shared heads still produce ten of the
+  expected fifteen pairs, permitting recovery when the top candidate wins by
+  a strict 3-vote margin. Ambiguity or fewer than ten votes abstains.
+  The six held-out triple tests also exercise deletion and substitution of
+  a single observed head. Synthetic bounded 4,096-candidate scans check
+  accidental route collisions; this is not a WordNet-scale guarantee.
 - **Hash-blind role-credit comparator:** each 255D event signature supplies a
   local residual shared across subject, relation and object prototypes; no
   backpropagation through time or hash re-encoder is involved in this comparator.
@@ -111,3 +122,20 @@ cross-entropy / accuracy improvements to the actual language model.
    correct/eligible and positive/negative controls.
 5. Keep the 8 MiB ring, the exact source journal and provenance distinct;
    never silently fill overwritten frames or label unsupported geometry.
+
+## Role of C(256,2) in future deployment
+
+The pair posting keys are canonical **physical pair indices** in the same
+32,640-address triangular off-diagonal lattice as the NaN16 mirror topology.
+Each key is an inverted lookup address for a **list of candidate concept IDs**
+that share that pair, *not* an additional independent stateful head and *not*
+a new matrix of language weights. The binary spatial record remains bounded
+and unchanged. The temporal transition supplies head co-activity, while
+explicit training vocabulary restricts the proposed words.
+
+For scaling, candidate combinations must be generated from a **bounded,
+source-grounded retrieval neighborhood**, not the unrestricted Cartesian
+product of a large WordNet dictionary. Unknown words and unsupported
+relations must abstain. Candidate lists and attributions belong in a
+separately versioned experimental readout or dedicated routing surface,
+not silently in production NaN16 pair cells.
