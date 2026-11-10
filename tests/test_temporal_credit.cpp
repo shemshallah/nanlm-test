@@ -45,7 +45,6 @@ int main(){
   std::array<double,4> before_modes{};
   std::array<float,3> before_registers{};
   size_t before_events=0,before_episodes=0;
-  std::array<uint8_t,32> before_selected_heads{};
   std::vector<uint8_t> head_bytes,pair_bytes;
   std::array<double,UnifiedWaveLanguage::N> before_wave{},before_inverse{};
   std::array<double,TriadWaveFormer::GROUPS> before_routing{};
