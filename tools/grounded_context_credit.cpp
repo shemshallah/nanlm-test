@@ -158,7 +158,7 @@ int main(int argc,char** argv){
      std::vector<int> random_labels;
      for(const auto& row:source_rows)random_labels.push_back(row.label);
      std::shuffle(random_labels.begin(),random_labels.end(),rng);
-     require(std::count(random_labels.begin(),random_labels.end(),1)==
+     require(static_cast<size_t>(std::count(random_labels.begin(),random_labels.end(),1))==
              source_rows.size()/2,"permuted class balance changed");
      std::vector<size_t> order(source_rows.size());
      std::iota(order.begin(),order.end(),0u);
