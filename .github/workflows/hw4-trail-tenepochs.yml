@@ -1,0 +1,85 @@
+name: HW4:0 full WordNet TRAIL - reach 10 sequential epochs
+on:
+  push:
+    branches: ['experiment/hw4-trail-tenepochs-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  complete-full-ten-epochs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build original native two-rail geometric-credit learner
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm hw4-trail CXX=clang++
+          python3 -m py_compile tools/hw4_trail_tenepoch_report.py
+          python3 -m unittest discover -s tests -p 'test_hw4_reference_corpus.py' -v
+      - name: Restore exact successfully verified epoch-4 root, no second student
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prior" hw4-trail-10-state
+          gh run download 42740670559 --repo shemshallah/nanlm-test \
+            --name hw4-trail-three-more-42740670559 --dir "$RUNNER_TEMP/prior"
+          previous="$(find "$RUNNER_TEMP/prior" -type f -name learner-root | head -n1)"
+          receipt="$(find "$RUNNER_TEMP/prior" -type f -name three-more-receipt.json | head -n1)"
+          test -n "$previous" && test -n "$receipt"
+          test "$(stat -c '%s' "$previous")" -eq 8388608
+          echo 'e97549fecc783ea2551f14924e3aaf1ade2046af6e663aa44dc158f254a9e873  '"$previous" | sha256sum -c -
+          cp -p "$(dirname "$previous")"/learner-root* hw4-trail-10-state/
+          cp "$receipt" hw4-trail-10-state/previous-three-more-receipt.json
+          echo "RESTORED_VERIFIED_EPOCH4_ROOT $(sha256sum hw4-trail-10-state/learner-root | cut -d' ' -f1)"
+      - name: Verify read-only HW4:0 generation and reconstruct entire corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" | tee hw4-trail-10-state/source.log
+          echo '6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604  '"$RUNNER_TEMP/hw4-complete/all.txt" | sha256sum -c -
+          test "$(stat -c '%s' "$RUNNER_TEMP/hw4-complete/all.txt")" -eq 58341529
+      - name: Six additional complete native TRAIL epochs 5 through 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=hw4-trail-10-state/learner-root
+          corpus="$RUNNER_TEMP/hw4-complete/all.txt"
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt | tee hw4-trail-10-state/prose-pass4.log
+          for pass in 5 6 7 8 9 10; do
+            echo "HW4_TRAIL_START epoch=$pass"
+            /usr/bin/time -v -o "hw4-trail-10-state/resource-pass$pass.log" \
+              ./hw4-trail "$root" "$corpus" 58341529 \
+              | tee "hw4-trail-10-state/trail-pass$pass.log"
+            ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt \
+              | tee "hw4-trail-10-state/prose-pass$pass.log"
+            sha256sum "$root" | cut -d' ' -f1 > "hw4-trail-10-state/sha-pass$pass.txt"
+            grep -F 'input_bytes=58341529 transition_updates=58341528' "hw4-trail-10-state/trail-pass$pass.log"
+            grep -F 'bptt_attempted=0' "hw4-trail-10-state/trail-pass$pass.log"
+            echo "HW4_TRAIL_FINISH epoch=$pass sha=$(cat "hw4-trail-10-state/sha-pass$pass.txt")"
+          done
+      - name: Audit source lineage, all ten passes, CE, accuracy, timing and final 8 MiB model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_trail_tenepoch_report.py hw4-trail-10-state \
+            "$RUNNER_TEMP/hw4-complete/all.manifest.json" | tee hw4-trail-10-state/final-audit.log
+          grep '^HW4_TRAIL_TEN_FINAL ' hw4-trail-10-state/final-audit.log
+      - name: Preserve only final model, previous lineage receipt and new epoch logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-trail-tenepochs-${{ github.run_id }}
+          path: hw4-trail-10-state/
+          retention-days: 30
+          if-no-files-found: warn
