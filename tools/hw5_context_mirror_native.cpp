@@ -344,7 +344,7 @@ static void output_stratum(const char* name,const Config& c,const Scores& s){
   <<" ce_nats="<<(s.items?s.nll/count:0.)
   <<" accuracy="<<(s.items?double(s.correct)/count:0.)
   <<" transitions="<<s.items<<" exact_model=HW5_train_only"
-  <<" bptt_attempted=0\\n";
+  <<" bptt_attempted=0\n";
 }
 int main(int argc,char** argv){
  try{
