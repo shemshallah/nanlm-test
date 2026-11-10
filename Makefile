@@ -120,3 +120,7 @@ hw5-context: tools/hw5_context_mirror_native.cpp $(wildcard include/nanlm/*.hpp)
 # Native order-two CP context distillation: writes existing FabricTeacher head vectors.
 hw5-geometric-context: tools/hw5_geometric_context_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# Shared UnifiedWaveLanguage opt-in CP readout parity/legacy contract.
+test_hw5_cp_runtime: tests/test_hw5_cp_runtime.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
