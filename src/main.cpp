@@ -2,6 +2,7 @@
 #include "nanlm/unified_wave.hpp"
 #include "nanlm/wordnet.hpp"
 #include "nanlm/semantic.hpp"
+#include "nanlm/contextual_roles.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -19,7 +20,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV|semantic-project-wordnet}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV|semantic-project-wordnet|context-train TSV EPOCHS LR|context-eval TSV|context-query SENTENCE SUBJECT OBJECT RELATION}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -403,6 +404,43 @@ int main(int argc,char** argv){
                   std::stof(argv[7]),std::stoull(argv[8]));
    universe.sync();
    std::cout<<"stored inverse-addressed temporal pair\n";
+  }else if(operation=="context-train"){
+   if(argc!=6)throw std::invalid_argument("context-train TSV EPOCHS LR");
+   std::ifstream input(argv[3]);
+   if(!input)throw std::runtime_error("context training TSV unavailable");
+   auto rows=ContextualRoleLearner::read(input);
+   const int epochs=number(4);
+   if(epochs<=0)throw std::invalid_argument("epochs must be positive");
+   const double lr=std::stod(argv[5]);
+   ContextualRoleLearner model(universe);
+   model.train(rows,static_cast<size_t>(epochs),lr);
+   auto metric=model.evaluate(rows);
+   model.save();
+   std::cout<<std::setprecision(10)
+            <<"NANLM_CONTEXT_TRAIN samples="<<rows.size()
+            <<" epochs="<<epochs<<" updates="<<model.updates()
+            <<" ce="<<metric.ce()<<" accuracy="<<metric.accuracy()
+            <<" vocabulary="<<model.tokens()<<" relations="<<model.relations()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="context-eval"){
+   if(argc!=4)throw std::invalid_argument("context-eval TSV");
+   std::ifstream input(argv[3]);
+   if(!input)throw std::runtime_error("context evaluation TSV unavailable");
+   const auto rows=ContextualRoleLearner::read(input);
+   ContextualRoleLearner model(universe);
+   const auto m=model.evaluate(rows);
+   std::cout<<std::setprecision(10)<<"NANLM_CONTEXT_EVAL samples="<<m.queries
+            <<" ce="<<m.ce()<<" accuracy="<<m.accuracy()
+            <<" correct="<<m.correct<<" updates="<<model.updates()<<"\n";
+  }else if(operation=="context-query"){
+   if(argc!=7)throw std::invalid_argument("context-query SENTENCE SUBJECT OBJECT RELATION");
+   ContextualRoleLearner model(universe);
+   const auto p=model.predict({argv[3],argv[4],argv[5],argv[6],0});
+   std::cout<<std::setprecision(10)<<"NANLM_CONTEXT_QUERY state="
+            <<(p?"learned":"unknown")<<" score=";
+   if(p)std::cout<<*p;
+   else std::cout<<"nan";
+   std::cout<<"\n";
   }else if(operation=="semantic-train"){
    if(argc!=5)throw std::invalid_argument("semantic-train FILE SOURCE");
    std::ifstream file(argv[3]);
