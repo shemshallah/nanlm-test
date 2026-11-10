@@ -1,0 +1,53 @@
+name: NaNLM shared contextual WordNet sense learning
+on:
+  push:
+    branches: ['experiment/native-shared-context-wsd-20261109']
+    paths:
+      - 'include/nanlm/contextual_roles.hpp'
+      - 'include/nanlm/contextual_senses.hpp'
+      - 'tests/test_contextual_senses.cpp'
+      - 'src/main.cpp'
+      - 'Makefile'
+      - '.github/workflows/native-contextual-senses.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shared-semantic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: ['clang++', 'g++']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native role and exact WordNet sense learners
+        run: |
+          set -euo pipefail
+          make test_contextual_roles test_contextual_senses nanlm CXX=${{ matrix.cxx }}
+          ./test_contextual_roles | tee role-results.txt
+          ./test_contextual_senses | tee sense-results.txt
+          grep -F 'CONTEXT_ROLE_NATIVE PASS' role-results.txt
+          grep -F 'CONTEXT_WSD_NATIVE PASS' sense-results.txt
+      - name: Check same-root sense CLI
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/wsd-root"
+          ./nanlm "$root" init
+          printf 'NANLM-WN1\t2\t0\nN\t801\t101\tbank\tfinancial deposits\nN\t802\t202\tbank\triver shoreline\n' > "$root.wordnet.tsv"
+          printf 'the bank approved a loan\tbank\t801\nthe bank gave credit\tbank\t801\nthe water rose by the bank\tbank\t802\nmud covered the bank\tbank\t802\n' > "$RUNNER_TEMP/wsd.tsv"
+          ./nanlm "$root" sense-train "$RUNNER_TEMP/wsd.tsv" 40 0.07
+          ./nanlm "$root" sense-eval "$RUNNER_TEMP/wsd.tsv"
+          ./nanlm "$root" sense-query "the bank approved a loan" bank | tee "$RUNNER_TEMP/known.txt"
+          grep -F 'state=learned' "$RUNNER_TEMP/known.txt"
+      - name: Archive numerical receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-shared-sense-${{ matrix.cxx }}-${{ github.run_id }}
+          path: |
+            role-results.txt
+            sense-results.txt
+          retention-days: 30
+          if-no-files-found: warn

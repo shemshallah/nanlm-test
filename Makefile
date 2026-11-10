@@ -124,3 +124,11 @@ test_contextual_roles: tests/test_contextual_roles.cpp $(wildcard include/nanlm/
 .PHONY: test-contextual-roles
 test-contextual-roles: test_contextual_roles
 	./test_contextual_roles
+
+# Shared contextual WordNet word-sense classification, experimental.
+test_contextual_senses: tests/test_contextual_senses.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+.PHONY: test-contextual-senses
+test-contextual-senses: test_contextual_senses
+	./test_contextual_senses
