@@ -9,11 +9,14 @@ on:
       - 'tests/test_sensor_temporal_compositional_probe.py'
       - 'tests/test_sensor_temporal_wave_forecast.py'
       - 'tests/test_sensor_temporal_role_decoder.py'
+      - 'tests/test_sensor_temporal_reason_bridge.py'
       - 'tools/sensor_temporal_aggregate.py'
       - 'tools/sensor_temporal_concept_probe.py'
       - 'tools/sensor_temporal_compositional_probe.py'
       - 'tools/sensor_temporal_wave_forecast.py'
       - 'tools/sensor_temporal_role_decoder.py'
+      - 'tools/sensor_temporal_reason_bridge.py'
+      - 'docs/SENSOR_GROUNDED_REASON_BRIDGE.md'
       - 'src/sensor_role_probe.cpp'
       - 'docs/SENSOR_ROLE_DECODER_AUDIT.md'
       - 'docs/SENSOR_WAVE_PREDICTION_AUDIT.md'
@@ -62,6 +65,12 @@ jobs:
           python3 -c 'import json; rows=[json.loads(x) for x in open("temporal-concepts.jsonl")]; assert len(rows)==3,rows; assert any(r["phrase"]=="penguin is a bird" and r["evidence_state"]=="supports" for r in rows),rows; print("PASS: source-grounded concept labels, no geometric word inversion")'
           grep -q 'mean_vector_0' temporal-aggregates.csv
           grep -q 'GLOBAL' temporal-aggregates.csv
+          printf 'QUERY\tpenguin\tISA\tanimal\nQUIT\n' | ./sensor-resident "$SNAP" > native-reason.log
+          grep -q 'QUERY state=3 inferred=1 proof=penguin->bird->animal' native-reason.log
+          python3 tools/sensor_temporal_reason_bridge.py "$SNAP.slices" \
+            --journal "$SNAP" --subject penguin --relation ISA --object animal | tee temporal-reason.json
+          python3 -c 'import json; r=json.load(open("temporal-reason.json")); assert r["evidence_state"]=="both",r; assert r["inferred"],r; assert r["proof_nodes"]==["penguin","bird","animal"],r; assert r["proof_sources"]==["src_a","src_b"],r; assert r["refute_sources"]==["src_c"],r; print("PASS: journal-provenanced conceptual language matches native ISA proof and contradiction")'
+
           printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_a\t+\tbird\tISA\tanimal\nINGEST\tsrc_a\t-\tpenguin\tISA\tanimal\nINGEST\tsrc_b\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_b\t-\tpenguin\tISA\tanimal\nQUIT\n' | ./sensor-resident "$SNAP.probe" > native-concept-probe.log
           python3 tools/sensor_temporal_concept_probe.py "$SNAP.probe.slices" --journal "$SNAP.probe" | tee temporal-concept-probe.json
           python3 -c 'import json; r=json.load(open("temporal-concept-probe.json")); assert r["eligible_known_concept_events"]==6,r; assert r["predicted"]==6,r; assert r["correct"]==6,r; assert r["accuracy_all_eligible"]>r["most_frequent_training_label_baseline"],r; print("PASS: source-disjoint numeric concept retrieval beats majority baseline")'
@@ -119,6 +128,8 @@ jobs:
           name: temporal-export-${{ matrix.cxx }}
           path: |
             native-resident.log
+            native-reason.log
+            temporal-reason.json
             temporal-summary.jsonl
             temporal-frames.jsonl
             temporal-deltas.csv
