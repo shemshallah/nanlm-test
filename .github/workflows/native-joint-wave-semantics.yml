@@ -4,6 +4,7 @@ on:
     branches: ['experiment/joint-wave-semantic-credit-20261109']
     paths:
       - 'include/nanlm/joint_wave_semantics.hpp'
+      - 'include/nanlm/unified_wave.hpp'
       - 'tests/test_joint_wave_semantics.cpp'
       - '.github/workflows/native-joint-wave-semantics.yml'
   workflow_dispatch:
