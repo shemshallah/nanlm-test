@@ -62,3 +62,5 @@ jobs:
             hw5-post200.log
           retention-days: 30
           if-no-files-found: warn
+
+# Re-run the SHA-pinned 200->1000 Gutenberg continuation with all existing guards.
