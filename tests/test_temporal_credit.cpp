@@ -91,6 +91,10 @@ int main(){
    // The new support/refutation records change the spectral operator.
    // Refresh the in-memory cache before comparing it with a reloaded root.
    m.refresh_spectrum();
+   // The saved temporal state was built before these graph edits.
+   // Recreate it from the same evidence that the reopened model sees.
+   probe.reset();
+   for(unsigned char ch:context)m.observe(probe,ch);
    const auto signed_full=m.predict(probe);
    const auto signed_off=m.predict(
       probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
