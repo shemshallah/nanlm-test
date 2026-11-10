@@ -1,0 +1,60 @@
+name: Experimental sensor temporal export audit
+on:
+  push:
+    branches: ['experiment/sensor-temporal-*']
+  pull_request:
+    paths:
+      - 'tools/sensor_temporal_export.py'
+      - 'tests/test_sensor_temporal_export.py'
+      - '.github/workflows/sensor-temporal-export.yml'
+      - 'include/nanlm/sensor_timeslices.hpp'
+      - 'src/sensor_resident.cpp'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: temporal-export-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  verified-temporal-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit test strict numerical reader and temporal changes
+        run: |
+          python3 -m unittest discover -s tests -p test_sensor_temporal_export.py -v
+      - name: Native GCC/Clang measurement to Python decoder interoperability
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${{ matrix.cxx }}" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude \
+            src/sensor_resident.cpp -o sensor-resident
+          SNAP=$(mktemp /tmp/nanlm-temporal-XXXXXX)
+          rm -f "$SNAP"
+          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices"' EXIT
+          printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_c\t-\tpenguin\tISA\tanimal\nTICK\nMEASURE\nTIMELINE\t8\nQUIT\n' | ./sensor-resident "$SNAP" | tee native-resident.log
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" summary | tee temporal-summary.jsonl
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" frames | tee temporal-frames.jsonl
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" deltas --format csv > temporal-deltas.csv
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" samples --format csv > temporal-samples.csv
+          test "$(stat -c%s "$SNAP.slices")" = 8388608
+          python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
+          grep -q '^MATRIX\|^SLICE' native-resident.log
+          grep -q 'GLOBAL' temporal-deltas.csv
+      - name: Persist reproducible audit outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-export-${{ matrix.cxx }}
+          path: |
+            native-resident.log
+            temporal-summary.jsonl
+            temporal-frames.jsonl
+            temporal-deltas.csv
+            temporal-samples.csv
+          if-no-files-found: ignore
