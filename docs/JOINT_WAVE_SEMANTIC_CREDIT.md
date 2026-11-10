@@ -171,3 +171,35 @@ Synthetic heldout role accuracies were 0.50 / 0.25 / 0.50 across the seeds; sens
 
 **Next ablation (under test): Pareto-gated semantic readout.** Train a matched fourth readout on the identical physical wave; offer batches of three synthetic semantic epochs; commit the entire readout atomically in memory only if independently heldout Alice byte CE does not increase. Keep the disjoint Dickens text outside the acceptance gate. Report accepted/rejected semantic batches and the resulting book-disjoint CE, even if zero batches are accepted. A zero-interference result achieved by rejecting all semantic updates must be called a failed joint-learning attempt, not successful transfer.
 
+
+## Causal audit revision: shared-projection line search
+
+The initial Pareto candidate offered only a full semantic batch and could
+reject every batch, leaving a byte-only readout with no semantic learning
+at all. The revised implementation draws a precise distinction between
+**positive shared credit** and **head-only specialization**.
+
+After three synthetic supervision epochs, the candidate is evaluated on
+the Alice-only byte-development gate using fixed projection interpolation
+weights `1, 1/4, 1/16, 1/64, 1/256`, in that order. The shared 255×24
+projection and bias are interpolated, while supervised relation/synset
+heads are retained. Only an interpolation weight greater than zero that
+does not raise development byte CE can count as accepted shared credit.
+
+If every positive weight is rejected, a strictly zero-weight fallback
+adopts only the semantic heads and role orientation. The byte projection,
+bias and byte output weights must then give **bitwise-identical byte
+probabilities** on a native regression probe. That fallback is recorded
+as head-only, **not evidence of semantic-to-language learning**.
+
+The aggregate report checks that all six batches per training-order seed
+are accounted for, the alpha sum is consistent, byte-only development CE
+remains exact when every batch fell back, and cross-author Dickens
+performance is still reported regardless of the gate outcome. The native
+unit test independently checks alpha=0, alpha=1, invalid alpha, and
+unrelated-readout rejection. This only adds experimentally controlled
+credit attribution; it does not make the natural-language semantic
+training corpus any larger or establish a reliable transfer advantage.
+
+**Status:** implementation committed to the draft experimental branch;
+the new GitHub Actions run must pass before reporting new metrics.
