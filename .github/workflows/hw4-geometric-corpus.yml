@@ -5,12 +5,14 @@ on:
       - experiment/hw4-readonly-geometric-corpus-20261109
     paths:
       - tools/hw4_reference_corpus.py
+      - tools/hw4_credit_benchmark.py
       - tools/wordnet31_50epochs.py
       - tests/test_hw4_reference_corpus.py
       - .github/workflows/hw4-geometric-corpus.yml
   pull_request:
     paths:
       - tools/hw4_reference_corpus.py
+      - tools/hw4_credit_benchmark.py
       - tools/wordnet31_50epochs.py
       - tests/test_hw4_reference_corpus.py
       - .github/workflows/hw4-geometric-corpus.yml
@@ -90,6 +92,17 @@ jobs:
           assert x['source_hw4_root_sha256'] is not None
           print('HW4_GEOMETRIC_CREDIT_PILOT_PASS',x['total_bytes_seen'],x['total_scored'])
           PY
+      - name: Compare fixed heldout CE before and after geometric credits, with ablation
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_credit_benchmark.py \
+            --engine ./nanlm \
+            --corpus "$RUNNER_TEMP/hw4-corpus/train.txt" \
+            --manifest "$RUNNER_TEMP/hw4-corpus/train.manifest.json" \
+            --heldout "$RUNNER_TEMP/hw4-corpus/test.txt" \
+            --train-bytes 2048 --eval-bytes 2048 \
+            | tee hw4-credit-heldout.log
+          grep -F 'HW4_CREDIT_MEASURE ' hw4-credit-heldout.log
       - name: Preserve manifests and measured pilot without redistributing WordNet
         if: always()
         uses: actions/upload-artifact@v4
@@ -98,5 +111,6 @@ jobs:
           path: |
             hw4-corpus.log
             hw4-credit-pilot.log
+            hw4-credit-heldout.log
           retention-days: 30
           if-no-files-found: warn
