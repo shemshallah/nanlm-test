@@ -284,10 +284,25 @@ def emit(rows: list[dict], fmt: str) -> None:
         return
     if not rows:
         return
-    keys = list(dict.fromkeys(key for row in rows for key in row))
+    # A tidy numerical CSV: separate coordinate columns rather than a
+    # Python tuple literal that downstream analysis would need to parse.
+    def flatten(row):
+        result = {}
+        for key, value in row.items():
+            if isinstance(value, (tuple, list)):
+                for i, scalar in enumerate(value):
+                    result[f"{key}_{i}"] = scalar
+            elif value is None and key in ("vector_delta", "tensor_delta",
+                                             "vector_derivative", "tensor_derivative"):
+                continue
+            else:
+                result[key] = value
+        return result
+    flat = [flatten(row) for row in rows]
+    keys = list(dict.fromkeys(key for row in flat for key in row))
     writer = csv.DictWriter(sys.stdout, fieldnames=keys, extrasaction="ignore")
     writer.writeheader()
-    for row in rows:
+    for row in flat:
         writer.writerow(row)
 
 
