@@ -22,7 +22,8 @@ int main() {
    {"two","bird","ISA","animal",false,1.},
    {"three","penguin","ISA","animal",true,1.},
    {"four","penguin","CAN_FLY","yes",true,1.},
-   {"five","bird","HAS_PART","wing",false,1.}
+   {"five","bird","HAS_PART","wing",false,1.},
+   {"six","penguin","ISA","animal",false,1.}
   };
   for(const auto& a:statements)check(corpus.ingest(a),"sensor corpus ingest failed");
   const auto original=measure_matrix(corpus);
@@ -38,7 +39,7 @@ int main() {
   for(const auto family:families) {
    FamilyProjector projector;
    const auto result=projector.measure(family,original);
-   check(result.nanclock==original.nanclock&&result.sources==5&&result.facts==5,
+   check(result.nanclock==original.nanclock&&result.sources==6&&result.facts==5,
          "family lost original time/provenance coordinates");
    check(result.points.size()==original.heads.size()&&
          result.triads.size()==original.triads.size()&&
