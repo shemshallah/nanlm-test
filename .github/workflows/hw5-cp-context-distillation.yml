@@ -22,6 +22,8 @@ jobs:
         run: |
           set -euo pipefail
           make hw5-geometric-context CXX=clang++
+          make test_hw5_cp_runtime CXX=clang++
+          ./test_hw5_cp_runtime
           python3 -m py_compile tools/hw5_cp_context_experiment.py
           python3 -m unittest tests.test_hw5_geometric_context -v
       - name: Verify immutable Gutenberg corpus
