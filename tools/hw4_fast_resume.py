@@ -60,16 +60,23 @@ def main() -> None:
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--corpus", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--start-epoch", type=int, default=START_EPOCH)
+    p.add_argument("--start-sha", type=str, default=START_SHA)
+    p.add_argument("--start-ce", type=float, default=START_CE)
     p.add_argument("--additional-epochs", type=int, default=200)
     p.add_argument("--prose-every", type=int, default=10)
     args = p.parse_args()
+    if args.start_epoch < 0 or not re.fullmatch(r"[0-9a-f]{64}", args.start_sha):
+        raise ValueError("invalid parent checkpoint identifier")
+    if not math.isfinite(args.start_ce) or not (0 < args.start_ce < 20):
+        raise ValueError("invalid prior cross-entropy")
     if not 1 <= args.additional_epochs <= 1000 or not 1 <= args.prose_every <= args.additional_epochs:
         raise ValueError("invalid training/evaluation interval")
     if args.root.resolve() == args.corpus.resolve() or "wordnet-c256.root" in str(args.root):
         raise ValueError("the immutable HW4 teacher is not a learner target")
     args.output.mkdir(parents=True, exist_ok=False)
-    if args.root.stat().st_size != ROOT_BYTES or digest(args.root) != START_SHA:
-        raise ValueError("wrong epoch-103 8 MiB checkpoint; refusing restart or fork")
+    if args.root.stat().st_size != ROOT_BYTES or digest(args.root) != args.start_sha:
+        raise ValueError("parent SHA mismatch in 8 MiB checkpoint; refusing restart or fork")
     if args.corpus.stat().st_size != SOURCE_BYTES or digest(args.corpus) != SOURCE_SHA:
         raise ValueError("HW4:0 source does not match its immutable pinned digest")
     before_sha = digest(args.root)
@@ -80,7 +87,7 @@ def main() -> None:
         "source_role": "immutable HW4:0 WordNet 3.1 reference",
         "corpus_sha256": SOURCE_SHA,
         "source_bytes_per_update": SOURCE_BYTES,
-        "start_epoch": START_EPOCH,
+        "start_epoch": args.start_epoch,
         "start_student_sha256": before_sha,
         "requested_additional_epochs": args.additional_epochs,
         "completed_additional_epochs": 0,
@@ -88,7 +95,7 @@ def main() -> None:
         "prose_before": prose_before,
         "epochs": [],
     }
-    prev_ce = START_CE
+    prev_ce = args.start_ce
     started = time.perf_counter()
     status = "completed"
     for epoch in range(1, args.additional_epochs + 1):
@@ -111,7 +118,7 @@ def main() -> None:
             raise ValueError(f"unexpected native trainer failure {exit_code}: {text[-500:]}")
         row = {
             "additional_epoch": epoch,
-            "cumulative_epoch": START_EPOCH + epoch,
+            "cumulative_epoch": args.start_epoch + epoch,
             "corpus_bytes_scanned": SOURCE_BYTES,
             "train_ce_before": first,
             "train_ce_after": last,
@@ -147,18 +154,18 @@ def main() -> None:
     record["status"] = status
     record["elapsed_seconds"] = time.perf_counter() - started
     record["final_student_sha256"] = digest(args.root)
-    record["final_cumulative_epoch"] = START_EPOCH + record["completed_additional_epochs"]
+    record["final_cumulative_epoch"] = args.start_epoch + record["completed_additional_epochs"]
     record["prose_after"] = eval_prose(args.root, args.output, record["completed_additional_epochs"])
     (args.output / "report.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     (args.output / "summary.json").write_text(json.dumps({
         k: v for k, v in record.items() if k != "epochs"}, indent=2, sort_keys=True) + "\n")
     print("HW4_FAST_RESUME_FINAL " + json.dumps({
         "status": status,
-        "start_epoch": START_EPOCH,
+        "start_epoch": args.start_epoch,
         "final_cumulative_epoch": record["final_cumulative_epoch"],
         "completed_additional_epochs": record["completed_additional_epochs"],
-        "train_ce_before": START_CE,
-        "train_ce_after": record.get("last_train_ce", START_CE),
+        "train_ce_before": args.start_ce,
+        "train_ce_after": record.get("last_train_ce", args.start_ce),
         "prose_before": prose_before,
         "prose_after": record["prose_after"],
         "source_bytes_scanned": record.get("total_input_bytes_scanned", 0),
