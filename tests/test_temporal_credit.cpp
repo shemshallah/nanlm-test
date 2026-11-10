@@ -82,6 +82,13 @@ int main(){
    // the same derived operator before the in-process measurement so
    // restart/reload compares identical model states.
    m.refresh_spectrum();
+   // Adding directed evidence changes the recurrence/scattering operator.
+   // The earlier probe was advanced using the OLD graph. Replay the
+   // original context under the refreshed operator before comparison;
+   // after restart, the same causal replay must reconstruct identical
+   // activations from the single persisted NaN16 root.
+   probe.reset();
+   for(unsigned char b:context)m.observe(probe,b);
    const auto signed_full=m.predict(probe);
    const auto signed_off=m.predict(
       probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
@@ -108,7 +115,7 @@ int main(){
    const double restored=m.predict(probe).p['Z'];
    std::cerr<<"TEMPORAL_RELOAD_DIAGNOSTIC saved="<<std::setprecision(17)<<saved
             <<" restored="<<restored<<" difference="<<restored-saved<<"\n";
-   check(std::fabs(restored-saved)<1e-7,
+   check(std::fabs(restored-saved)<1e-12,
          "48-step causal credit changed after root reload");
   }
   for(const auto& ext:{"",".so3",".overlay",".overlay.tmp"})
