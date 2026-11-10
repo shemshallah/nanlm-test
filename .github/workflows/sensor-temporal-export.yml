@@ -80,7 +80,7 @@ jobs:
           ! grep -q '^ERROR' native-composition.log
           python3 tools/sensor_temporal_compositional_probe.py "$SNAP.compose.slices" \
             --journal "$SNAP.compose" --training-events 6 | tee temporal-composition.json
-          python3 -c 'import json; r=json.load(open("temporal-composition.json")); assert r["candidate_product"]==18,r; assert r["test_events"]==6,r; assert r["temporal_exact"]==6,r; assert r["static_exact"]<6,r; assert r["shuffled_exact"]<6,r; assert r["abstentions"]==0,r; print("PASS: native unseen-triple recovery beats static and time-shuffle controls")'
+          python3 -c 'import json; r=json.load(open("temporal-composition.json")); assert r["candidate_product"]==18,r; assert r["test_events"]==6,r; assert r["temporal_exact"]==6,r; assert r["static_exact"]<6,r; assert r["shuffled_exact"]<6,r; assert r["abstentions"]==0,r; assert r["pair_index_exact"]==6,r; assert r["one_missing_head_exact"]==6,r; assert r["one_replaced_head_exact"]==6,r; print("PASS: native unseen-triple readout plus C(256,2) one-head loss/replacement recovery")'
           test "$(stat -c%s "$SNAP.compose.slices")" = 8388608
           {
             printf 'INGEST\twave_a\t+\tpenguin\tISA\tbird\n'
