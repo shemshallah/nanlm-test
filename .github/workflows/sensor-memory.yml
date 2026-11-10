@@ -58,6 +58,9 @@ jobs:
             grep -q 'PASS: dynamic 255/85/hot/global triad map' hot-triads.log
             "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_timeslices.cpp -o test_sensor_timeslices
             ./test_sensor_timeslices | tee sensor-timeslices.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_family_maps.cpp -o test_sensor_family_maps
+            ./test_sensor_family_maps | tee sensor-families.log
+            grep -q "PASS: eight math sensors" sensor-families.log
             grep -q 'PASS: four-resolution vector/tensor measurements' sensor-timeslices.log
             ./test_sensor_packet | tee packet-test.log
             grep -q 'PASS: plaintext-free numeric 255/85/1 proof packet' packet-test.log
@@ -78,3 +81,4 @@ jobs:
             packet-test.log
             hot-triads.log
             sensor-timeslices.log
+            sensor-families.log
