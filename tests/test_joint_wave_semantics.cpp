@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -17,7 +18,7 @@ int main(){
  auto cleanup=[&](){
   for(const char* p:{"",".overlay",".so3",".episodes",".wordnet.tsv",
                      ".joint-wave",".joint-wave.tmp","-byte.joint-wave",
-                     "-shuffle.joint-wave","-broken.joint-wave"})
+                     "-shuffle.joint-wave","-role.joint-wave","-sense.joint-wave"})
    std::filesystem::remove(root+p);
  };
  cleanup();
@@ -61,6 +62,8 @@ int main(){
   JointWaveSemanticLearner joint(wave,root);
   JointWaveSemanticLearner byte_only(wave,root+"-byte");
   JointWaveSemanticLearner shuffled(wave,root+"-shuffle");
+  JointWaveSemanticLearner role_only(wave,root+"-role");
+  JointWaveSemanticLearner sense_only(wave,root+"-sense");
   const double projection_initial=joint.projection_norm();
   // Identical deterministic byte warm-up for all three arms.
   for(size_t epoch=0;epoch<4;++epoch){
@@ -70,6 +73,8 @@ int main(){
      joint.teach_byte(state,c,0.02);
      byte_only.teach_byte(state,c,0.02);
      shuffled.teach_byte(state,c,0.02);
+     role_only.teach_byte(state,c,0.02);
+     sense_only.teach_byte(state,c,0.02);
     }
     wave.observe(state,c);
    }
@@ -110,21 +115,32 @@ int main(){
    {"the river passed the bank","bank",802},
    {"mud covered the bank","bank",802}
   };
-  // Explicit shuffled-label arm with identical waveform, byte initialization
-  // and data schedule. Gradients must not assert WordNet or journal claims.
+  // Seeded, fixed *permutation* controls. Keep each randomized label fixed
+  // across epochs; changing the target every epoch is not a proper shuffle.
+  std::vector<int> role_labels;
+  for(const auto& row:roles)role_labels.push_back(row.label);
+  std::vector<uint32_t> sense_labels;
+  for(const auto& row:senses)sense_labels.push_back(row.gold);
+  std::mt19937_64 rng(20261109);
+  std::shuffle(role_labels.begin(),role_labels.end(),rng);
+  std::shuffle(sense_labels.begin(),sense_labels.end(),rng);
+  // Both negative controls and task-specific ablations share the same
+  // byte warm-up, random initialization and frozen UnifiedWave foundation.
   for(size_t epoch=0;epoch<35;++epoch) {
    for(size_t i=0;i<roles.size();++i){
     const auto s=joint.state_for(roles[i].sentence);
     joint.teach_role(s,roles[i],0.04);
+    role_only.teach_role(s,roles[i],0.04);
     auto random_role=roles[i];
-    random_role.label=(i+epoch)%2==0?1:0;
+    random_role.label=role_labels[i];
     shuffled.teach_role(s,random_role,0.04);
    }
    for(size_t i=0;i<senses.size();++i){
     const auto s=joint.state_for(senses[i].sentence);
     joint.teach_sense(s,senses[i],wn,0.04);
+    sense_only.teach_sense(s,senses[i],wn,0.04);
     auto random_sense=senses[i];
-    random_sense.gold=(i+epoch)%2==0?801:802;
+    random_sense.gold=sense_labels[i];
     shuffled.teach_sense(s,random_sense,wn,0.04);
    }
   }
@@ -141,6 +157,8 @@ int main(){
   const auto held_joint=joint.evaluate_bytes(held);
   const auto held_byte=byte_only.evaluate_bytes(held);
   const auto held_shuffled=shuffled.evaluate_bytes(held);
+  const auto held_role_only=role_only.evaluate_bytes(held);
+  const auto held_sense_only=sense_only.evaluate_bytes(held);
   const auto role_score=joint.evaluate_roles(test_roles);
   const auto role_shuffle=shuffled.evaluate_roles(test_roles);
   const auto sense_score=joint.evaluate_senses(test_senses,wn);
@@ -148,6 +166,7 @@ int main(){
   require(held_joint.count>0&&held_byte.count==held_joint.count,
           "byte evaluation sample parity");
   for(double value:{held_joint.ce(),held_byte.ce(),held_shuffled.ce(),
+                    held_role_only.ce(),held_sense_only.ce(),
                     role_score.ce(),role_shuffle.ce(),sense_score.ce(),sense_shuffle.ce()})
    require(std::isfinite(value)&&value>=0,"nonfinite heldout joint benchmark");
   {
@@ -183,6 +202,8 @@ int main(){
            <<" byte_heldout_ce="<<held_joint.ce()
            <<" byte_only_ce="<<held_byte.ce()
            <<" shuffled_semantic_byte_ce="<<held_shuffled.ce()
+           <<" role_only_byte_ce="<<held_role_only.ce()
+           <<" sense_only_byte_ce="<<held_sense_only.ce()
            <<" production_wave_ce="<<baseline_wave
            <<" role_heldout_ce="<<role_score.ce()
            <<" role_accuracy="<<role_score.accuracy()
