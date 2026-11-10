@@ -3,6 +3,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -104,7 +105,10 @@ int main(){
    UnifiedWaveLanguage m(u);
    UnifiedWaveLanguage::State probe{};
    for(unsigned char b:context)m.observe(probe,b);
-   check(std::fabs(m.predict(probe).p['Z']-saved)<1e-7,
+   const double restored=m.predict(probe).p['Z'];
+   std::cerr<<"TEMPORAL_RELOAD_DIAGNOSTIC saved="<<std::setprecision(17)<<saved
+            <<" restored="<<restored<<" difference="<<restored-saved<<"\n";
+   check(std::fabs(restored-saved)<1e-7,
          "48-step causal credit changed after root reload");
   }
   for(const auto& ext:{"",".so3",".overlay",".overlay.tmp"})
