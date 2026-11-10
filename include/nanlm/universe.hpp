@@ -149,7 +149,17 @@ class Universe {
    index_event(i);
   }
  }
+ // Experimental full C(256,2) byte-pair plane is an explicit, isolated
+ // root format. Its two directional residuals occupy slot 31 of each Pair.
+ // Never zero those persisted floats when there is no graph journal. Normal
+ // graph/event roots keep the existing journal-derived cache behavior.
  void rebuild_cache() {
+  const bool pair_plane=std::memcmp(root_->h[255].data+112,"PAIRC256",8)==0;
+  if(pair_plane){
+   if(!events_.empty())throw std::runtime_error(
+    "full-pair language root cannot also replay a relation journal");
+   return;
+  }
   for(auto& cell:root_->p)cell=Pair{};
   for(const auto& e:events_)project(e);
  }
@@ -250,6 +260,8 @@ class Universe {
  }
  void write(uint8_t a,uint8_t b,uint8_t type,bool refutes,float weight,
             uint64_t since,uint64_t until=0,uint64_t provenance=0){
+  if(std::memcmp(root_->h[255].data+112,"PAIRC256",8)==0)
+   throw std::runtime_error("cannot write graph evidence into full-pair language plane");
   if(a==b||type>=16||weight<=0||!std::isfinite(weight)|| (until && until<=since))
    throw std::invalid_argument("invalid typed relation");
   // Validate both physical mirror lanes before appending journal state.
