@@ -1,6 +1,8 @@
 #include "nanlm/joint_wave_semantics.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -174,6 +176,66 @@ int main(){
    require(std::abs(wave.evaluate(after).ce()-baseline_wave)<1e-12,
            "experimental head altered production byte predictor");
   }
+  // Independent finite-difference oracle for the *true* existing wave
+  // recurrence. This audit restores raw register bytes, even when the
+  // original recurrent gain was encoded by an absent magic marker.
+  auto gradient_audit=[&](const std::string& sentence,
+                          const UnifiedWaveLanguage::WaveAdjoint& terminal,
+                          auto loss)->std::pair<double,double>{
+   require(sentence.size()>8,"semantic tape sentence too short");
+   auto prefix=joint.state_for(sentence.substr(0,sentence.size()-8));
+   std::deque<UnifiedWaveLanguage::State> tape{prefix};
+   std::deque<uint8_t> symbols;
+   for(unsigned char c:sentence.substr(sentence.size()-8)){
+    auto after=tape.back();
+    wave.observe(after,c);
+    tape.push_back(std::move(after));
+    symbols.push_back(c);
+   }
+   const auto recurrent=wave.semantic_wave_gradient(tape,symbols,terminal);
+   require(recurrent.steps==8&&std::isfinite(recurrent.norm),
+           "semantic eight-step backprop not finite");
+   const uint8_t target=symbols.back();
+   const double gain=wave.recurrent_input_gain(target);
+   auto& raw=universe.root().h[target].data;
+   std::array<uint8_t,5> saved{};
+   std::memcpy(saved.data(),raw+UnifiedWaveLanguage::BPTT_INPUT_OFFSET,4);
+   saved[4]=raw[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET];
+   auto restore=[&](){
+    std::memcpy(raw+UnifiedWaveLanguage::BPTT_INPUT_OFFSET,saved.data(),4);
+    raw[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET]=saved[4];
+   };
+   auto trial=[&](double offset){
+    wave.set_recurrent_input_gain(target,gain+offset);
+    auto state=tape.front();
+    for(uint8_t byte:symbols)wave.observe(state,byte);
+    return loss(state);
+   };
+   double plus=0,minus=0;
+   try {
+    plus=trial(0.005);
+    minus=trial(-0.005);
+   }catch(...){restore();throw;}
+   restore();
+   const double numerical=(plus-minus)/0.01;
+   const double analytic=recurrent.input[target];
+   require(std::isfinite(numerical)&&std::isfinite(analytic)&&
+           std::abs(analytic-numerical)<1e-6+0.02*std::abs(numerical),
+           "semantic recurrent adjoint disagrees with finite differences");
+   require(universe.event_count()==baseline_events,
+           "semantic finite difference asserted physical facts");
+   return {analytic,numerical};
+  };
+  const auto ws=joint.state_for(senses.front().sentence);
+  const auto sense_audit=gradient_audit(
+   senses.front().sentence,
+   joint.sense_wave_adjoint(ws,senses.front(),wn),
+   [&](const auto& state){return joint.sense_loss(state,senses.front(),wn);});
+  const auto wr=joint.state_for(test_roles.front().sentence);
+  const auto role_audit=gradient_audit(
+   test_roles.front().sentence,
+   joint.role_wave_adjoint(wr,test_roles.front()),
+   [&](const auto& state){return joint.role_loss(state,test_roles.front());});
   joint.save();
   {
    JointWaveSemanticLearner restored(wave,root);
@@ -212,6 +274,10 @@ int main(){
            <<" sense_accuracy="<<sense_score.accuracy()
            <<" sense_shuffled_accuracy="<<sense_shuffle.accuracy()
            <<" byte_probability_shift="<<(p1-p0)
+           <<" sense_recurrent_grad="<<sense_audit.first
+           <<" sense_recurrent_fd="<<sense_audit.second
+           <<" role_recurrent_grad="<<role_audit.first
+           <<" role_recurrent_fd="<<role_audit.second
            <<" wave_state_shared=1"
            <<" gradient_through_recurrence=0"
            <<" byte_updates="<<joint.byte_updates()
