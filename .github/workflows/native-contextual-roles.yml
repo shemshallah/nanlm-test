@@ -1,0 +1,47 @@
+name: NaNLM native contextual role-credit experimental controls
+on:
+  push:
+    branches: ['experiment/native-contextual-role-learning-20261109']
+    paths:
+      - 'include/nanlm/contextual_roles.hpp'
+      - 'tests/test_contextual_roles.cpp'
+      - 'src/main.cpp'
+      - 'Makefile'
+      - '.github/workflows/native-contextual-roles.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  role-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: ['clang++', 'g++']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run native learned contextual-role benchmark
+        run: |
+          set -euo pipefail
+          make test_contextual_roles nanlm CXX=${{ matrix.cxx }}
+          ./test_contextual_roles | tee contextual-native-results.txt
+          grep -F 'CONTEXT_ROLE_NATIVE PASS' contextual-native-results.txt
+      - name: CLI regression using source-disjoint relation examples
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/role-root"
+          ./nanlm "$root" init
+          printf 'alfa gave parcel to bravo\talfa\tbravo\ttransfer\t1\nalfa gave parcel to bravo\tbravo\talfa\ttransfer\t0\nbravo got parcel from alfa\talfa\tbravo\ttransfer\t1\nbravo got parcel from alfa\tbravo\talfa\ttransfer\t0\n' > "$RUNNER_TEMP/role.tsv"
+          ./nanlm "$root" context-train "$RUNNER_TEMP/role.tsv" 40 0.065
+          ./nanlm "$root" context-eval "$RUNNER_TEMP/role.tsv"
+          ./nanlm "$root" context-query "zed gave parcel to yen" zed yen transfer
+          ./nanlm "$root" context-query "zed gave parcel to yen" zed yen unknown
+      - name: Save small numeric logs, not datasets or model artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-contextual-roles-${{ matrix.cxx }}-${{ github.run_id }}
+          path: contextual-native-results.txt
+          retention-days: 30
+          if-no-files-found: warn
