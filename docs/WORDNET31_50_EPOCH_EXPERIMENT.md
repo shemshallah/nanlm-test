@@ -75,3 +75,19 @@ between a synced model update and journal commit can cause a chunk to be
 replayed on resume; this is a research checkpoint, not a crash-atomic
 distributed transaction. Synthetic parser tests never stand in for the
 real full WordNet download and checks.
+
+## Real archive preflight repair
+
+The first real download passed the official 16,358,468-byte SHA-256 check,
+then correctly reported the Princeton archive does **not** contain a
+separate `lexnames` file. That metadata is now optional; all four
+`data.*`, four `index.*`, `index.sense` and four `*.exc` files
+remain **strictly required**. The inventory lists every available
+additional WordNet data file and flags any missing required member.
+This distinction avoids pretending metadata from WordNet 3.0 was shipped
+in the 3.1 dictionary-only release.
+
+The inherited signed-geometric-credit fixture also now rebuilds its
+derived spectral cache after inserting new test evidence. Without this
+step it compared a stale in-memory spectrum to a freshly rebuilt
+spectrum on restart, producing a false persistence failure.

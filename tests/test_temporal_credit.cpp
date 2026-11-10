@@ -77,6 +77,10 @@ int main(){
    u.write('A','Y',PRECEDES,true,4.f,3);
    set_gain(u,'W',0.75f);
    set_gain(u,'Y',0.75f);
+   // Adding directed evidence changes the spectral geometry; rebuild
+   // the same derived operator before the in-process measurement so
+   // restart/reload compares identical model states.
+   m.refresh_spectrum();
    const auto signed_full=m.predict(probe);
    const auto signed_off=m.predict(
       probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);

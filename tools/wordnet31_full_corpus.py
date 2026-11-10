@@ -25,12 +25,12 @@ REQUIRED = {
     *(f"data.{part}" for part in POS),
     *(f"index.{part}" for part in POS),
     *(f"{part}.exc" for part in POS),
-    "index.sense", "lexnames",
+    "index.sense",
 }
 # Every lexical database text file, not just nouns or glosses.
 EXTRA = {"cntlist", "cntlist.rev", "frames.vrb", "sents.vrb",
          "sentidx.vrb", "verb.Framestext", "log.grind.3.1",
-         "README", "LICENSE"}
+         "README", "LICENSE", "lexnames"}
 MAX_SOURCE_BYTES = 80_000_000
 MIN_SYNS = 100_000
 
