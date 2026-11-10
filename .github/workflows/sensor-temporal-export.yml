@@ -4,6 +4,9 @@ on:
     paths:
       - 'tools/sensor_temporal_export.py'
       - 'tests/test_sensor_temporal_export.py'
+      - 'tests/test_sensor_temporal_aggregate.py'
+      - 'tools/sensor_temporal_aggregate.py'
+      - 'docs/SENSOR_TEMPORAL_CONCEPT_BRIDGE.md'
       - '.github/workflows/sensor-temporal-export.yml'
       - 'include/nanlm/sensor_timeslices.hpp'
       - 'src/sensor_resident.cpp'
@@ -25,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Unit test strict numerical reader and temporal changes
         run: |
-          python3 -m unittest discover -s tests -p test_sensor_temporal_export.py -v
+          python3 -m unittest discover -s tests -p 'test_sensor_temporal_*.py' -v
       - name: Native GCC/Clang measurement to Python decoder interoperability
         shell: bash
         run: |
@@ -41,7 +44,12 @@ jobs:
           python3 tools/sensor_temporal_export.py "$SNAP.slices" deltas --format csv > temporal-deltas.csv
           python3 tools/sensor_temporal_export.py "$SNAP.slices" samples --format csv > temporal-samples.csv
           python3 tools/sensor_temporal_export.py "$SNAP.slices" mirrors --format csv > temporal-mirrors.csv
+          python3 tools/sensor_temporal_aggregate.py "$SNAP.slices" aggregate --format csv > temporal-aggregates.csv
+          python3 tools/sensor_temporal_aggregate.py "$SNAP.slices" concepts --journal "$SNAP" > temporal-concepts.jsonl
           test "$(stat -c%s "$SNAP.slices")" = 8388608
+          python3 -c 'import json; rows=[json.loads(x) for x in open("temporal-concepts.jsonl")]; assert len(rows)==3,rows; assert any(r["phrase"]=="penguin is a bird" and r["evidence_state"]=="supports" for r in rows),rows; print("PASS: source-grounded concept labels, no geometric word inversion")'
+          grep -q 'mean_vector_0' temporal-aggregates.csv
+          grep -q 'GLOBAL' temporal-aggregates.csv
           python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
           grep -q '^MATRIX\|^SLICE' native-resident.log
           grep -q 'GLOBAL' temporal-deltas.csv
@@ -58,4 +66,6 @@ jobs:
             temporal-deltas.csv
             temporal-samples.csv
             temporal-mirrors.csv
+            temporal-aggregates.csv
+            temporal-concepts.jsonl
           if-no-files-found: ignore
