@@ -42,10 +42,12 @@ jobs:
           python3 tools/sensor_temporal_export.py "$SNAP.slices" frames | tee temporal-frames.jsonl
           python3 tools/sensor_temporal_export.py "$SNAP.slices" deltas --format csv > temporal-deltas.csv
           python3 tools/sensor_temporal_export.py "$SNAP.slices" samples --format csv > temporal-samples.csv
+          python3 tools/sensor_temporal_export.py "$SNAP.slices" mirrors --format csv > temporal-mirrors.csv
           test "$(stat -c%s "$SNAP.slices")" = 8388608
           python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
           grep -q '^MATRIX\|^SLICE' native-resident.log
           grep -q 'GLOBAL' temporal-deltas.csv
+          grep -q 'physical_offset' temporal-mirrors.csv
       - name: Persist reproducible audit outputs
         if: always()
         uses: actions/upload-artifact@v4
@@ -57,4 +59,5 @@ jobs:
             temporal-frames.jsonl
             temporal-deltas.csv
             temporal-samples.csv
+            temporal-mirrors.csv
           if-no-files-found: ignore
