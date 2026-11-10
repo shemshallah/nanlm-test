@@ -131,10 +131,12 @@ def main() -> None:
             break
         record["completed_additional_epochs"] = epoch
         prev_ce = last
+        # Hash every accepted root; a later rejected proposal must leave this exact
+        # preceding checkpoint intact, even when it lands between prose probes.
+        row["sha256"] = digest(args.root)
+        record["last_sha256"] = row["sha256"]
         if epoch % args.prose_every == 0 or epoch == args.additional_epochs:
             row["prose"] = eval_prose(args.root, args.output, epoch)
-            row["sha256"] = digest(args.root)
-            record["last_sha256"] = row["sha256"]
         record["epochs"].append(row)
         record["last_train_ce"] = last
         record["last_train_accuracy"] = row["top1_after"]
