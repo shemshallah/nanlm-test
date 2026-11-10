@@ -1,0 +1,56 @@
+name: NaNLM Gutenberg-grounded contextual-order credit audit
+on:
+  push:
+    branches: ['experiment/grounded-corpus-order-credit-20261110']
+    paths:
+      - 'tools/grounded_context_credit.cpp'
+      - 'tools/report_grounded_context.py'
+      - 'tools/prepare_joint_gutenberg.py'
+      - 'include/nanlm/joint_wave_semantics.hpp'
+      - '.github/workflows/grounded-context-credit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: grounded-context-credit-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-grounded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned Alice and Dickens corpus slices without committing book text
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/prepare_joint_gutenberg.py tools/report_grounded_context.py
+          mkdir -p grounded-corpus
+          python3 tools/prepare_joint_gutenberg.py grounded-corpus | tee grounded-sources.log
+      - name: Native GCC and Clang warnings-as-errors compilation
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tools/grounded_context_credit.cpp -o grounded_credit_gcc
+          clang++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tools/grounded_context_credit.cpp -o grounded_credit_clang
+      - name: Three independently initialized readout seeds and matched corrupted-text controls
+        run: |
+          set -euo pipefail
+          ./grounded_credit_gcc grounded-corpus/train_alice.txt grounded-corpus/dev_alice.txt grounded-corpus/test_carol_early.txt grounded-corpus/test_carol_late.txt 3 | tee grounded-credit-receipt.log
+          python3 tools/report_grounded_context.py grounded-credit-receipt.log grounded-corpus/manifest.json grounded-credit-report.json | tee grounded-credit-aggregate.log
+          grep -F 'GROUNDED_CONTEXT_REPORT PASS' grounded-credit-aggregate.log
+      - name: Independent Clang execution on two matched seeds
+        run: |
+          set -euo pipefail
+          ./grounded_credit_clang grounded-corpus/train_alice.txt grounded-corpus/dev_alice.txt grounded-corpus/test_carol_early.txt grounded-corpus/test_carol_late.txt 2 | tee grounded-credit-clang.log
+          grep -F 'GROUNDED_CONTEXT_AUDIT PASS' grounded-credit-clang.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grounded-context-numerical-receipts
+          path: |
+            grounded-sources.log
+            grounded-corpus/manifest.json
+            grounded-credit-receipt.log
+            grounded-credit-clang.log
+            grounded-credit-aggregate.log
+            grounded-credit-report.json
+          if-no-files-found: warn
