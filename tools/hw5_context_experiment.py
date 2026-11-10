@@ -135,10 +135,14 @@ def experiment(store:Path,student:Path,output:Path):
             for name,r in selected.items() if name not in ("pure_teacher","bigram_add05")}
     (output/"frozen-dev-choices.json").write_text(json.dumps(frozen,indent=2,sort_keys=True)+"\n")
     test_base=score("test","fixed","test-primary",frozen["best_any"])
-    final={"best_any":test_base[-1],"pure_teacher":test_base[0],"bigram_add05":test_base[1]}
+    assert [r["mode"] for r in test_base]==["geometry_only","bigram_add05","context_hybrid","wrong_oldest_context"]
+    final={"best_any":test_base[2],"wrong_oldest_context":test_base[3],
+           "pure_teacher":test_base[0],"bigram_add05":test_base[1]}
     for name,cfg in frozen.items():
         if name=="best_any":continue
-        final[name]=score("test","fixed","test-"+name,cfg)[-1]
+        candidate=score("test","fixed","test-"+name,cfg)
+        assert candidate[2]["mode"]=="context_hybrid"
+        final[name]=candidate[2]
     if before_student!=sha(student) or before_full!=sha(gen/"gutenberg-c256.root"):
         raise RuntimeError("read-only experiment changed source or geometry student")
     report={
@@ -176,6 +180,10 @@ def experiment(store:Path,student:Path,output:Path):
     print("HW5_HYPERMATRIX_CONTEXT_FINAL",json.dumps({
         "source_books":report["source_books"],"train_bytes":int(bank["bytes"]),
         "train_distinct_triples":int(bank["distinct_triples"]),
+        "train_addressed_pairs":int(bank["addressed_pairs"]),
+        "train_evidence_pairs":int(bank["evidence_pairs"]),
+        "train_absent_active_pairs":int(bank["absent_active_pairs"]),
+        "wrong_context_offset":17,
         "selected_dev":frozen["best_any"],"test":compact,
         "trained_mirror_sha256":report["train_mirror_sha256"],
         "student_immutable":True,"reference_immutable":True,

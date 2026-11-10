@@ -308,12 +308,15 @@ struct Eval{
   for(auto& v:p)v/=sum;
   return p;
  }
- Scores score(const Config& c)const{
+ // Counterfactual test: shift the oldest context byte by a fixed nonzero
+ // offset. Labels, current context and smoothed bigram remain unchanged.
+ // Never tune against this test outcome.
+ Scores score(const Config& c,unsigned wrong_context_offset=0)const{
   if(c.beta<=0||c.lambda<0||c.delta<0||c.lambda+c.delta>1)
    throw std::invalid_argument("non-convex interpolation");
   Scores s{};
   for(const auto& [ab,labels]:observed){
-   const unsigned a=ab/V,b=ab%V;
+   const unsigned a=(ab/V+wrong_context_offset)%V,b=ab%V;
    const auto p=distribution(a,b,c);
    const auto best=unsigned(std::max_element(p.begin(),p.end())-p.begin());
    for(unsigned j=0;j<V;++j){
@@ -405,6 +408,8 @@ int main(int argc,char** argv){
     if(argc!=12)throw std::invalid_argument("fixed requires BETA LAMBDA DELTA KAPPA");
     const Config c{std::stod(argv[8]),std::stod(argv[9]),std::stod(argv[10]),std::stod(argv[11])};
     output("context_hybrid",c,e.score(c));
+    // Diagnostic only on precommitted test parameters, never on dev search.
+    output("wrong_oldest_context",c,e.score(c,17));
    }else throw std::invalid_argument("unknown scoring mode");
   }else throw std::invalid_argument("unknown subcommand");
   return 0;
