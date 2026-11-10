@@ -271,7 +271,7 @@ int main(){
   const double dev_before=joint.evaluate_bytes(byte_dev).ce();
   const auto journal_before_step=universe.event_count();
   const bool accepted_recurrent=joint.guarded_sense_recurrent_step(
-   universe,senses.front(),wn,byte_dev,0.01);
+   universe,senses.front(),wn,byte_dev,0.0);
   const double sense_after=joint.sense_loss(
    joint.state_for(senses.front().sentence),senses.front(),wn);
   const double dev_after=joint.evaluate_bytes(byte_dev).ce();
@@ -280,7 +280,7 @@ int main(){
   if(accepted_recurrent){
    require(sense_after+1e-10<sense_before,
            "accepted recurrence update failed exact semantic replay");
-   require(dev_after<=dev_before+0.01000000001,
+   require(dev_after<=dev_before+1e-10,
            "accepted recurrence update violated byte dev guard");
   }else {
    require(std::abs(sense_after-sense_before)<1e-12&&
@@ -331,7 +331,7 @@ int main(){
            <<" role_recurrent_grad="<<role_audit.first
            <<" role_recurrent_fd="<<role_audit.second
            <<" wave_state_shared=1"
-           <<" gradient_through_recurrence=0"
+           <<" gradient_through_recurrence=1"
            <<" byte_updates="<<joint.byte_updates()
            <<" role_updates="<<joint.role_updates()
            <<" sense_updates="<<joint.sense_updates()
