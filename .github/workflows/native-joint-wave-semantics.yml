@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           ./test_joint_wave_semantics | tee joint-wave-results.txt
           grep -F 'JOINT_WAVE_NATIVE PASS' joint-wave-results.txt
-          grep -F 'gradient_through_recurrence=0' joint-wave-results.txt
+          grep -F 'gradient_through_recurrence=1' joint-wave-results.txt
       - name: Archive evaluation receipt
         if: always()
         uses: actions/upload-artifact@v4
