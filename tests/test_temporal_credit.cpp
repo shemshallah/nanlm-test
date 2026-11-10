@@ -24,6 +24,24 @@ int main(){
   ("nanlm-temporal-credit-"+std::to_string(::getpid()))).string();
  try{
   double saved=0;
+  // Probe individual readout families to diagnose root reload invariance.
+  const std::array<unsigned,12> ablations{{
+   0u, UnifiedWaveLanguage::ABLATE_LONG_CONTEXT,
+   UnifiedWaveLanguage::ABLATE_WAVE,
+   UnifiedWaveLanguage::ABLATE_ATTENTION,
+   UnifiedWaveLanguage::ABLATE_SPECTRAL,
+   UnifiedWaveLanguage::ABLATE_CYCLE,
+   UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE,
+   UnifiedWaveLanguage::ABLATE_HYPEREDGE,
+   UnifiedWaveLanguage::ABLATE_BPTT_READOUT,
+   UnifiedWaveLanguage::ABLATE_TRIAD,
+   UnifiedWaveLanguage::ABLATE_EPISODIC,
+   UnifiedWaveLanguage::ABLATE_ALL
+  }};
+  std::array<double,12> before_ablations{};
+  std::array<double,4> before_modes{};
+  std::array<float,3> before_registers{};
+  size_t before_events=0,before_episodes=0;
   const std::string context="A"+std::string(40,'b');
   {
    Universe u(path);
@@ -98,6 +116,11 @@ int main(){
    check(u.root().h[255].data[UnifiedWaveLanguage::LONG_GAIN_OFFSET]==0,
          "sign-consensus probe modified network ingress");
    saved=m.predict(probe).p['Z'];
+   for(size_t i=0;i<ablations.size();++i)
+    before_ablations[i]=m.predict(probe,ablations[i]).p['Z'];
+   before_modes=m.spectral().eigenvalues;
+   before_registers={gain(u,'Z'),gain(u,'W'),gain(u,'Y')};
+   before_events=u.event_count();before_episodes=m.episodic_records();
    u.sync();
   }
   {
@@ -108,6 +131,25 @@ int main(){
    const double restored=m.predict(probe).p['Z'];
    std::cerr<<"TEMPORAL_RELOAD_DIAGNOSTIC saved="<<std::setprecision(17)<<saved
             <<" restored="<<restored<<" difference="<<restored-saved<<"\n";
+   std::cerr<<"TEMPORAL_RELOAD_COMPONENTS"
+            <<" events_before="<<before_events
+            <<" events_after="<<u.event_count()
+            <<" episodes_before="<<before_episodes
+            <<" episodes_after="<<m.episodic_records()
+            <<" gainZ_before="<<before_registers[0]
+            <<" gainZ_after="<<gain(u,'Z')
+            <<" gainW_before="<<before_registers[1]
+            <<" gainW_after="<<gain(u,'W')
+            <<" gainY_before="<<before_registers[2]
+            <<" gainY_after="<<gain(u,'Y')<<"\n";
+   for(size_t i=0;i<ablations.size();++i)
+    std::cerr<<"TEMPORAL_RELOAD_ABLATION mask="<<ablations[i]
+             <<" before="<<before_ablations[i]
+             <<" after="<<m.predict(probe,ablations[i]).p['Z']<<"\n";
+   for(size_t i=0;i<before_modes.size();++i)
+    std::cerr<<"TEMPORAL_RELOAD_SPECTRAL mode="<<i
+             <<" before="<<before_modes[i]
+             <<" after="<<m.spectral().eigenvalues[i]<<"\n";
    check(std::fabs(restored-saved)<1e-7,
          "48-step causal credit changed after root reload");
   }
