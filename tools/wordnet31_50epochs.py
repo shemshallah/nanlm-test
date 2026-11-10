@@ -63,15 +63,37 @@ def parse_kv(line:str)->dict:
     return result
 
 
-def evaluate(root:Path, heldout:Path | None = None)->dict:
+def evaluate(root:Path, heldout:Path | None = None,
+             limit_bytes:int=0)->dict:
+    # Full heldout provenance is independently verified and pinned by SHA.
+    # Frequent check-ins can score a clearly labeled bounded sample; the
+    # entire heldout is reserved for infrequent final tests.
+    import tempfile
     held=heldout or HERE/"tests/fixtures/unified_quality_heldout.txt"
     if not held.is_file():
         return {}
-    output,seconds=run([str(EXECUTABLE),str(root),"eval",str(held)],timeout=300)
+    if limit_bytes<0 or limit_bytes>1_000_000:
+        raise ValueError("heldout evaluation byte cap outside 0..1000000")
+    if not limit_bytes:
+        output,seconds=run([str(EXECUTABLE),str(root),"eval",str(held)],timeout=300)
+        coverage="full"
+        measured=held.stat().st_size
+    else:
+        with tempfile.TemporaryDirectory(prefix="hw4-heldout-eval-") as td:
+            fragment=Path(td)/"fixed-source-heldout-prefix.txt"
+            with held.open("rb") as src,fragment.open("wb") as dst:
+                dst.write(src.read(limit_bytes))
+            measured=fragment.stat().st_size
+            if measured<min(limit_bytes,held.stat().st_size):
+                raise RuntimeError("heldout prefix failed to load")
+            output,seconds=run([str(EXECUTABLE),str(root),"eval",str(fragment)],timeout=300)
+        coverage="prefix_sample"
     data=parse_kv(output)
     return {"seconds":seconds,"tokens":int(data["bytes"]),
             "ce_nats":float(data["ce_nats"]),
-            "accuracy":float(data["accuracy"])}
+            "accuracy":float(data["accuracy"]),
+            "coverage":coverage,"sample_bytes":measured,
+            "heldout_full_bytes":held.stat().st_size}
 
 
 def checkpoint(args:argparse.Namespace,source:dict)->None:
@@ -85,6 +107,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
     progress_file=state_dir/"progress.json"
     heldout_path=args.heldout
     heldout_digest=sha(heldout_path) if heldout_path is not None else None
+    eval_limit=args.heldout_eval_bytes if heldout_path is not None else 0
     if heldout_digest is not None and source.get("heldout_sha256", heldout_digest)!=heldout_digest:
         raise RuntimeError("heldout corpus digest does not match pinned HW4 manifest")
     if progress_file.is_file():
@@ -92,6 +115,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
         if (p["corpus_sha256"]!=fingerprint or p["corpus_bytes"]!=size or
             p["epochs_target"]!=args.epochs or
             p.get("heldout_sha256")!=heldout_digest or
+            p.get("heldout_eval_bytes",0)!=eval_limit or
             p.get("source_hw4_root_sha256")!=source.get("source_hw4_root_sha256")):
             raise RuntimeError("resumption is not using exactly the original full corpus")
     else:
@@ -99,6 +123,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
             raise RuntimeError("root exists without a progress journal; refusing unsafe replay")
         p={"corpus_sha256":fingerprint,"corpus_bytes":size,"epochs_target":args.epochs,
            "heldout_sha256":heldout_digest,
+           "heldout_eval_bytes":eval_limit,
            "source_hw4_root_sha256":source.get("source_hw4_root_sha256"),
            "epochs_completed":0,"offset":0,"total_bytes_seen":0,
            "total_scored":0,"chunks":0,"total_runtime_seconds":0.0,
@@ -116,7 +141,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
     if not root.exists() and p["total_bytes_seen"]>0:
         raise RuntimeError("checkpoint exists without 8 MiB model root")
     if not args.pilot_only and p["initial_eval"] is None:
-        p["initial_eval"]=evaluate(root,heldout_path)
+        p["initial_eval"]=evaluate(root,heldout_path,eval_limit)
         atomic_json(progress_file,p)
     target_chunks=1 if args.pilot_only else 1000000000
     chunk_size=min(args.initial_chunk_bytes,args.max_chunk_bytes,MAX_STEP_BYTES)
@@ -176,7 +201,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
             p["epoch_nll"]=0.0
             p["epoch_scored"]=0
             p["epoch_credit_accepted"]=0
-            p["recent_eval"]=evaluate(root,heldout_path)
+            p["recent_eval"]=evaluate(root,heldout_path,eval_limit)
             print("WORDNET31_EPOCH "+json.dumps({
                 **p["epoch_history"][-1],"heldout":p["recent_eval"]
             },sort_keys=True),flush=True)
@@ -194,7 +219,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
         target_chunks-=1
     if not args.pilot_only and root.is_file():
         try:
-            p["recent_eval"]=evaluate(root,heldout_path)
+            p["recent_eval"]=evaluate(root,heldout_path,eval_limit)
             atomic_json(progress_file,p)
         except Exception as e:
             print(f"WORDNET31_EVAL_ERROR {type(e).__name__}: {e}",flush=True)
@@ -227,6 +252,7 @@ def main()->None:
     a=argparse.ArgumentParser()
     a.add_argument("--corpus",type=Path,required=True)
     a.add_argument("--heldout",type=Path,default=None,help="source-disjoint heldout HW4 text; immutable and never trained")
+    a.add_argument("--heldout-eval-bytes",type=int,default=8192,help="fixed heldout PREFIX sample for checkpoint CE; 0 evaluates full test (slow)")
     a.add_argument("--manifest",type=Path,required=True)
     a.add_argument("--state-dir",type=Path,required=True)
     a.add_argument("--epochs",type=int,default=50)
