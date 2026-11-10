@@ -155,6 +155,26 @@ class SemanticBridge {
    if(edge.type==ISA)parents_[edge.src].push_back(edge.dst);
   load();
  }
+ size_t project_wordnet_to_existing_universe() {
+  // Explicit bootstrap only: never duplicate an already populated event journal.
+  // The exact sparse synset graph remains canonical for inference; the native
+  // NaN16 mirror fabric receives lossy but typed, provenance-bearing projections.
+  if(u_.event_count()!=0||!facts_.empty())
+   throw std::invalid_argument("projection needs an empty new semantic event journal");
+  const auto& edges=wn_.edges();
+  if(edges.empty())throw std::invalid_argument("WordNet has no semantic edges");
+  for(const auto& e:edges) {
+   const auto* a=wn_.get_concept(e.src);
+   const auto* b=wn_.get_concept(e.dst);
+   if(!a||!b||e.type>=16)throw std::runtime_error("invalid exact WordNet edge");
+   uint8_t from=static_cast<uint8_t>(source(a->leaf)%255u);
+   uint8_t to=static_cast<uint8_t>(target(b->leaf)%255u);
+   if(from==to)to=static_cast<uint8_t>((unsigned(to)+1u)%255u);
+   u_.write(from,to,e.type,false,1.0f,1,0,e.source);
+  }
+  u_.sync();
+  return edges.size();
+ }
  size_t claims()const{return facts_.size();}
  void assert_isa(const std::string& a,const std::string& b,bool yes,
                  const std::string& provenance) {
