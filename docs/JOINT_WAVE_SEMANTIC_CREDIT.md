@@ -286,3 +286,81 @@ language projection has been verified. This establishes a conservative
 fallback path with functioning task-specific learning and zero byte
 interference, but not improved general-purpose semantics or text generation.
 
+
+
+## Projected shared semantic updates: calibration/gate separation
+
+Two experiments separate **failure of a straight semantic step** from
+**failure of all semantic information**. Both use the same exact 8 MiB physical
+Universe and synthetic role/synset supervision; neither trains on Dickens.
+
+Define the proposed shared vector as
+\(\Delta\theta_s=\theta_{\rm semantic}-\theta_{\rm byte}\), with
+\(\theta=(P,b)\) for the 255-by-24 projection and its bias. Compute the
+actual byte cross-entropy gradient \(g_b\) while leaving byte output weights
+and all physical recurrent registers frozen:
+
+\[
+\Delta\theta_{\perp}=
+\begin{cases}
+\Delta\theta_s-\frac{g_b^\top\Delta\theta_s}{g_b^\top g_b}g_b,
+&g_b^\top\Delta\theta_s>0,\\
+\Delta\theta_s,&\text{otherwise.}
+\end{cases}
+\]
+
+A nonlinear, independent byte-CE gate tests five alpha values
+\(1,1/4,1/16,1/64,1/256\) and commits only a nonzero shared update
+with no measured Alice DEV regression. Otherwise it retains semantic
+heads at alpha=0 and records a shared-update rejection. This experiment
+does **not** add a separate byte-gradient descent step.
+
+### Initial DEV-calibrated diagnostic: negative, non-independent gate
+
+[Run 42829538991](https://github.com/shemshallah/nanlm-test/actions/runs/42829538991):
+all 18 semantic proposals had positive first-order byte-CE conflict and
+all 18 projected line searches were rejected. Dickens CE remained
+exactly equal to the byte-only baseline. This diagnostic used Alice DEV
+both for gradient projection and as the acceptance gate: that double
+use does **not** constitute a strictly independent development gate.
+
+### Corrected TRAIN-calibrated, DEV-gated experiment
+
+[Run 42830808712](https://github.com/shemshallah/nanlm-test/actions/runs/42830808712):
+the gradient projection is now computed from Alice TRAIN only, and
+nonoverlapping Alice DEV selects the acceptance alpha. The independent
+cross-author Dickens test remains entirely excluded from gradients
+and selection. This corrected protocol passed native GCC/Clang and
+all three pinned training-order seeds.
+
+| Seed | Shared batches accepted | DEV CE byte-only | DEV CE projected | Dickens CE delta |
+|---|---:|---:|---:|---:|
+| 20261109 | 6/6 | 3.413456847 | 3.412298695 | -0.000198173 |
+| 20261212 | 6/6 | 3.446424859 | 3.445514599 | -0.000080712 |
+| 20261315 | 6/6 | 3.422222556 | 3.420564737 | -0.000087182 |
+
+The mean cross-author improvement is **-0.000122023 nats/byte** over
+the matched byte-only readout. These are nonzero updates to parameters
+read by the byte predictor. The native regression now also verifies
+the shared byte gradient against an independent three-point
+finite-difference derivative
+([GCC/Clang run 42830808692](https://github.com/shemshallah/nanlm-test/actions/runs/42830808692)).
+
+**Interpretation boundaries:** The positive result is a repeatable,
+small proof of mechanism on one model initialization, one fixed pair of
+books and three correlated training-order seeds. Labels remain
+synthetic rather than Gutenberg-acquired. Changes could arise from
+optimization/regularization rather than meaningful role/synset content.
+Role generalization is weak. It is not statistical significance,
+general semantic understanding or a population-scale result.
+
+### Required matched label control
+
+The seventh arm added in commit
+[e461150d](https://github.com/shemshallah/nanlm-test/commit/e461150d2769257620931646dd010aa17e07f6f9)
+runs the **same train-gradient projection, alpha schedule, byte warm-up,
+Alice DEV gate and training order with permanently permuted semantic
+labels**. Compare true-vs-shuffled projected shared updates on heldout
+Dickens byte CE and synthetic semantic test CE. Until the matched
+negative control is verified, do **not** attribute the tiny positive
+cross-author byte improvement specifically to correct semantic labels.
