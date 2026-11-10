@@ -11,6 +11,7 @@ FIELDS = (
     "carol_early_byte_ce", "carol_early_joint_ce",
     "carol_early_shuffled_ce", "carol_early_post_recurrence_ce",
     "carol_late_byte_ce", "carol_late_joint_ce",
+    "carol_early_pareto_ce", "carol_late_pareto_ce",
     "carol_late_shuffled_ce", "carol_late_post_recurrence_ce",
 )
 def parse(text: str) -> list[dict]:
@@ -51,9 +52,11 @@ def main():
                 raise ValueError("mismatched heldout byte count")
         if row["dev_tokens"] != manifest["splits"]["dev_alice"]["bytes"] - 1:
             raise ValueError("mismatched development byte count")
+        if row["dev_pareto_ce"] > row["dev_byte_ce"] + 1e-9:
+            raise ValueError("Pareto arm worsened heldout development CE")
         if row["dev_post_recurrence_ce"] > row["dev_joint_ce"] + 1e-9:
             raise ValueError("acceptance gate failed zero-regression policy")
-    variants = ("byte", "joint", "shuffled", "post_recurrence")
+    variants = ("byte", "joint", "shuffled", "pareto", "post_recurrence")
     results = []
     for row in rows:
         n1, n2 = row["early_tokens"], row["late_tokens"]
@@ -69,6 +72,7 @@ def main():
             "combined_ce": values,
             "paired_delta_joint_minus_byte": values["joint"] - values["byte"],
             "paired_delta_shuffled_minus_byte": values["shuffled"] - values["byte"],
+            "paired_delta_pareto_minus_byte": values["pareto"] - values["byte"],
             "paired_delta_post_recurrent_minus_byte": (
                 values["post_recurrence"] - values["byte"]
             ),
@@ -79,6 +83,7 @@ def main():
         })
     deltas = [r["paired_delta_joint_minus_byte"] for r in results]
     mean = statistics.mean(deltas)
+    pareto_deltas = [r["paired_delta_pareto_minus_byte"] for r in results]
     stdev = statistics.stdev(deltas)
     # 3 correlated training-order seeds on one fixed model family do not
     # justify a conventional population confidence interval or a p-value.
@@ -88,6 +93,7 @@ def main():
           f"joint_minus_byte_std_nats={stdev:.9f} " +
           f"joint_minus_byte_min_nats={min(deltas):+.9f} " +
           f"joint_minus_byte_max_nats={max(deltas):+.9f} " +
+          f"pareto_minus_byte_mean_nats={statistics.mean(pareto_deltas):+.9f} " +
           "significant=unassessed", flush=True)
     for r in results:
         values = r["combined_ce"]
@@ -95,8 +101,10 @@ def main():
               f"byte_ce={values['byte']:.9f} "
               f"joint_ce={values['joint']:.9f} "
               f"shuffled_ce={values['shuffled']:.9f} "
+              f"pareto_ce={values['pareto']:.9f} "
               f"post_recurrence_ce={values['post_recurrence']:.9f} "
               f"joint_minus_byte={r['paired_delta_joint_minus_byte']:+.9f} "
+              f"pareto_minus_byte={r['paired_delta_pareto_minus_byte']:+.9f} "
               f"post_minus_joint={r['paired_delta_post_recurrent_minus_joint']:+.9f}",
               flush=True)
     report = {
@@ -107,6 +115,7 @@ def main():
             "joint_minus_byte_stdev_nats": stdev,
             "joint_minus_byte_min_nats": min(deltas),
             "joint_minus_byte_max_nats": max(deltas),
+            "pareto_minus_byte_mean_nats": statistics.mean(pareto_deltas),
         },
         "interpretation": (
             "This is a heldout cross-author byte-transfer and interference audit "
