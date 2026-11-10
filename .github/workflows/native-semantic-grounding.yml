@@ -7,6 +7,7 @@ on:
       - 'include/nanlm/wordnet.hpp'
       - 'tests/test_semantic_bridge.cpp'
       - 'src/main.cpp'
+      - 'tools/hw4_semantic_export.py'
       - 'Makefile'
       - '.github/workflows/native-semantic-grounding.yml'
   workflow_dispatch:
@@ -42,3 +43,51 @@ jobs:
           grep -F 'state=0' "$RUNNER_TEMP/miss.txt"
           ./nanlm "$root" semantic-ask isa entity artifact | tee "$RUNNER_TEMP/reverse.txt"
           grep -F 'state=0' "$RUNNER_TEMP/reverse.txt"
+
+  full-wordnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build same native semantic query path
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/hw4_semantic_export.py tools/hw4_reference_corpus.py
+          make nanlm CXX=clang++
+      - name: Fetch SHA-256-pinned HW4 WordNet reference
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-immutable.tar.gz"
+          echo '87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  '"$RUNNER_TEMP/hw4-immutable.tar.gz" | sha256sum --check -
+      - name: Export exact WordNet noun synsets and independent multi-hop oracle
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_semantic_export.py \
+            --archive "$RUNNER_TEMP/hw4-immutable.tar.gz" \
+            --output "$RUNNER_TEMP/semantic-export" \
+            --positive-and-negative-per-class 300 \
+            | tee semantic-source-log.txt
+          test "$(wc -l < "$RUNNER_TEMP/semantic-export/semantic-queries.tsv")" -eq 600
+      - name: Score native graph semantics and verify student root remains unchanged
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/native-semantic-root"
+          cp "$RUNNER_TEMP/semantic-export/wordnet-noun.wordnet.tsv" "$root.wordnet.tsv"
+          ./nanlm "$root" init
+          sha256sum "$root" | cut -d' ' -f1 > "$RUNNER_TEMP/before.sha"
+          ./nanlm "$root" semantic-batch "$RUNNER_TEMP/semantic-export/semantic-queries.tsv" | tee semantic-batch-log.txt
+          grep -F 'queries=600 correct=600 accuracy=1' semantic-batch-log.txt
+          grep -F 'mismatches=0' semantic-batch-log.txt
+          test "$(sha256sum "$root" | cut -d' ' -f1)" = "$(cat "$RUNNER_TEMP/before.sha")"
+      - name: Archive compact audit receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-wordnet-native-semantic-${{ github.run_id }}
+          path: |
+            semantic-source-log.txt
+            semantic-batch-log.txt
+          retention-days: 30
+          if-no-files-found: warn
