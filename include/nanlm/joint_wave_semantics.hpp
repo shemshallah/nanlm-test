@@ -507,6 +507,110 @@ class JointWaveSemanticLearner {
   }
   return gradient;
  }
+ // Opt-in semantic-to-recurrent step. Use the *actual mapped root* and
+ // strict, independent byte-development CE as an acceptance gate. We do
+ // NOT accept an optimizer step merely because a surrogate gradient exists.
+ // A failed proposal restores the exact pre-step register bytes and markers.
+ template<class Loss>
+ bool guarded_recurrent_step(Universe& root,const std::string& sentence,
+                             const UnifiedWaveLanguage::WaveAdjoint& terminal,
+                             Loss score,const std::string& byte_dev,
+                             double allowed_byte_regression=0.) {
+  if(root.path()+".joint-wave"!=filename_)
+   throw std::invalid_argument("joint checkpoint/root mismatch");
+  if(sentence.size()<8||sentence.size()>4096||byte_dev.size()<2||
+     byte_dev.size()>100000||!std::isfinite(allowed_byte_regression)||
+     allowed_byte_regression<0||allowed_byte_regression>0.1)
+   throw std::invalid_argument("invalid guarded recurrent acceptance data");
+  const double before_loss=score(state_for(sentence));
+  const auto before_dev=evaluate_bytes(byte_dev);
+  if(!std::isfinite(before_loss)||before_dev.count<1||
+     !std::isfinite(before_dev.ce()))
+   throw std::runtime_error("invalid guarded recurrent baseline");
+  const std::string suffix=sentence.substr(sentence.size()-8);
+  std::deque<State> states{state_for(sentence.substr(0,sentence.size()-8))};
+  std::deque<uint8_t> symbols;
+  for(unsigned char c:suffix){
+   auto s=states.back();
+   wave_.observe(s,c);
+   states.push_back(std::move(s));
+   symbols.push_back(c);
+  }
+  const auto gradient=wave_.semantic_wave_gradient(states,symbols,terminal);
+  if(gradient.norm<1e-12)return false;
+  struct Snapshot {
+   uint8_t head=0;
+   double gain=0;
+   std::array<uint8_t,5> bytes{};
+  };
+  std::vector<Snapshot> saved;
+  for(uint8_t symbol:symbols){
+   if(std::any_of(saved.begin(),saved.end(),[symbol](const Snapshot& x){
+       return x.head==symbol;}))continue;
+   if(std::fabs(gradient.input[symbol])<1e-12)continue;
+   Snapshot x{};
+   x.head=symbol;
+   x.gain=wave_.recurrent_input_gain(symbol);
+   auto& data=root.root().h[symbol].data;
+   std::copy_n(data+UnifiedWaveLanguage::BPTT_INPUT_OFFSET,4,x.bytes.begin());
+   x.bytes[4]=data[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET];
+   saved.push_back(x);
+  }
+  if(saved.empty())return false;
+  const auto rollback=[&](){
+   for(const auto& x:saved){
+    auto& data=root.root().h[x.head].data;
+    std::copy_n(x.bytes.begin(),4,data+UnifiedWaveLanguage::BPTT_INPUT_OFFSET);
+    data[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET]=x.bytes[4];
+   }
+  };
+  const auto journal_before=root.event_count();
+  try{
+   for(size_t retry=0;retry<10;++retry){
+    rollback();
+    const double rate=std::ldexp(0.08,-static_cast<int>(retry));
+    bool changed=false;
+    for(const auto& x:saved){
+     const double proposal=std::clamp(
+      x.gain-rate*gradient.input[x.head],0.6,1.4);
+     if(std::abs(proposal-x.gain)<1e-8)continue;
+     wave_.set_recurrent_input_gain(x.head,proposal);
+     changed=true;
+    }
+    if(!changed)continue;
+    const double after_loss=score(state_for(sentence));
+    const double after_byte=evaluate_bytes(byte_dev).ce();
+    if(std::isfinite(after_loss)&&std::isfinite(after_byte)&&
+       after_loss+1e-10<before_loss&&
+       after_byte<=before_dev.ce()+allowed_byte_regression+1e-12&&
+       root.event_count()==journal_before){
+     root.sync();
+     return true;
+    }
+   }
+  }catch(...){rollback();throw;}
+  rollback();
+  if(root.event_count()!=journal_before)
+   throw std::logic_error("unexpected exact journal mutation");
+  return false;
+ }
+ bool guarded_sense_recurrent_step(Universe& root,const Sense& row,
+                                   const WordNetIndex& wn,
+                                   const std::string& byte_dev,
+                                   double allowed_byte_regression=0.) {
+  const auto terminal=sense_wave_adjoint(state_for(row.sentence),row,wn);
+  return guarded_recurrent_step(root,row.sentence,terminal,
+   [&](const State& s){return sense_loss(s,row,wn);},
+   byte_dev,allowed_byte_regression);
+ }
+ bool guarded_role_recurrent_step(Universe& root,const Role& row,
+                                  const std::string& byte_dev,
+                                  double allowed_byte_regression=0.) {
+  const auto terminal=role_wave_adjoint(state_for(row.sentence),row);
+  return guarded_recurrent_step(root,row.sentence,terminal,
+   [&](const State& s){return role_loss(s,row);},
+   byte_dev,allowed_byte_regression);
+ }
  void save()const {
   std::ostringstream out;
   out<<std::setprecision(17);
