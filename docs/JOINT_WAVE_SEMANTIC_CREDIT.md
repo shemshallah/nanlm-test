@@ -364,3 +364,47 @@ labels**. Compare true-vs-shuffled projected shared updates on heldout
 Dickens byte CE and synthetic semantic test CE. Until the matched
 negative control is verified, do **not** attribute the tiny positive
 cross-author byte improvement specifically to correct semantic labels.
+
+
+### Matched shuffled-label projected-gradient result: semantic attribution fails
+
+The seventh-arm source-pinned Gutenberg audit
+[Actions #42831634140](https://github.com/shemshallah/nanlm-test/actions/runs/42831634140)
+passed compilation, its three-seed native comparison, strict accounting,
+corpus checks and report generation. The correct-label projected arm and
+fixed-permutation shuffled-label projected arm had **identical** byte warmup,
+synthetic example order, projection algorithm (gradients computed exclusively
+on Alice TRAIN), fixed line search and Alice DEV gate. Dickens was excluded
+from all gradient and acceptance decisions.
+
+| Seed | Correct-label projected batches accepted | Shuffled-label projected batches accepted | Dickens CE delta: correct vs byte-only | Dickens CE delta: shuffled vs byte-only | Correct minus shuffled |
+|---|---:|---:|---:|---:|---:|
+| 20261109 | 6 | 0 | -0.000198173 | 0.000000000 | -0.000198173 |
+| 20261212 | 6 | 6 | -0.000080712 | -0.002625949 | +0.002545237 |
+| 20261315 | 6 | 1 | -0.000087182 | -0.000119058 | +0.000031876 |
+| **Mean** | **6** | **2.33** | **-0.000122023** | **-0.000915003** | **+0.000792980** |
+
+The shuffled semantic supervision achieved **greater mean heldout Dickens byte
+CE improvement** even though its synthetic semantic predictions were often
+worse. Therefore the preceding proof of nonzero shared gradient and
+cross-author improvement is **not evidence that correct semantic labels
+improve language transfer**. A plausible alternative is that projection
+surgery plus an adaptive byte-development gate can act as regularization,
+independently of task label correctness. The fixed heldout evaluation also
+remains too small and correlated to establish significance.
+
+Positive, bounded observations that survive this falsification are:
+1. Correct-label semantic training produced an actual nonzero change to
+   parameters read by the language predictor in 18/18 gated batches.
+2. Strict disjoint Alice DEV nonregression held, and Dickens byte CE improved
+   slightly versus byte-only for each of the three train-order seeds.
+3. A **strong, fully matched shuffled-label control** matched or outperformed
+   the correct-label variant on Dickens CE in two of three seeds and by
+   0.000792980 nats/byte in the three-seed average.
+
+The open scientific target is now more specific: *identify real context-
+conditioned semantic features and an optimizer whose transfer gains beat
+matched shuffled labels on separately selected model initializations and
+corpus/test splits*. Keep PR #53 experimental and draft. Do not replace a
+negative attribution result with a generic "joint semantics improved language"
+claim.
