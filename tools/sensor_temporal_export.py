@@ -164,6 +164,9 @@ def load(path: str | Path) -> tuple[list[dict], dict]:
     frames.sort(key=lambda f: (f["seq"], f["offset"]))
     if len({f["seq"] for f in frames}) != len(frames):
         raise ValueError("multiple valid frames share a sequence number")
+    if any(later["nanclock"] < earlier["nanclock"]
+           for earlier, later in zip(frames, frames[1:])):
+        raise ValueError("nanclock regressed across verified frame sequences")
     return frames, {"capacity_bytes": len(data), "valid_frames": len(frames),
                     "rejected_candidate_frames": rejected, "sidecar": str(path)}
 

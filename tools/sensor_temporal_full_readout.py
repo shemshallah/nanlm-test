@@ -32,23 +32,32 @@ def readout(frames, final_tick, events, numeric_roles, train_events, max_items=6
               'numeric_predicted_event_is_ground_truth':sample['correct']}
         if guess is None:
             base.update({'phrase':None,'evidence_state_at_tick':None,
-                         'evidence_state_before_tick':None,'journal_sources':[],
+                         'evidence_state_before_tick':None,
+                         'evidence_before_tick_status':'not_decoded',
+                         'prior_verified_tick':None,'journal_sources':[],
                          'proof':[]})
         else:
             # After prediction: lookup source evidence *for the predicted
             # triple*, and distinguish evidence before and after this event.
             past=[f for f in frames if f['nanclock']<tick]
             present=[f for f in frames if f['nanclock']<=tick]
-            pre=reason.interpret(past,final_tick,events,*guess)
+            prior_tick=past[-1]['nanclock'] if past else None
+            # A retained earlier measurement is not necessarily the state
+            # immediately before this event: dropped/wrapped ticks are unknown.
+            adjacent=prior_tick == tick-1
+            pre=reason.interpret(past,final_tick,events,*guess) if adjacent else None
             now=reason.interpret(present,final_tick,events,*guess)
             base.update({'phrase':now['phrase'],
                          'sentence':now['sentence'],
-                         'evidence_state_before_tick':pre['evidence_state'],
+                         'evidence_state_before_tick':pre['evidence_state'] if pre else None,
+                         'evidence_before_tick_status':('verified_adjacent' if adjacent else
+                              'missing_prior_frame' if prior_tick is None else 'unverified_gap'),
+                         'prior_verified_tick':prior_tick,
                          'evidence_state_at_tick':now['evidence_state'],
                          'journal_sources':{'support':now['support_sources'],
                                             'refute':now['refute_sources']},
                          'proof':now['proof_nodes'],
-                         'inferred_from_previous_evidence':pre['inferred'],
+                         'inferred_from_previous_evidence':pre['inferred'] if pre else None,
                          'provenance_separation':{
                              'lexical_identity':'supervised numerical role probe',
                              'evidence':'authoritative V2 journal',

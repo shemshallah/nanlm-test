@@ -32,7 +32,7 @@ def interpret(frames: list[dict], final_tick: int, events: list[dict],
             (subject,relation,obj)]
     support=sorted({e['source'] for e in direct if e['polarity']=='+'})
     refute=sorted({e['source'] for e in direct if e['polarity']=='-'})
-    proof_nodes=[];proof_sources=[];proof_ticks=[]
+    proof_nodes=[];proof_sources=[];proof_ticks=[];proof_edge_sources=[]
     # Native sensor's only supported logical extension is POSITIVE ISA.
     # Deliberately avoid negation-as-failure or transitivity for other types.
     if relation=='ISA' and subject!=obj and max_hops>=2:
@@ -59,6 +59,7 @@ def interpret(frames: list[dict], final_tick: int, events: list[dict],
                 if dest==obj and len(np)>=3:
                     proof_nodes=list(np)
                     proof_sources=sorted(set(ns))
+                    proof_edge_sources=list(ns)  # One source per ordered proof edge.
                     proof_ticks=list(nt)
                     break
                 if best_depth.get(dest,999)>depth+1:
@@ -85,6 +86,10 @@ def interpret(frames: list[dict], final_tick: int, events: list[dict],
             'support_sources':all_support, 'refute_sources':refute,
             'inferred':bool(proof_nodes),'proof_nodes':proof_nodes,
             'proof_sources':proof_sources,'proof_event_ticks':proof_ticks,
+            'proof_edge_sources':proof_edge_sources,
+            'proof_edges':[{'from':left,'to':right,'source':source,'tick':event_tick}
+                           for left,right,source,event_tick in zip(
+                               proof_nodes,proof_nodes[1:],proof_edge_sources,proof_ticks)],
             'journal_event_count':len(observed),'last_verified_tick':tick,
             'provenance':'journal lexical facts; independent MATS frame count alignment',
             'non_explosion':True, 'semantics':'bounded positive ISA closure only; not model language learning'}

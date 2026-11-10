@@ -210,13 +210,23 @@ def concepts(frames, journal_tick, events):
     if frames[-1]["nanclock"] > journal_tick:
         raise ValueError("journal is older than last verified sensor frame")
     tick = frames[-1]["nanclock"]
-    available = [e for e in events if e["tick"] <= tick]
+    # Single monotone sweep: O(frames + events) rather than rescanning every
+    # event for every retained frame. No missing sample is treated as zero.
+    sources_seen, facts_seen = set(), set()
+    cursor, previous_tick = 0, -1
     for frame in frames:
-        prefix = [e for e in available if e["tick"] <= frame["nanclock"]]
-        if (frame["sources"] != len({e["source"] for e in prefix}) or
-                frame["facts"] != len({(e["subject"], e["relation"], e["object"])
-                                      for e in prefix})):
+        frame_tick = frame["nanclock"]
+        if frame_tick < previous_tick:
+            raise ValueError("nanclock regressed across verified frame sequences")
+        previous_tick = frame_tick
+        while cursor < len(events) and events[cursor]["tick"] <= frame_tick:
+            event = events[cursor]
+            sources_seen.add(event["source"])
+            facts_seen.add((event["subject"], event["relation"], event["object"]))
+            cursor += 1
+        if frame["sources"] != len(sources_seen) or frame["facts"] != len(facts_seen):
             raise ValueError("source journal counts disagree with verified frame; do not align")
+    available = events[:cursor]
     by_key = defaultdict(list)
     for e in available:
         by_key[(e["subject"], e["relation"], e["object"])].append(e)

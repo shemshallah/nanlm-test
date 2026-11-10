@@ -36,4 +36,22 @@ class FullReadoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'unaligned'):
             full.readout(frames,12,events,tampered,6)
 
+    def test_missing_prior_tick_is_unavailable_not_prior_evidence(self):
+        frames, events, trace = fixture()
+        # Insert a genuine idle-clock hole before the first held-out event.
+        # The earlier snapshot is verified but cannot stand for tick 7.
+        frames = [dict(f, nanclock=f['nanclock'] + (f['nanclock'] >= 7))
+                  for f in frames]
+        events = [dict(e, tick=e['tick'] + (e['tick'] >= 7)) for e in events]
+        trace = [dict(r, tick=r['tick'] + (r['tick'] >= 7)) for r in trace]
+        with mock.patch.object(full.agg, 'aggregate', return_value=[]):
+            report = full.readout(frames, 13, events, trace, 6)
+        first = report['items'][0]
+        self.assertEqual(first['tick'], 8)
+        self.assertEqual(first['prior_verified_tick'], 6)
+        self.assertEqual(first['evidence_before_tick_status'], 'unverified_gap')
+        self.assertIsNone(first['evidence_state_before_tick'])
+        self.assertIsNone(first['inferred_from_previous_evidence'])
+        self.assertEqual(first['evidence_state_at_tick'], 'supports')
+
 if __name__=='__main__':unittest.main()

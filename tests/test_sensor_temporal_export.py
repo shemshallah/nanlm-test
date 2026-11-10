@@ -209,5 +209,11 @@ class TemporalExportTests(unittest.TestCase):
         self.assertEqual(len(invoke("frames", "--limit", "1").splitlines()), 1)
 
 
+    def test_regressing_verified_frame_clock_is_rejected_on_load(self):
+        # Valid checksums alone cannot establish an ordered chronology.
+        make_sidecar(self.path, [encoded_frame(5), encoded_frame(4)])
+        with self.assertRaisesRegex(ValueError, "nanclock regressed"):
+            exp.load(self.path)
+
 if __name__ == "__main__":
     unittest.main()

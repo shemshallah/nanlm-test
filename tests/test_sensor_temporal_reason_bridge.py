@@ -44,4 +44,22 @@ class ReasonBridgeTests(unittest.TestCase):
         self.assertEqual(q['evidence_state'],'supports')
         self.assertEqual(q['journal_event_count'],2)
 
+    def test_proof_edges_preserve_hop_order_and_repeated_sources(self):
+        altered = list(self.events)
+        altered[1] = dict(altered[1], source='src_a')
+        frames = [{'seq': 1, 'nanclock': 0, 'sources': 0, 'facts': 0}]
+        for event in altered:
+            prefix = [e for e in altered if e['tick'] <= event['tick']]
+            frames.append({'seq': event['tick']+1, 'nanclock': event['tick'],
+                           'sources': len({e['source'] for e in prefix}),
+                           'facts': len({(e['subject'], e['relation'], e['object'])
+                                         for e in prefix})})
+        result = rb.interpret(frames, 4, altered, 'penguin', 'ISA', 'animal')
+        self.assertEqual(result['proof_sources'], ['src_a'])
+        self.assertEqual(result['proof_edge_sources'], ['src_a', 'src_a'])
+        self.assertEqual(result['proof_edges'], [
+            {'from': 'penguin', 'to': 'bird', 'source': 'src_a', 'tick': 1},
+            {'from': 'bird', 'to': 'animal', 'source': 'src_a', 'tick': 2},
+        ])
+
 if __name__=='__main__':unittest.main()

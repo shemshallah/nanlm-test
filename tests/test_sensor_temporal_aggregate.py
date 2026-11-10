@@ -125,5 +125,13 @@ class AggregateTests(unittest.TestCase):
         self.assertIn('GLOBAL', proc.stdout)
 
 
+    def test_counts_reject_regressing_clock_even_without_event_claims(self):
+        frames = [
+            {'seq': 1, 'nanclock': 2, 'sources': 0, 'facts': 0},
+            {'seq': 2, 'nanclock': 1, 'sources': 0, 'facts': 0},
+        ]
+        with self.assertRaisesRegex(ValueError, 'nanclock regressed'):
+            ag.concepts(frames, 2, [])
+
 if __name__ == '__main__':
     unittest.main()
