@@ -275,6 +275,112 @@ class JointWaveSemanticLearner {
   role_updates_=candidate.role_updates_;
   sense_updates_=candidate.sense_updates_;
  }
+ // Independent Alice-development byte CE derivative w.r.t. the shared
+ // projection and bias ONLY. The byte head and recurrent root stay fixed.
+ // This is measured using actual next-byte probabilities, not a surrogate
+ // semantic classifier. No test-book bytes may enter this derivative.
+ struct SharedGradient {
+  std::array<V,N> projection{};
+  V bias{};
+  size_t count=0;
+  double norm2()const {
+   double n=0;
+   for(const auto& v:projection)for(double x:v)n+=x*x;
+   for(double x:bias)n+=x*x;
+   return n;
+  }
+ };
+ SharedGradient byte_development_gradient(const std::string& bytes)const {
+  if(bytes.size()<2||bytes.size()>100000)
+   throw std::invalid_argument("invalid byte-development stream size");
+  SharedGradient g{};
+  State s{};
+  for(unsigned char ch:bytes) {
+   if(ch==255){s.reset();continue;}
+   if(s.length) {
+    const auto a=encode(s);
+    const auto p=predict_byte(s);
+    V dz{};
+    for(size_t c=0;c<N;++c){
+     const double error=p.p[c]-double(c==ch);
+     for(size_t d=0;d<D;++d)dz[d]+=error*byte_heads_[c][d];
+    }
+    for(size_t d=0;d<D;++d){
+     const double delta=dz[d]*(1.0-a.h[d]*a.h[d]);
+     g.bias[d]+=delta;
+     for(size_t i=0;i<N;++i)if(a.x[i]!=0)
+      g.projection[i][d]+=delta*a.x[i];
+    }
+    ++g.count;
+   }
+   wave_.observe(s,ch);
+  }
+  if(g.count==0)throw std::invalid_argument("empty byte-development gradient");
+  const double scale=1.0/double(g.count);
+  for(auto& v:g.projection)for(double& x:v)x*=scale;
+  for(double& x:g.bias)x*=scale;
+  return g;
+ }
+ // Positive means the semantic displacement would increase byte DEV CE to
+ // first order; negative means it is locally helpful to byte prediction.
+ double shared_byte_directional_derivative(
+     const JointWaveSemanticLearner& proposal,
+     const std::string& byte_dev)const {
+  if(&wave_!=&proposal.wave_||filename_!=proposal.filename_||
+     byte_updates_!=proposal.byte_updates_)
+   throw std::invalid_argument("unrelated semantic proposal");
+  const auto g=byte_development_gradient(byte_dev);
+  double dot=0;
+  for(size_t i=0;i<N;++i)for(size_t d=0;d<D;++d)
+   dot+=g.projection[i][d]*(proposal.projection_[i][d]-projection_[i][d]);
+  for(size_t d=0;d<D;++d)
+   dot+=g.bias[d]*(proposal.bias_[d]-bias_[d]);
+  return dot;
+ }
+ // Project a trained semantic displacement out of the conflicting
+ // development-byte gradient half-space, with NO byte-gradient descent
+ // injected into the update. If g dot delta > 0, subtract its normal
+ // component; otherwise leave delta intact. A separate exact byte CE gate
+ // must still accept or reject this nonlinear candidate.
+ void blend_projected_semantics_from(
+     const JointWaveSemanticLearner& proposal,
+     const std::string& byte_dev,double alpha) {
+  if(&wave_!=&proposal.wave_||filename_!=proposal.filename_||
+     byte_updates_!=proposal.byte_updates_)
+   throw std::invalid_argument("unrelated projected semantic state");
+  if(!std::isfinite(alpha)||alpha<0||alpha>1)
+   throw std::invalid_argument("projected semantic scale must be 0..1");
+  if(alpha==0){blend_semantics_from(proposal,0.0);return;}
+  const auto g=byte_development_gradient(byte_dev);
+  double dot=0;
+  for(size_t i=0;i<N;++i)for(size_t d=0;d<D;++d)
+   dot+=g.projection[i][d]*(proposal.projection_[i][d]-projection_[i][d]);
+  for(size_t d=0;d<D;++d)
+   dot+=g.bias[d]*(proposal.bias_[d]-bias_[d]);
+  const double norm=g.norm2();
+  const double scale=(dot>0&&norm>1e-30)?dot/norm:0.0;
+  // Must apply the original delta AFTER updating semantic-only heads:
+  // alpha=0 must preserve the full byte probability distribution exactly.
+  for(size_t i=0;i<N;++i)for(size_t d=0;d<D;++d)
+   projection_[i][d]+=alpha*((proposal.projection_[i][d]-projection_[i][d])-
+                              scale*g.projection[i][d]);
+  for(size_t d=0;d<D;++d)
+   bias_[d]+=alpha*((proposal.bias_[d]-bias_[d])-scale*g.bias[d]);
+  blend_semantics_from(proposal,0.0);
+ }
+ double shared_displacement_norm(const JointWaveSemanticLearner& other)const {
+  if(&wave_!=&other.wave_||filename_!=other.filename_)
+   throw std::invalid_argument("unrelated shared displacement");
+  double n=0;
+  for(size_t i=0;i<N;++i)for(size_t d=0;d<D;++d){
+   const double x=projection_[i][d]-other.projection_[i][d];
+   n+=x*x;
+  }
+  for(size_t d=0;d<D;++d){
+   const double x=bias_[d]-other.bias_[d];n+=x*x;
+  }
+  return std::sqrt(n);
+ }
  uint64_t byte_updates()const{return byte_updates_;}
  uint64_t role_updates()const{return role_updates_;}
  uint64_t sense_updates()const{return sense_updates_;}

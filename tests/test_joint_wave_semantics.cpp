@@ -185,6 +185,40 @@ int main(){
             "full semantic blend differs from proposal");
    require(std::abs(full_prob.p[' ']-original_prob.p[' '])>1e-12,
            "positive shared blend produced no byte change");
+   // Projected gradient surgery uses the byte DEV derivative, not
+   // a byte-only update masquerading as semantic transfer.
+   const std::string surgery_dev=
+     "unseen contexts must remain byte stable and deterministic.";
+   const auto gradient=byte_only.byte_development_gradient(surgery_dev);
+   require(gradient.count==surgery_dev.size()-1&&
+           std::isfinite(gradient.norm2())&&gradient.norm2()>0,
+           "byte-development shared gradient is empty");
+   auto surgery_zero=byte_only;
+   surgery_zero.blend_projected_semantics_from(proposal,surgery_dev,0.0);
+   require(surgery_zero.shared_displacement_norm(byte_only)==0.0,
+           "zero projected alpha modified byte parameters");
+   for(size_t c=0;c<UnifiedWaveLanguage::N;++c)
+    require(surgery_zero.predict_byte(probe_state).p[c]==original_prob.p[c],
+            "projected alpha=0 byte distribution mismatch");
+   auto surgery=byte_only;
+   surgery.blend_projected_semantics_from(proposal,surgery_dev,0.0625);
+   require(std::isfinite(surgery.evaluate_bytes(surgery_dev).ce())&&
+           surgery.shared_displacement_norm(byte_only)>0,
+           "nonzero projected semantic direction disappeared");
+   const double directional=
+     byte_only.shared_byte_directional_derivative(surgery,surgery_dev);
+   const double raw_directional=
+     byte_only.shared_byte_directional_derivative(proposal,surgery_dev);
+   require(directional<=1e-9&&std::isfinite(raw_directional),
+           "projected direction still conflicts with byte gradient");
+   bool invalid_projection=false;
+   try{surgery.blend_projected_semantics_from(proposal,surgery_dev,-0.1);}
+   catch(const std::invalid_argument&){invalid_projection=true;}
+   require(invalid_projection,"negative projected alpha was accepted");
+   invalid_projection=false;
+   try{surgery.blend_projected_semantics_from(joint,surgery_dev,0.1);}
+   catch(const std::invalid_argument&){invalid_projection=true;}
+   require(invalid_projection,"unrelated projected learner was accepted");
    bool invalid=false;
    try{head_only.blend_semantics_from(proposal,-0.1);}
    catch(const std::invalid_argument&){invalid=true;}
