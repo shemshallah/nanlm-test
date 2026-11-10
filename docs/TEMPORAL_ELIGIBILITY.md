@@ -67,3 +67,17 @@ readout enabled and disabled. It emits `UNIFIED_CREDIT_EVAL` with CE,
 accuracy, token parity and the signed held-out loss difference. It does not
 train or create a new TRAIL implementation. A positive signed delta means
 the stored geometric readout helped; a negative delta means it hurt.
+
+## Existing geometric credit × standing-wave factorial evaluation
+
+The pinned Alice→Dickens source-disjoint CI now evaluates the *production*
+(default, tape-free) root against the same 5,998 bytes under a 2×2 readout
+factorial: existing temporal-credit readout enabled/disabled and standing
+wave execution enabled/disabled. These are **evaluations of the identical
+trained, development-calibrated root**, not separate expert models or
+new TRAIL training. The output lines are `PUBLIC_DOMAIN_GEOMETRIC_CREDIT`
+per held-out segment and `PUBLIC_DOMAIN_GEOMETRIC_CREDIT_AGGREGATE`
+per wave mode. Positive `delta_no_credit_minus_full` indicates held-out
+benefit from the existing geometric credit; negative indicates harm.
+The two wave conditions allow an explicit interaction test. This remains
+a small author-disjoint experiment rather than a broad generalization claim.
