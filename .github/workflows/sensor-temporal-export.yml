@@ -10,12 +10,14 @@ on:
       - 'tests/test_sensor_temporal_wave_forecast.py'
       - 'tests/test_sensor_temporal_role_decoder.py'
       - 'tests/test_sensor_temporal_reason_bridge.py'
+      - 'tests/test_sensor_temporal_full_readout.py'
       - 'tools/sensor_temporal_aggregate.py'
       - 'tools/sensor_temporal_concept_probe.py'
       - 'tools/sensor_temporal_compositional_probe.py'
       - 'tools/sensor_temporal_wave_forecast.py'
       - 'tools/sensor_temporal_role_decoder.py'
       - 'tools/sensor_temporal_reason_bridge.py'
+      - 'tools/sensor_temporal_full_readout.py'
       - 'docs/SENSOR_GROUNDED_REASON_BRIDGE.md'
       - 'src/sensor_role_probe.cpp'
       - 'docs/SENSOR_ROLE_DECODER_AUDIT.md'
@@ -104,6 +106,11 @@ jobs:
             --journal "$SNAP.compose" --role-trace native-role-probe.tsv \
             --training-events 6 | tee temporal-role-decoder.json
           python3 -c 'import json; r=json.load(open("temporal-role-decoder.json")); assert r["test_events"]==6,r; assert r["source_disjoint"],r; assert r["correct"]==6,r; assert r["one_missing_head_correct"]==6,r; assert r["time_shuffled_correct"]<6,r; assert r["role_swapped_correct"]<6,r; print("PASS: C++ numeric role telemetry to SGD supervised decoder of unseen complete claims")'
+          python3 tools/sensor_temporal_full_readout.py "$SNAP.compose.slices" \
+            --journal "$SNAP.compose" --role-trace native-role-probe.tsv \
+            --training-events 6 | tee temporal-full-readout.json
+          python3 -c 'import json; r=json.load(open("temporal-full-readout.json")); assert r["decoded_items"]==6,r; assert r["source_disjoint_training"],r; assert r["items"][0]["phrase"]=="penguin is an animal",r; assert r["items"][0]["evidence_state_before_tick"]=="unknown",r; assert r["items"][0]["evidence_state_at_tick"]=="supports",r; assert r["items"][0]["journal_sources"]["support"]==["src_7"],r; print("PASS: integrated numeric->words->evidence readout without semantic conflation")'
+
 
           {
             printf 'INGEST\twave_a\t+\tpenguin\tISA\tbird\n'
@@ -143,6 +150,7 @@ jobs:
             temporal-composition.json
             native-role-probe.tsv
             temporal-role-decoder.json
+            temporal-full-readout.json
             native-wave.log
             temporal-wave.json
           if-no-files-found: ignore
