@@ -215,6 +215,7 @@ def delta_rows(frames: list[dict]) -> list[dict]:
                     "remapped": remapped, "heads": new["heads"]}
             if remapped:
                 out.append({**base, "status": "membership_changed",
+                            "vector_delta": None, "tensor_delta": None,
                             "vector_delta_norm": None, "tensor_delta_fro": None,
                             "angular_change_rad": None, "angular_rate_rad_per_tick": None,
                             "vector_speed_per_tick": None, "tensor_speed_per_tick": None,
@@ -224,11 +225,14 @@ def delta_rows(frames: list[dict]) -> list[dict]:
             dq = [b - a for a, b in zip(old["tensor"], new["tensor"])]
             ang = angle(old["vector"], new["vector"])
             out.append({**base, "status": "compared",
+                        "vector_delta": dv, "tensor_delta": dq,
                         "vector_delta_norm": norm(dv), "tensor_delta_fro": norm(dq),
                         "angular_change_rad": ang,
                         "angular_rate_rad_per_tick": ang / dt if ang is not None and dt else None,
                         "vector_speed_per_tick": norm(dv) / dt if dt else None,
                         "tensor_speed_per_tick": norm(dq) / dt if dt else None,
+                        "vector_derivative": [v / dt for v in dv] if dt else None,
+                        "tensor_derivative": [v / dt for v in dq] if dt else None,
                         "support_delta": new["support"] - old["support"],
                         "refute_delta": new["refute"] - old["refute"],
                         "tensor_trace_delta": sum(dq[i] for i in (0, 4, 8))})
@@ -290,7 +294,7 @@ def emit(rows: list[dict], fmt: str) -> None:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sidecar", help="snapshot path or explicit .slices path")
-    parser.add_argument("command", choices=("frames", "samples", "deltas", "summary"))
+    parser.add_argument("command", choices=("frames", "samples", "mirrors", "deltas", "summary"))
     parser.add_argument("--format", choices=("jsonl", "csv"), default="jsonl")
     parser.add_argument("--limit", type=int, default=0,
                         help="0 = all retained verified frames; otherwise last N")
@@ -308,6 +312,9 @@ def main(argv=None) -> int:
             emit(measurements(frames), args.format)
         elif args.command == "deltas":
             emit(changes, args.format)
+        elif args.command == "mirrors":
+            emit([{"seq": f["seq"], "nanclock": f["nanclock"], **m}
+                  for f in frames for m in f["mirrors"]], args.format)
         else:
             emit([{k: v for k, v in f.items() if k != "rows" and k != "mirrors"} |
                   {"heads": sum(r["level"] == "HEAD" for r in f["rows"]),
