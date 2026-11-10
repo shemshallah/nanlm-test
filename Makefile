@@ -108,3 +108,7 @@ test_associative_memory: tests/test_associative_memory.cpp $(wildcard include/na
 # HW4 full-corpus batch geometry learner; one C++ training pass, no BPTT.
 hw4-onepass: tools/hw4_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# HW5 Gutenberg full-document byte-transition geometric learner and read-only eval.
+hw5-onepass: tools/hw5_geometric_native.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
