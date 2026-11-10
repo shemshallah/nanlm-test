@@ -1,0 +1,62 @@
+name: HW5 native geometric CP context distillation into one NaNLM root
+on:
+  push:
+    branches: ['experiment/hw5-cp-context-distillation-20261109']
+    paths:
+      - 'tools/hw5_geometric_context_native.cpp'
+      - 'tools/hw5_cp_context_experiment.py'
+      - 'tests/test_hw5_geometric_context.py'
+      - '.github/workflows/hw5-cp-context-distillation.yml'
+      - 'Makefile'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-cp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native C++20 build, synthetic learning and boundary audits
+        run: |
+          set -euo pipefail
+          make hw5-geometric-context CXX=clang++
+          python3 -m py_compile tools/hw5_cp_context_experiment.py
+          python3 -m unittest tests.test_hw5_geometric_context -v
+      - name: Verify immutable Gutenberg corpus
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-release.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-release.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/hw5-release.tar.gz" -C "$RUNNER_TEMP"
+      - name: Restore original SHA-pinned Gutenberg-trained NaNLM root
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-gutenberg-transfer-from-wordnet103
+          run-id: 42744089393
+          repository: shemshallah/nanlm-test
+          github-token: ${{ github.token }}
+          path: prior
+      - name: Train and evaluate native geometric contextual credit
+        run: |
+          set -euo pipefail
+          test -f prior/hw5-transfer-state/learner-root
+          python3 tools/hw5_cp_context_experiment.py \
+            --reference "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --student prior/hw5-transfer-state/learner-root \
+            --output hw5-cp-state --epochs 60 --eval-every 5 \
+            | tee hw5-cp.log
+          grep '^HW5_CP_FINAL ' hw5-cp.log
+      - name: Preserve best 8 MiB student, gradient receipts and held-out metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-cp-context-${{ github.run_id }}
+          path: |
+            hw5-cp-state/
+            hw5-cp.log
+          retention-days: 30
+          if-no-files-found: warn
