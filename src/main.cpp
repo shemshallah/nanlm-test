@@ -16,7 +16,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT|audit TEXT|calibrate DEV_TEXT|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -72,6 +72,7 @@ int main(int argc,char** argv){
             <<" eigenvalue="<<mind.spectral().eigenvalue
             <<" eigen_residual="<<mind.spectral().residual
             <<" mirror_mass="<<mind.spectral().edge_mass
+            <<" temporal_credit_accepted="<<mind.temporal_credit_accepted()
             <<" bptt_enabled="<<int(mind.bptt_enabled())
             <<" bptt_attempted="<<mind.bptt_attempted()
             <<" bptt_accepted="<<mind.bptt_accepted()
@@ -79,15 +80,126 @@ int main(int argc,char** argv){
             <<" projection_accepted="<<mind.projection_accepted()
             <<" adapter_accepted="<<mind.adapter_accepted()
             <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())<<"\n";
+  }else if(operation=="memorize"){
+   if(argc!=5)throw std::invalid_argument("memorize requires TSV_FILE SOURCE");
+   std::ifstream file(argv[3],std::ios::binary);
+   if(!file)throw std::runtime_error("episodic TSV unavailable");
+   UnifiedWaveLanguage mind(universe);
+   const auto loaded=mind.memorize_tsv(file,argv[4]);
+   std::cout<<"UNIFIED_EPISODIC_IMPORT imported="<<loaded
+            <<" records="<<mind.episodic_records()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="memorize-lines"){
+   if(argc!=5)throw std::invalid_argument("memorize-lines requires TEXT_FILE SOURCE");
+   std::ifstream file(argv[3],std::ios::binary);
+   if(!file)throw std::runtime_error("episodic source text unavailable");
+   UnifiedWaveLanguage mind(universe);
+   const auto loaded=mind.memorize_lines(file,argv[4]);
+   std::cout<<"UNIFIED_EPISODIC_LINES indexed="<<loaded
+            <<" records="<<mind.episodic_records()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="recall"){
+   if(argc!=4)throw std::invalid_argument("recall requires exact cue");
+   UnifiedWaveLanguage mind(universe);
+   const auto* record=mind.exact_recall(argv[3]);
+   if(mind.contested_episodic(argv[3])){
+    std::cout<<"UNIFIED_EPISODIC_CONTESTED\n";return 4;
+   }
+   if(!record){std::cout<<"UNIFIED_EPISODIC_MISS\n";return 3;}
+   std::cout<<"UNIFIED_EPISODIC_HIT source="<<record->source
+            <<" value="<<record->value<<"\n";
+  }else if(operation=="probe-memory"){
+   if(argc<4||argc>5)throw std::invalid_argument("probe-memory CUE [RESONANCE_0_OR_1]");
+   const bool on=argc==5?number(4)!=0:false;
+   UnifiedWaveLanguage mind(universe);
+   UnifiedWaveLanguage::State s{};
+   for(unsigned char c:std::string(argv[3]))mind.observe(s,c);
+   const auto hit=mind.probe_memory(s,on);
+   std::cout<<"UNIFIED_MEMORY_PROBE resonance="<<int(on)
+            <<" exact="<<int(hit.record!=ExactEpisodicMemory::NONE)
+            <<" contested="<<int(mind.contested_episodic(argv[3]))
+            <<" routed="<<hit.routed
+            <<" checked="<<hit.exact_compares
+            <<" phase_score="<<hit.resonance<<"\n";
+  }else if(operation=="suggest"){
+   if(argc<4||argc>5)throw std::invalid_argument("suggest CUE [TOP_K]");
+   const size_t limit=argc>4?std::stoull(argv[4]):3u;
+   if(limit==0||limit>16)throw std::invalid_argument("suggest limit must be 1..16");
+   UnifiedWaveLanguage mind(universe);
+   UnifiedWaveLanguage::State s{};
+   for(unsigned char c:std::string(argv[3]))mind.observe(s,c);
+   for(const auto& hint:mind.suggest_memory(s,limit))
+    std::cout<<"UNIFIED_MEMORY_SUGGEST verified="<<int(hint.exact_verified)
+             <<" score="<<hint.resonance<<" source="<<hint.source
+             <<" cue="<<hint.cue<<"\n";
+  }else if(operation=="suggest-triad"){
+   if(argc<4||argc>7)
+    throw std::invalid_argument(
+       "suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]");
+   const size_t limit=argc>4?std::stoull(argv[4]):3u;
+   const size_t edits=argc>5?std::stoull(argv[5]):2u;
+   if(limit==0||limit>16||edits>3)
+    throw std::invalid_argument("triad suggestion count 1..16, byte edits 0..3");
+   UnifiedWaveLanguage mind(universe);
+   if(argc>6){
+    const int enabled=number(6);
+    if(enabled!=0&&enabled!=1)throw std::invalid_argument("invalid wave flag");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
+   UnifiedWaveLanguage::State s{};
+   for(unsigned char c:std::string(argv[3]))mind.observe(s,c);
+   for(const auto& hint:mind.suggest_triad_memory(s,limit,edits))
+    std::cout<<"UNIFIED_TRIAD_SUGGEST verified="<<int(hint.exact_verified)
+             <<" edit_bytes="<<hint.edit_distance
+             <<" hotspots="<<hint.hot_triads
+             <<" triad="<<hint.triad_similarity
+             <<" phase="<<hint.resonance
+             <<" source="<<hint.source
+             <<" cue="<<hint.cue<<"\n";
   }else if(operation=="eval"){
-   if(argc<4)throw std::invalid_argument("evaluation file required");
+   if(argc<4||argc>5)throw std::invalid_argument("eval TEXT [WAVE_EXEC_0_OR_1]");
    std::ifstream file(argv[3],std::ios::binary);
    if(!file)throw std::runtime_error("evaluation file unavailable");
    UnifiedWaveLanguage mind(universe);
+   if(argc>4){
+    const int enabled=number(4);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("wave execution flag must be 0 or 1");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
    const auto result=mind.evaluate(file);
    std::cout<<std::setprecision(9)<<"UNIFIED_EVAL bytes="<<result.tokens
             <<" ce_nats="<<result.ce()
             <<" accuracy="<<result.accuracy()<<"\n";
+  }else if(operation=="eval-credit"){
+   if(argc<4||argc>5)
+    throw std::invalid_argument("eval-credit TEXT [WAVE_EXEC_0_OR_1]");
+   UnifiedWaveLanguage mind(universe);
+   if(argc==5){
+    const int enabled=number(4);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("wave execution flag must be 0 or 1");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
+   const auto measure=[&](unsigned disabled){
+    std::ifstream file(argv[3],std::ios::binary);
+    if(!file)throw std::runtime_error("credit evaluation file unavailable");
+    return mind.evaluate(file,disabled);
+   };
+   const auto full=measure(0);
+   const auto no_credit=measure(UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
+   if(full.tokens==0||full.tokens!=no_credit.tokens||
+      !std::isfinite(full.ce())||!std::isfinite(no_credit.ce()))
+    throw std::runtime_error("invalid paired temporal-credit evaluation");
+   std::cout<<std::setprecision(10)
+            <<"UNIFIED_CREDIT_EVAL tokens="<<full.tokens
+            <<" full_ce="<<full.ce()
+            <<" no_credit_ce="<<no_credit.ce()
+            <<" delta_no_credit_minus_full="<<no_credit.ce()-full.ce()
+            <<" full_accuracy="<<full.accuracy()
+            <<" no_credit_accuracy="<<no_credit.accuracy()
+            <<" wave_execution="<<int(mind.wave_execution_enabled())
+            <<" bptt_attempted="<<mind.bptt_attempted()<<"\n";
   }else if(operation=="audit"){
    if(argc<4)throw std::invalid_argument("audit file required");
    UnifiedWaveLanguage mind(universe);
@@ -102,6 +214,7 @@ int main(int argc,char** argv){
     {"no_hyperedge",UnifiedWaveLanguage::ABLATE_HYPEREDGE},
     {"no_long_context",UnifiedWaveLanguage::ABLATE_LONG_CONTEXT},
     {"no_triad",UnifiedWaveLanguage::ABLATE_TRIAD},
+    {"no_episodic",UnifiedWaveLanguage::ABLATE_EPISODIC},
     {"no_global_field",UnifiedWaveLanguage::ABLATE_FIELD},
     {"no_tbptt_readout",UnifiedWaveLanguage::ABLATE_BPTT_READOUT},
     {"teacher_only",UnifiedWaveLanguage::ABLATE_ALL}
@@ -160,6 +273,19 @@ int main(int argc,char** argv){
     tensor[mode]=best_scale;
     mind.set_tensor_scales(tensor);
    }
+   // Wave readout is a calibrated optional memory signal. The recurrent
+   // oscillator remains available to geometry/triad memory even at zero.
+   const double wave_choices[]={0.,0.25,0.5,0.75,1.,1.25,1.5,2.};
+   double best_wave=mind.wave_memory_scale();
+   double best_wave_loss=measure().ce();
+   for(double candidate:wave_choices){
+    mind.set_wave_memory_scale(candidate);
+    const double loss=measure().ce();
+    if(loss+1e-7<best_wave_loss){
+     best_wave_loss=loss;best_wave=candidate;
+    }
+   }
+   mind.set_wave_memory_scale(best_wave);
    // Only a development set may select the weight of the new shared
    // triad readout. Zero is a valid outcome; it means the component
    // has not earned its place in the final probability distribution.
@@ -183,10 +309,23 @@ int main(int argc,char** argv){
             <<" spectral_scale="<<chosen[2]<<" cycle_scale="<<chosen[3]
             <<" cp_scale="<<tensor[0]
             <<" inverse_wave_tensor_scale="<<tensor[1]
-            <<" triad_scale="<<mind.triad_scale()<<"\n";
+            <<" triad_scale="<<mind.triad_scale()
+            <<" wave_memory_scale="<<mind.wave_memory_scale()<<"\n";
   }else if(operation=="generate"){
    if(argc<5)throw std::invalid_argument("prompt and requested byte count required");
    UnifiedWaveLanguage mind(universe);
+   if(argc>9){
+    const int enabled=number(9);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("wave execution flag must be 0 or 1");
+    mind.set_wave_execution_enabled(enabled==1);
+   }
+   if(argc>8){
+    const int enabled=number(8);
+    if(enabled!=0&&enabled!=1)
+     throw std::invalid_argument("resonance generation flag must be 0 or 1");
+    mind.set_resonance_retrieval_enabled(enabled==1);
+   }
    const std::string prompt=argv[3];
    const size_t bytes=std::stoull(argv[4]);
    const uint64_t seed=argc>5?std::stoull(argv[5]):11ull;

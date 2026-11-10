@@ -29,7 +29,7 @@ PATTERN = re.compile(
 REQUIRED = {
     "full", "no_wave", "no_attention", "no_spectral", "no_cycle",
     "no_inverse_evidence", "no_hyperedge", "no_long_context",
-    "no_tbptt_readout", "no_triad", "no_global_field", "teacher_only",
+    "no_tbptt_readout", "no_triad", "no_global_field", "no_episodic", "teacher_only",
 }
 
 def run(root: Path, *args: str) -> str:

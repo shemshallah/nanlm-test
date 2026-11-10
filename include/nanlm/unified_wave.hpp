@@ -1,6 +1,7 @@
 #pragma once
 #include "nanlm/teacher.hpp"
 #include "nanlm/triad_waveformer.hpp"
+#include "nanlm/episodic_memory.hpp"
 #include "nanlm/utf8.hpp"
 #include <algorithm>
 #include <array>
@@ -50,7 +51,11 @@ public:
  static constexpr unsigned ABLATE_BPTT_READOUT=1u<<7;
  static constexpr unsigned ABLATE_TRIAD=1u<<8;
  static constexpr unsigned ABLATE_FIELD=1u<<9;
- static constexpr unsigned ABLATE_ALL=(1u<<10)-1u;
+ static constexpr unsigned ABLATE_EPISODIC=1u<<10;
+ static constexpr unsigned ABLATE_ALL=(1u<<11)-1u;
+ // Head 0 byte 122 is unused by wave/T/T*, tensor, shared QKV or triad
+ // registers. 0 means legacy default 1; [1..253] encodes [0..2].
+ static constexpr size_t WAVE_MEMORY_SCALE_OFFSET=122;
  static constexpr size_t BPTT_STEPS=8;
  static constexpr size_t BPTT_INTERVAL=16;
  static constexpr size_t BPTT_INPUT_OFFSET=112;
@@ -112,6 +117,8 @@ public:
   std::array<uint8_t,WINDOW> history{};
   size_t length=0;
   uint64_t tick=0;
+  uint32_t recall_record=ExactEpisodicMemory::NONE;
+  size_t recall_offset=0;
   void push(uint8_t c) {
    if(length<WINDOW){history[length++]=c;}
    else {
@@ -145,6 +152,7 @@ public:
 private:
  Universe& universe_;
  FabricTeacher teacher_;
+ ExactEpisodicMemory episodic_;
  double evidence_gain_=0.08;
  double damping_=0.80;
  double omega_=0.53;
@@ -155,11 +163,14 @@ private:
  std::array<double,N> in_degree_{},out_degree_{};
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
- bool bptt_enabled_=true;
+ uint64_t temporal_credit_accepted_=0;
+ bool bptt_enabled_=false; // Legacy reverse-mode comparison is opt-in.
  bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
  TriadWaveFormer::Parameters triad_parameters_{};
  uint64_t triad_accepted_=0,projection_accepted_=0,adapter_accepted_=0;
  bool triad_training_enabled_=true;
+ bool resonance_retrieval_enabled_=false;
+ bool wave_execution_enabled_=true;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -531,9 +542,11 @@ private:
     double change=0;
     for(size_t k=0;k<4;++k){
      const double old=old_weights[i][k];
-     const double updated=std::clamp(old-rate*error*field[i].at(k)*scales[k],-1.0,1.0);
+     const double feature=field[i].at(k)*scales[k]*
+                          (k==0?wave_memory_scale():1.0);
+     const double updated=std::clamp(old-rate*error*feature,-1.0,1.0);
      proposal[i][k]=static_cast<float>(updated);
-     change+=(updated-old)*field[i].at(k)*scales[k];
+     change+=(updated-old)*feature;
     }
     logits[i]=std::log(std::max(distribution.p[i],1e-300))+change;
     largest=std::max(largest,logits[i]);
@@ -581,6 +594,7 @@ private:
    if(after+1e-12<before){
     for(size_t c=0;c<N;++c)
      write_scalar(universe_.root().h[c],LONG_GAIN_OFFSET,proposed[c]);
+    ++temporal_credit_accepted_;
     return true;
    }
   }
@@ -666,7 +680,8 @@ private:
 
 public:
  explicit UnifiedWaveLanguage(Universe& u):
-  universe_(u),teacher_(u,0.055,0.08,0.09,0.45,4.0,0.0,true,0.12){
+  universe_(u),teacher_(u,0.055,0.08,0.09,0.45,4.0,0.0,true,0.12),
+  episodic_(u.path()+".episodes"){
   for(size_t h=0;h<N;++h){
    auto& head=universe_.root().h[h];
    if(head.data[HEAD_GAIN_MAGIC_OFFSET]!=HEAD_GAIN_MAGIC)
@@ -699,6 +714,61 @@ public:
   load_triad_parameters();
   rebuild_spectrum();
  }
+ size_t episodic_records()const{return episodic_.size();}
+ void set_wave_execution_enabled(bool enabled){
+  // Control runtime compute without destroying the intended BPTT setting.
+  // A later re-enable must restore the original training configuration.
+  wave_execution_enabled_=enabled;
+ }
+ bool wave_execution_enabled()const{return wave_execution_enabled_;}
+ void set_resonance_retrieval_enabled(bool enabled){
+  resonance_retrieval_enabled_=enabled;
+ }
+ bool resonance_retrieval_enabled()const{
+  return resonance_retrieval_enabled_;
+ }
+ ExactEpisodicMemory::Lookup probe_memory(const State& s,bool resonate)const{
+  return episodic_.probe(s.history.data(),s.length,resonate,&s.wave);
+ }
+ std::vector<ExactEpisodicMemory::Suggestion> suggest_memory(
+     const State& s,size_t limit=3)const{
+  return episodic_.suggest(s.history.data(),s.length,limit,&s.wave);
+ }
+ std::vector<ExactEpisodicMemory::Suggestion> suggest_triad_memory(
+     const State& s,size_t limit=3,size_t max_edits=2)const{
+  TriadCueRouter::Mapping group{};
+  for(size_t h=0;h<N;++h)
+   group[h]=static_cast<uint8_t>(triad_of(static_cast<uint8_t>(h)));
+  return episodic_.suggest_robust(
+      s.history.data(),s.length,limit,max_edits,group,&s.wave);
+ }
+ void memorize(const std::string& cue,const std::string& value,
+               const std::string& source){episodic_.remember(cue,value,source);}
+ size_t memorize_tsv(std::istream& data,const std::string& source){
+  return episodic_.import_tsv(data,source);
+ }
+ size_t memorize_lines(std::istream& data,const std::string& source){
+  return episodic_.import_text_lines(data,source);
+ }
+ const ExactEpisodicMemory::Record* exact_recall(const std::string& cue)const{
+  return episodic_.exact(cue);
+ }
+ bool contested_episodic(const std::string& cue)const{
+  return episodic_.contested(cue);
+ }
+ double wave_memory_scale()const{
+  const unsigned value=universe_.root().h[0].data[WAVE_MEMORY_SCALE_OFFSET];
+  if(value==0)return 1.0; // Backward-compatible untouched checkpoints
+  if(value>253u)throw std::runtime_error("invalid wave readout scale");
+  return double(value-1u)/126.0;
+ }
+ void set_wave_memory_scale(double scale){
+  if(!std::isfinite(scale)||scale<0||scale>2)
+   throw std::invalid_argument("wave readout scale must be in [0,2]");
+  const unsigned code=1u+static_cast<unsigned>(std::lround(126.0*scale));
+  universe_.root().h[0].data[WAVE_MEMORY_SCALE_OFFSET]=
+      static_cast<uint8_t>(code);
+ }
  double triad_scale()const{
   const auto& b=universe_.root().h[0].data;
   if(b[TRIAD_SCALE_MAGIC_OFFSET]!=TRIAD_SCALE_MAGIC)return 1.0;
@@ -726,9 +796,10 @@ public:
   validate_triad_parameters(p);store_triad_parameters(p);
  }
  void set_bptt_enabled(bool enabled){bptt_enabled_=enabled;}
- bool bptt_enabled()const{return bptt_enabled_;}
+ bool bptt_enabled()const{return bptt_enabled_&&wave_execution_enabled_;}
  void set_frequency_learning_enabled(bool enabled){frequency_learning_enabled_=enabled;}
  bool frequency_learning_enabled()const{return frequency_learning_enabled_;}
+ uint64_t temporal_credit_accepted()const{return temporal_credit_accepted_;}
  uint64_t bptt_accepted()const{return bptt_accepted_;}
  uint64_t bptt_attempted()const{return bptt_attempted_;}
  double recurrent_input_gain(uint8_t head)const{return input_gain(head);}
@@ -816,7 +887,7 @@ public:
    const double raw_wave=0.5*(s.wave[c]-0.5*s.old_wave[c])+
                          0.5*(s.inverse_wave[c]-0.5*s.inverse_old_wave[c]);
    if(std::fabs(raw_wave)<3.0){
-    const double dw=error*(double(g[0])*scales[0]+BPTT_READOUT);
+    const double dw=error*wave_memory_scale()*(double(g[0])*scales[0]+BPTT_READOUT);
     adj.x[c]+=0.5*dw;adj.xp[c]-=0.25*dw;
     adj.y[c]+=0.5*dw;adj.yp[c]-=0.25*dw;
    }
@@ -1115,6 +1186,21 @@ public:
  }
  void observe(State& s,uint8_t c)const{
   if(c==255){s.reset();return;}
+  if(!wave_execution_enabled_){
+   // Compute ablation, distinct from zero direct-wave readout. Preserve
+   // the one shared model, triad routing, mirror graph, and exact memory.
+   s.wave.fill(0.0);s.old_wave.fill(0.0);
+   s.inverse_wave.fill(0.0);s.inverse_old_wave.fill(0.0);
+   const auto previous=s.workspace;
+   s.previous_workspace=previous;
+   s.push(c);
+   episodic_.advance(s.history.data(),s.length,c,
+                      s.recall_record,s.recall_offset,
+                      resonance_retrieval_enabled_,&s.wave);
+   refresh_triad(s,previous);
+   ++s.tick;
+   return;
+  }
   std::array<double,N> next{};
   const double decay=damping_*damping_;
   // All 255 heads participate in each temporal transition. Opposing
@@ -1151,6 +1237,9 @@ public:
   const auto previous=s.workspace;
   s.previous_workspace=previous;
   s.push(c);
+  episodic_.advance(s.history.data(),s.length,c,
+                    s.recall_record,s.recall_offset,
+                    resonance_retrieval_enabled_,&s.wave);
   refresh_triad(s,previous);
   ++s.tick;
  }
@@ -1159,6 +1248,16 @@ public:
   Prediction out{};
   if(s.length==0){
    out.p.fill(1.0/N);
+   return out;
+  }
+  uint8_t remembered=0;
+  if(!(disabled&ABLATE_EPISODIC)&&
+     episodic_.next(s.recall_record,s.recall_offset,remembered)){
+   // A source-attributed exact cue has precedence over probabilistic
+   // oscillator/transformer speculation. Small residual keeps CE finite.
+   out.p.fill(1e-6/double(N-1));
+   out.p[remembered]=1.0-1e-6;
+   out.best=remembered;
    return out;
   }
   const uint8_t last=s.history[s.length-1];
@@ -1181,8 +1280,10 @@ public:
       (forward.support+inverse.support-forward.refute-inverse.refute)/
       (2.0+forward.support+inverse.support+forward.refute+inverse.refute);
    logits[c]=baseline.logit[c]+
-      ((disabled&ABLATE_WAVE)?0.0:double(g[0])*scales[0]*f.wave)+
-      ((disabled&ABLATE_BPTT_READOUT)?0.0:BPTT_READOUT*f.wave)+
+      ((disabled&ABLATE_WAVE)?0.0:
+       wave_memory_scale()*double(g[0])*scales[0]*f.wave)+
+      ((disabled&(ABLATE_WAVE|ABLATE_BPTT_READOUT))?0.0:
+       wave_memory_scale()*BPTT_READOUT*f.wave)+
       ((disabled&ABLATE_ATTENTION)?0.0:double(g[1])*scales[1]*f.attention)+
       ((disabled&ABLATE_SPECTRAL)?0.0:double(g[2])*scales[2]*f.spectral)+
       ((disabled&ABLATE_CYCLE)?0.0:double(g[3])*scales[3]*f.cycle)+
@@ -1327,14 +1428,19 @@ public:
  }
  Metrics train(std::istream& corpus,uint64_t initial_time=1){
   State state{};
-  std::deque<State> tape_states{state};
+  // Default local/geometric learning does not retain recurrent tape states.
+  std::deque<State> tape_states{};
   std::deque<uint8_t> tape_inputs{};
+  if(bptt_enabled())tape_states.push_back(state);
   Metrics result{};
   char ch;
   while(corpus.get(ch)){
    const uint8_t symbol=static_cast<uint8_t>(static_cast<unsigned char>(ch));
    if(symbol==255){
-    state.reset();tape_inputs.clear();tape_states.clear();tape_states.push_back(state);
+    state.reset();
+    if(bptt_enabled()){
+     tape_inputs.clear();tape_states.clear();tape_states.push_back(state);
+    }
     continue;
    }
    if(state.length){
@@ -1342,10 +1448,13 @@ public:
     result.nll-=std::log(std::max(p.p[symbol],1e-300));
     result.correct+=(p.best==symbol?1u:0u);
     ++result.tokens;
+    // Exact copy targets are observations, not differentiated neural
+    // logits; never update teacher/gradient registers on copied bytes.
+    if(state.recall_record==ExactEpisodicMemory::NONE){
     const uint8_t prev=state.history[state.length-1];
     // All persistent training occurs INSIDE the one mapped root and its
     // already-native temporal/pair/phase/quaternion overlays.
-    if(bptt_enabled_&&trained_%BPTT_INTERVAL==0&&tape_inputs.size()>=4)
+    if(bptt_enabled()&&trained_%BPTT_INTERVAL==0&&tape_inputs.size()>=4)
      learn_bptt(state,tape_states,tape_inputs,symbol);
     teacher_.teach(prev,symbol,initial_time+trained_);
     // One teacher and one higher-order field share all 255 registers.
@@ -1359,18 +1468,22 @@ public:
     learn_hyper_residual(state,symbol,initial_time+trained_);
     if(trained_%128==0)
      trial_swap_triads(prev,symbol,state,symbol);
+    }
    }
    observe(state,symbol);
-   tape_inputs.push_back(symbol);
-   tape_states.push_back(state);
-   if(tape_inputs.size()>BPTT_STEPS){
-    tape_inputs.pop_front();tape_states.pop_front();
+   if(bptt_enabled()){
+    tape_inputs.push_back(symbol);
+    tape_states.push_back(state);
+    if(tape_inputs.size()>BPTT_STEPS){
+     tape_inputs.pop_front();tape_states.pop_front();
+    }
    }
    ++trained_;
-   // The graph operator is frozen within each BPTT tape.
    if((trained_%128)==0){
-    rebuild_spectrum();tape_inputs.clear();
-    tape_states.clear();tape_states.push_back(state);
+    rebuild_spectrum();
+    if(bptt_enabled()){
+     tape_inputs.clear();tape_states.clear();tape_states.push_back(state);
+    }
    }
   }
   rebuild_spectrum();
@@ -1390,7 +1503,20 @@ public:
   result.reserve(count);
   uint64_t random=seed;
   for(size_t step=0;step<count;++step){
-   const auto p=predict(state);
+   uint8_t copied=0;
+   if(episodic_.next(state.recall_record,state.recall_offset,copied)&&
+      utf8.permits(copied,count-step)){
+    // Exact, grounded continuation is not sampled from neural logits.
+    if(!utf8.push(copied,count-step))
+     throw std::runtime_error("invalid episodic UTF-8 continuation");
+    result.push_back(static_cast<char>(copied));
+    observe(state,copied);
+    continue;
+   }
+   auto p=predict(state);
+   if(state.recall_record!=ExactEpisodicMemory::NONE&&
+      !utf8.permits(p.best,count-step))
+    p=predict(state,ABLATE_EPISODIC);
    std::vector<std::pair<double,uint8_t>> weighted;
    weighted.reserve(N);
    for(size_t c=0;c<N;++c){

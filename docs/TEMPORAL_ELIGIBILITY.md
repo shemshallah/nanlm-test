@@ -39,3 +39,52 @@ modeling or that local gradient acceptance implies held-out improvement.
 For the 974-byte authored prose fixture, calibrated CE in the branch
 was 2.647527 versus 2.656093 with long-context readout disabled. This
 is a regression sentinel, not independent language-quality evidence.
+
+## Default training mode
+
+Default `UnifiedWaveLanguage::train` uses the existing native local and
+long-context eligibility updates **without storing a BPTT tape**.
+The prior reverse-mode path remains explicitly opt-in for historical
+comparison. The temporal-credit test checks that mapped long-context gains
+change while BPTT attempted/accepted counts remain zero.
+
+This does not create another TRAIL implementation; the forward/inverse rail
+semantics of NaNLM's already-existing local credit are a separate parity
+question, and no new geometric advantage is claimed.
+
+## Measured existing geometric readout (no new learner)
+
+The existing temporal eligibility learner now exposes a per-process
+`temporal_credit_accepted` count of scratch-validated long-context head
+gain updates. Default training must show **zero BPTT attempts**, yet can
+accept existing temporal-credit updates in the same 8 MiB root. The native
+regression checks positive credit acceptance and a finite paired readout
+ablation after a long-distance training sample.
+
+`nanlm ROOT eval-credit HELDOUT.txt [WAVE_EXEC_0_OR_1]` measures the
+SAME model root on the SAME held-out bytes with the existing long-context
+readout enabled and disabled. It emits `UNIFIED_CREDIT_EVAL` with CE,
+accuracy, token parity and the signed held-out loss difference. It does not
+train or create a new TRAIL implementation. A positive signed delta means
+the stored geometric readout helped; a negative delta means it hurt.
+
+## Existing geometric credit × standing-wave factorial evaluation
+
+The pinned Alice→Dickens source-disjoint CI now evaluates the *production*
+(default, tape-free) root against the same 5,998 bytes under a 2×2 readout
+factorial: existing temporal-credit readout enabled/disabled and standing
+wave execution enabled/disabled. These are **evaluations of the identical
+trained, development-calibrated root**, not separate expert models or
+new TRAIL training. The output lines are `PUBLIC_DOMAIN_GEOMETRIC_CREDIT`
+per held-out segment and `PUBLIC_DOMAIN_GEOMETRIC_CREDIT_AGGREGATE`
+per wave mode. Positive `delta_no_credit_minus_full` indicates held-out
+benefit from the existing geometric credit; negative indicates harm.
+The two wave conditions allow an explicit interaction test. This remains
+a small author-disjoint experiment rather than a broad generalization claim.
+
+The native regression now also verifies **signed** directed evidence: a
+positive PRECEDES relation must increase the corresponding head's log-odds
+relative to the `no_long_context` counterfactual, while an explicit
+refutation must decrease those log-odds. Head 255 remains untouched. The
+CLI smoke test additionally hashes the mapped 8 MiB root before and after
+`eval-credit`, ensuring that the paired readout audit itself is read-only.

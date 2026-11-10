@@ -1,0 +1,102 @@
+name: HW0 long-distance episodic memory and optional wave readout
+on:
+  push:
+    branches: ['feat/hw0-episodic-wave-memory']
+  pull_request:
+    paths:
+      - 'include/nanlm/episodic_memory.hpp'
+      - 'include/nanlm/unified_wave.hpp'
+      - 'src/main.cpp'
+      - 'tests/test_episodic_memory.cpp'
+      - '.github/workflows/episodic-wave-memory.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source memory, triad, and wave tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test_episodic_memory test_associative_memory test_triad_waveformer test_wave_bptt test_frequency_bptt CXX="${{ matrix.compiler }}"
+          ./test_episodic_memory | tee episodic-tests.log
+          ./test_associative_memory | tee associative-tests.log
+          ./test_triad_waveformer | tee triad-tests.log
+          ./test_wave_bptt | tee wave-adjoint-tests.log
+          ./test_frequency_bptt | tee frequency-tests.log
+      - name: Persist evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episodic-native-${{ matrix.compiler }}
+          path: |
+            episodic-tests.log
+            associative-tests.log
+            triad-tests.log
+            wave-adjoint-tests.log
+            frequency-tests.log
+          if-no-files-found: warn
+  cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build actual production command-line engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm CXX=clang++
+      - name: Check exact CLI recall and contested provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/nanlm-episodic"
+          printf 'Beacon code: \tAURORA-8273\n' > "${RUNNER_TEMP}/memory.tsv"
+          ./nanlm "$root" memorize "${RUNNER_TEMP}/memory.tsv" fixture-v1 | tee episodic-cli.log
+          ./nanlm "$root" recall 'Beacon code: ' | tee -a episodic-cli.log
+          ./nanlm "$root" probe-memory 'Beacon code: ' 0 | tee -a episodic-cli.log
+          ./nanlm "$root" probe-memory 'Beacon code: ' 1 | tee -a episodic-cli.log
+          ./nanlm "$root" suggest 'Beacon codes: ' 3 | tee -a episodic-cli.log
+          ./nanlm "$root" suggest-triad 'Beacon coda: ' 3 2 0 | tee -a episodic-cli.log
+          test "$(./nanlm "$root" suggest-triad 'Beacon coda: ' 3 2 0 | grep -c '^UNIFIED_TRIAD_SUGGEST verified=0')" -ge 1
+          ./nanlm "$root" suggest-triad 'Beacon code: ' 3 0 1 | tee -a episodic-cli.log
+          ./nanlm "$root" suggest-triad 'Beacon code: ' 3 0 0 | tee -a episodic-cli.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt 0 | tee -a episodic-cli.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt 1 | tee -a episodic-cli.log
+          test "$(./nanlm "$root" generate 'Beacon code: ' 11 79 0.85 0.92 0 0)" = 'Beacon code: AURORA-8273'
+          test "$(./nanlm "$root" generate 'Beacon code: ' 11 79 0.85 0.92)" = 'Beacon code: AURORA-8273'
+          printf 'The silver spacecraft settled softly by the east laboratory.\n' > "${RUNNER_TEMP}/quotes.txt"
+          ./nanlm "$root" memorize-lines "${RUNNER_TEMP}/quotes.txt" book-fixture | tee -a episodic-cli.log
+          expected='settled softly by the east laboratory.'
+          test "$(./nanlm "$root" generate 'The silver spacecraft ' "${#expected}" 51)" = "The silver spacecraft $expected"
+          printf 'Beacon code: \tNEPTUNE-0001\n' > "${RUNNER_TEMP}/contested.tsv"
+          ./nanlm "$root" memorize "${RUNNER_TEMP}/contested.tsv" independent-source | tee -a episodic-cli.log
+          if ./nanlm "$root" recall 'Beacon code: ' > contested.txt; then
+            echo 'conflicting source was incorrectly auto-accepted' >&2
+            exit 1
+          else
+            grep -q '^UNIFIED_EPISODIC_CONTESTED$' contested.txt
+            cat contested.txt | tee -a episodic-cli.log
+          fi
+          python3 - "$root" <<'PY' | tee -a episodic-cli.log
+          import os, sys
+          root = sys.argv[1]
+          assert os.stat(root).st_size == 8388608
+          assert os.path.isfile(root+'.episodes')
+          print('EPISODIC_CLI_PASS unchanged_root_bytes=8388608')
+          PY
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episodic-cli
+          path: episodic-cli.log
+          if-no-files-found: warn
