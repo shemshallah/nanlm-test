@@ -65,6 +65,13 @@ Workflow: .github/workflows/hw4-fasttrail-hybrid.yml
 - Preserve both final comparison roots, logs, receipts and checksums;
   exclude the copyrighted WordNet corpus.
 
+The ablation suite now includes a TRUE fast-only same-optimizer control
+(blend=0; no TRAIL transition updates are computed) and independent
+0.05 / 0.10 / 0.25 / 0.50 temporal-blend treatments, all starting from
+the same SHA-256 root. This separates line-search improvements from actual
+temporal-credit gains. Only rail_selected=1 establishes that the mixed
+candidate influenced a persisted update.
+
 The small 974-byte prose fixture is a weak generalization probe.
 Next tests should hold out WordNet families and unrelated prose,
 measure multi-epoch learning, generation, relation recall, and
