@@ -1,0 +1,157 @@
+name: HW4 complete WordNet TRAIL one full timed sweep
+on:
+  push:
+    branches: ['experiment/hw4-trail-full-epoch-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  trail-full-epoch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native model and two-rail eligibility trainer
+        run: |
+          set -euo pipefail
+          make nanlm hw4-trail CXX=clang++
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+      - name: Native small-corpus two-rail smoke verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hw4-trail-smoke
+          python3 - <<'PY'
+          from pathlib import Path
+          Path('/tmp/hw4-trail-smoke/input.txt').write_bytes(
+              b'temporal credits forward and reverse rails. '*360)
+          PY
+          ./nanlm /tmp/hw4-trail-smoke/learner init > /tmp/hw4-trail-smoke/init.log
+          ./hw4-trail /tmp/hw4-trail-smoke/learner /tmp/hw4-trail-smoke/input.txt \
+            "$(wc -c </tmp/hw4-trail-smoke/input.txt)" | tee hw4-trail-smoke.log
+          grep -F 'bptt_attempted=0' hw4-trail-smoke.log
+          grep -F 'forward_rail=1 inverse_rail=1' hw4-trail-smoke.log
+      - name: Retrieve exact PR31 student checkpoint
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hw4-baseline
+          gh run download 42736627486 --repo shemshallah/nanlm-test \
+            --name hw4-onepass-student-42736627486 --dir /tmp/hw4-baseline
+          baseline="$(find /tmp/hw4-baseline -type f -name learner-root | head -n1)"
+          test -n "$baseline"
+          test "$(stat -c '%s' "$baseline")" -eq 8388608
+          echo "BASELINE_MODEL_SHA256=$(sha256sum "$baseline" | cut -d' ' -f1)" | tee hw4-initial-root.log
+          mkdir -p hw4-trail-state
+          cp -p "$(dirname "$baseline")"/learner-root* hw4-trail-state/
+      - name: Verify complete immutable HW4 source, create complete corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" > hw4-source.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          m=json.loads((Path(os.environ["RUNNER_TEMP"])/"hw4-complete"/"all.manifest.json").read_text())
+          assert (m["corpus_bytes"],m["synsets"],m["senses"],m["relations"],m["synonyms"])==(
+              58341529,117791,207235,378203,53869)
+          assert m["teacher_immutable"] and m["heldout_sha256"] is None
+          print("HW4_TRAIL_CORPUS_READY",json.dumps(m,sort_keys=True))
+          PY
+      - name: Measure baseline separate prose quality
+        run: |
+          set -euo pipefail
+          ./nanlm hw4-trail-state/learner-root eval tests/fixtures/unified_quality_heldout.txt | tee hw4-trail-before.log
+      - name: Time 58,341,529 real WordNet bytes of full two-rail TRAIL credit
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/time -v -o hw4-trail-resource.log \
+            ./hw4-trail hw4-trail-state/learner-root \
+            "$RUNNER_TEMP/hw4-complete/all.txt" 58341529 | tee hw4-trail-full.log
+          grep -F 'input_bytes=58341529 transition_updates=58341528' hw4-trail-full.log
+          grep -F 'forward_rail=1 inverse_rail=1' hw4-trail-full.log
+          grep -F 'bptt_attempted=0' hw4-trail-full.log
+      - name: Score prose after TRAIL and write full digest-pinned receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./nanlm hw4-trail-state/learner-root eval tests/fixtures/unified_quality_heldout.txt | tee hw4-trail-after.log
+          python3 - <<'PY'
+          import hashlib,json,re,os
+          from pathlib import Path
+          log=Path("hw4-trail-full.log").read_text().strip()
+          assert log.startswith("HW4_FULL_TRAIL "),log
+          def fields(raw):
+              return dict(re.findall(r"([a-z_0-9]+)=([^\s]+)",raw))
+          x=fields(log)
+          assert (int(x["input_bytes"]),int(x["transition_updates"]))==(58341529,58341528)
+          assert int(x["forward_rail"])==int(x["inverse_rail"])==1
+          assert int(x["bptt_attempted"])==0
+          assert float(x["final_teacher_ce"])<=float(x["initial_teacher_ce"])+1e-8
+          before=fields(Path("hw4-trail-before.log").read_text())
+          after=fields(Path("hw4-trail-after.log").read_text())
+          assert before["bytes"]==after["bytes"]=="974"
+          root=Path("hw4-trail-state/learner-root")
+          m=json.loads((Path(os.environ["RUNNER_TEMP"])/"hw4-complete"/"all.manifest.json").read_text())
+          summary={
+              "schema":"nanlm-test.hw4-full-two-rail-trail-onepass.v1",
+              "source_route":m["source_route"],
+              "source_hw4_root_sha256":m["source_hw4_root_sha256"],
+              "source_hw4_sqlite_sha256":m["source_hw4_sqlite_sha256"],
+              "source_corpus_sha256":m["corpus_sha256"],
+              "bytes_trained":int(x["input_bytes"]),
+              "completed_passes":1,
+              "method":"frozen-value two-rail TD eligibility full byte pass; one rank-3 batch update, NOT full recurrent optimizer",
+              "forward_rail":True,"inverse_rail":True,"bptt_attempted":0,
+              "accepted":bool(int(x["accepted"])),
+              "baseline_teacher_ce":float(x["initial_teacher_ce"]),
+              "after_teacher_ce":float(x["final_teacher_ce"]),
+              "teacher_accuracy_before":float(x["initial_teacher_acc"]),
+              "teacher_accuracy_after":float(x["final_teacher_acc"]),
+              "credit_positive_l1":float(x["geom_credit_plus_l1"]),
+              "credit_negative_l1":float(x["geom_credit_minus_l1"]),
+              "precompute_seconds":float(x["precompute_seconds"]),
+              "full_scan_seconds":float(x["full_scan_seconds"]),
+              "update_seconds":float(x["commit_seconds"]),
+              "total_native_seconds":float(x["total_seconds"]),
+              "bytes_per_second":float(x["corpus_bytes_per_second"]),
+              "prose_before_ce":float(before["ce_nats"]),
+              "prose_after_ce":float(after["ce_nats"]),
+              "prose_before_accuracy":float(before["accuracy"]),
+              "prose_after_accuracy":float(after["accuracy"]),
+              "prose_tokens":int(before["bytes"]),
+              "baseline_model_sha256":Path("hw4-initial-root.log").read_text().split("=",1)[1].strip(),
+              "trained_model_sha256":hashlib.sha256(root.read_bytes()).hexdigest(),
+              "model_root_bytes":root.stat().st_size,
+              "hw4_immutable":True
+          }
+          assert summary["model_root_bytes"]==8388608
+          Path("hw4-trail-state/receipt.json").write_text(json.dumps(summary,sort_keys=True,indent=2)+"\n")
+          print("HW4_TRAIL_FINAL",json.dumps(summary,sort_keys=True))
+          PY
+      - name: Archive the actual learner checkpoint and timed measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-full-trail-${{ github.run_id }}
+          path: |
+            hw4-trail-state/
+            hw4-trail-before.log
+            hw4-trail-after.log
+            hw4-trail-full.log
+            hw4-trail-resource.log
+            hw4-trail-smoke.log
+            hw4-source.log
+            hw4-initial-root.log
+          retention-days: 30
+          if-no-files-found: warn

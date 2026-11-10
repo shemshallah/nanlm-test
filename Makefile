@@ -108,3 +108,9 @@ test_associative_memory: tests/test_associative_memory.cpp $(wildcard include/na
 # HW4 full-corpus batch geometry learner; one C++ training pass, no BPTT.
 hw4-onepass: tools/hw4_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+
+# Full 2-rail temporal-difference eligibility sweep over immutable HW4
+# corpus; commits only to an independent NaNLM 8MiB student root.
+hw4-trail: tools/hw4_trail_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
