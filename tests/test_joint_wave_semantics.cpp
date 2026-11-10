@@ -274,6 +274,69 @@ int main(){
    test_roles.front().sentence,
    joint.role_wave_adjoint(wr,test_roles.front()),
    [&](const auto& state){return joint.role_loss(state,test_roles.front());});
+  // Native controlled ablation: a proposal trained with all three
+  // semantic gradients must be able to keep its learned role/sense heads
+  // while zeroing the shared-language parameter delta exactly.
+  {
+   JointWaveSemanticLearner head_only=byte_only;
+   JointWaveSemanticLearner proposed=byte_only;
+   const double initial_byte=head_only.evaluate_bytes(held).ce();
+   const double initial_norm=head_only.projection_norm();
+   const auto pbase=head_only.predict_byte(probe_state);
+   for(size_t epoch=0;epoch<18;++epoch){
+    for(const auto& row:roles)
+     proposed.teach_role(proposed.state_for(row.sentence),row,0.04);
+    for(const auto& row:senses)
+     proposed.teach_sense(proposed.state_for(row.sentence),row,wn,0.04);
+   }
+   const auto semantic_proposal_loss=proposed.evaluate_senses(senses,wn).ce();
+   JointWaveSemanticLearner alpha_zero=head_only;
+   alpha_zero.blend_semantics_from(proposed,0.0);
+   require(alpha_zero.role_updates()==proposed.role_updates()&&
+           alpha_zero.sense_updates()==proposed.sense_updates()&&
+           alpha_zero.byte_updates()==head_only.byte_updates(),
+           "head-only semantic updates lost or altered byte counters");
+   require(std::abs(alpha_zero.projection_norm()-initial_norm)<1e-15,
+           "zero shared-credit blend modified projection");
+   require(std::abs(alpha_zero.evaluate_bytes(held).ce()-initial_byte)<1e-15,
+           "head-only semantic gradients interfered with heldout byte CE");
+   const auto phead=alpha_zero.predict_byte(probe_state);
+   for(size_t i=0;i<UnifiedWaveLanguage::N;++i)
+    require(pbase.p[i]==phead.p[i],
+            "head-only semantics changed existing byte distribution");
+   require(std::isfinite(alpha_zero.evaluate_roles(test_roles).ce())&&
+           std::isfinite(alpha_zero.evaluate_senses(test_senses,wn).ce()),
+           "head-only specialization lacks usable semantic classifiers");
+   JointWaveSemanticLearner alpha_full=head_only;
+   alpha_full.blend_semantics_from(proposed,1.0);
+   require(std::abs(alpha_full.projection_norm()-proposed.projection_norm())<1e-12,
+           "full semantic blend differs from trained proposal");
+   require(std::abs(alpha_full.evaluate_bytes(held).ce()-
+                    proposed.evaluate_bytes(held).ce())<1e-12,
+           "full semantic blend lost the shared byte effect");
+   JointWaveSemanticLearner alpha_partial=head_only;
+   alpha_partial.blend_semantics_from(proposed,0.0625);
+   require(std::isfinite(alpha_partial.evaluate_bytes(held).ce()),
+           "partial semantic gradient line search became nonfinite");
+   bool illegal_alpha=false;
+   try{alpha_partial.blend_semantics_from(proposed,1.000001);}
+   catch(const std::invalid_argument&){illegal_alpha=true;}
+   require(illegal_alpha,"invalid shared-credit scale accepted");
+   alpha_zero.save();
+   JointWaveSemanticLearner head_restored(wave,root+"-byte");
+   require(head_restored.role_updates()==proposed.role_updates()&&
+           head_restored.sense_updates()==proposed.sense_updates(),
+           "saved head-only semantic knowledge not persistent");
+   require(head_restored.predict_byte(probe_state).p[' ']==pbase.p[' '],
+           "saved head-only semantics changed production byte distribution");
+   require(std::abs(head_restored.evaluate_senses(senses,wn).ce()-
+                    alpha_zero.evaluate_senses(senses,wn).ce())<1e-10,
+           "saved head-only semantic inference changed on reload");
+   require(std::isfinite(semantic_proposal_loss),
+           "trained semantic proposal had nonfinite loss");
+   require(universe.event_count()==baseline_events,
+           "head-only semantic consolidation mutated exact evidence");
+  }
   joint.save();
   {
    JointWaveSemanticLearner restored(wave,root);
