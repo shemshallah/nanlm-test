@@ -20,7 +20,8 @@ int main(){
  auto cleanup=[&](){
   for(const char* p:{"",".overlay",".so3",".episodes",".wordnet.tsv",
                      ".joint-wave",".joint-wave.tmp","-byte.joint-wave",
-                     "-shuffle.joint-wave","-role.joint-wave","-sense.joint-wave"})
+                     "-shuffle.joint-wave","-role.joint-wave","-sense.joint-wave",
+                      "-init.joint-wave","-init-other.joint-wave"})
    std::filesystem::remove(root+p);
  };
  cleanup();
@@ -410,6 +411,47 @@ int main(){
            "trained semantic proposal had nonfinite loss");
    require(universe.event_count()==baseline_events,
            "head-only semantic consolidation mutated exact evidence");
+  }
+  // Independent readout seed and V2 checkpoint; all variants still
+  // reference exactly the same physical wave and NaN16 Universe.
+  {
+   JointWaveSemanticLearner a(wave,root+"-init",7351);
+   JointWaveSemanticLearner b(wave,root+"-init",7351);
+   JointWaveSemanticLearner c(wave,root+"-init-other",7352);
+   require(a.initialization_seed()==7351&&b.initialization_seed()==7351,
+           "readout initialization seed not retained");
+   require(a.projection_norm()==b.projection_norm()&&
+           a.projection_norm()!=c.projection_norm(),
+           "independent readout initializer ineffective");
+   const auto state=a.state_for(senses.front().sentence);
+   const auto role_state=a.state_for(roles.front().sentence);
+   a.teach_byte(state,static_cast<uint8_t>(' '),0.02);
+   b.teach_byte(state,static_cast<uint8_t>(' '),0.02);
+   a.teach_role(role_state,roles.front(),0.035);
+   b.teach_role(role_state,roles.front(),0.035);
+   a.teach_sense(state,senses.front(),wn,0.035);
+   b.teach_sense(state,senses.front(),wn,0.035);
+   const auto pred=a.predict_byte(state);
+   const auto pred_b=b.predict_byte(state);
+   for(size_t i=0;i<UnifiedWaveLanguage::N;++i)
+    require(pred.p[i]==pred_b.p[i],"matching seeded readouts diverged");
+   a.save();
+   JointWaveSemanticLearner reload(wave,root+"-init",7351);
+   require(reload.initialization_seed()==7351&&
+           std::abs(reload.evaluate_roles(test_roles).ce()-
+                    a.evaluate_roles(test_roles).ce())<1e-12,
+           "seeded checkpoint lost learned roles");
+   require(std::abs(reload.evaluate_senses(test_senses,wn).ce()-
+                    a.evaluate_senses(test_senses,wn).ce())<1e-12,
+           "seeded checkpoint lost learned senses");
+   bool mismatch=false;
+   try {JointWaveSemanticLearner wrong(wave,root+"-init",7352);(void)wrong;}
+   catch(const std::runtime_error&){mismatch=true;}
+   require(mismatch,"seeded checkpoint loaded under the wrong seed");
+   mismatch=false;
+   try {JointWaveSemanticLearner wrong(wave,root+"-init");(void)wrong;}
+   catch(const std::runtime_error&){mismatch=true;}
+   require(mismatch,"seeded checkpoint silently downgraded to V1");
   }
   joint.save();
   {
