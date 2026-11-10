@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 FIELDS = (
+    "readout_init_seed",
     "carol_early_byte_ce", "carol_early_joint_ce",
     "carol_early_shuffled_ce", "carol_early_post_recurrence_ce",
     "carol_late_byte_ce", "carol_late_joint_ce",
@@ -58,9 +59,13 @@ def main():
     assert "JOINT_GUTENBERG_AUDIT PASS" in receipt, "missing audit success receipt"
     manifest = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     rows = parse(receipt)
-    if len(rows) != 3 or len({r["seed"] for r in rows}) != 3:
+    if (len(rows) != 3 or len({r["seed"] for r in rows}) != 3
+            or len({r["readout_init_seed"] for r in rows}) != 3):
         raise ValueError("expected three different training-order seeds")
     for row in rows:
+        if (row["readout_init_seed"] <= 0
+                or row["readout_init_seed"] != int(row["readout_init_seed"])):
+            raise ValueError("readout must use a distinct nonzero initialization seed")
         if row["root_bytes"] != 8388608 or row["recurrent_accepted"] not in (0, 1):
             raise ValueError("physical universe or acceptance invalid")
         for key in ("early", "late"):
@@ -131,7 +136,9 @@ def main():
             for variant in variants
         }
         results.append({
-            "seed": int(row["seed"]), "heldout_tokens": int(n1 + n2),
+            "seed": int(row["seed"]),
+            "readout_init_seed": int(row["readout_init_seed"]),
+            "heldout_tokens": int(n1 + n2),
             "combined_ce": values,
             "paired_delta_joint_minus_byte": values["joint"] - values["byte"],
             "paired_delta_shuffled_minus_byte": values["shuffled"] - values["byte"],
@@ -165,7 +172,7 @@ def main():
           f"surgery_minus_byte_mean_nats={statistics.mean(r['paired_delta_surgery_minus_byte'] for r in results):+.9f} " +
           f"sham_minus_byte_mean_nats={statistics.mean(r['paired_delta_sham_minus_byte'] for r in results):+.9f} " +
           f"surgery_minus_sham_mean_nats={statistics.mean(r['paired_delta_surgery_minus_sham'] for r in results):+.9f} " +
-          "significant=unassessed", flush=True)
+          "seeded_readout=1 significant=unassessed", flush=True)
     for r in results:
         values = r["combined_ce"]
         print(f"JOINT_GUTENBERG_PARETO seed={r['seed']} "
