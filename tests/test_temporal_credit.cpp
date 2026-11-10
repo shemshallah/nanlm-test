@@ -23,6 +23,7 @@ int main(){
   {
    Universe u(path);
    UnifiedWaveLanguage m(u);
+   check(!m.bptt_enabled(),"default training unexpectedly enables reverse tape");
    check(UnifiedWaveLanguage::WINDOW>=48,"long history was not extended");
    u.write('A','Z',PRECEDES,false,4.f,1);
    UnifiedWaveLanguage::State short_state{},long_state{};
@@ -40,6 +41,8 @@ int main(){
    std::istringstream source(train);
    const auto fit=m.train(source);
    check(fit.tokens>200&&std::isfinite(fit.ce()),"long-context training failed");
+   check(m.bptt_attempted()==0&&m.bptt_accepted()==0,
+         "default local/geometric credit entered reverse-mode tape");
    check(std::fabs(gain(u,'Z'))>1e-6,
          "distant native pair evidence did not change mapped credit gain");
    UnifiedWaveLanguage::State probe{};

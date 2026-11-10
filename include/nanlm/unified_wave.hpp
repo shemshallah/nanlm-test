@@ -163,7 +163,7 @@ private:
  std::array<double,N> in_degree_{},out_degree_{};
  Spectral eigen_{};
  uint64_t trained_=0,bptt_accepted_=0,bptt_attempted_=0;
- bool bptt_enabled_=true;
+ bool bptt_enabled_=false; // Legacy reverse-mode comparison is opt-in.
  bool frequency_learning_enabled_=false; // opt-in pending source-disjoint gains
  TriadWaveFormer::Parameters triad_parameters_{};
  uint64_t triad_accepted_=0,projection_accepted_=0,adapter_accepted_=0;
@@ -1425,14 +1425,19 @@ public:
  }
  Metrics train(std::istream& corpus,uint64_t initial_time=1){
   State state{};
-  std::deque<State> tape_states{state};
+  // Default local/geometric learning does not retain recurrent tape states.
+  std::deque<State> tape_states{};
   std::deque<uint8_t> tape_inputs{};
+  if(bptt_enabled())tape_states.push_back(state);
   Metrics result{};
   char ch;
   while(corpus.get(ch)){
    const uint8_t symbol=static_cast<uint8_t>(static_cast<unsigned char>(ch));
    if(symbol==255){
-    state.reset();tape_inputs.clear();tape_states.clear();tape_states.push_back(state);
+    state.reset();
+    if(bptt_enabled()){
+     tape_inputs.clear();tape_states.clear();tape_states.push_back(state);
+    }
     continue;
    }
    if(state.length){
@@ -1463,16 +1468,19 @@ public:
     }
    }
    observe(state,symbol);
-   tape_inputs.push_back(symbol);
-   tape_states.push_back(state);
-   if(tape_inputs.size()>BPTT_STEPS){
-    tape_inputs.pop_front();tape_states.pop_front();
+   if(bptt_enabled()){
+    tape_inputs.push_back(symbol);
+    tape_states.push_back(state);
+    if(tape_inputs.size()>BPTT_STEPS){
+     tape_inputs.pop_front();tape_states.pop_front();
+    }
    }
    ++trained_;
-   // The graph operator is frozen within each BPTT tape.
    if((trained_%128)==0){
-    rebuild_spectrum();tape_inputs.clear();
-    tape_states.clear();tape_states.push_back(state);
+    rebuild_spectrum();
+    if(bptt_enabled()){
+     tape_inputs.clear();tape_states.clear();tape_states.push_back(state);
+    }
    }
   }
   rebuild_spectrum();

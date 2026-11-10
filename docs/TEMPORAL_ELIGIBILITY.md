@@ -39,3 +39,15 @@ modeling or that local gradient acceptance implies held-out improvement.
 For the 974-byte authored prose fixture, calibrated CE in the branch
 was 2.647527 versus 2.656093 with long-context readout disabled. This
 is a regression sentinel, not independent language-quality evidence.
+
+## Default training mode
+
+Default `UnifiedWaveLanguage::train` uses the existing native local and
+long-context eligibility updates **without storing a BPTT tape**.
+The prior reverse-mode path remains explicitly opt-in for historical
+comparison. The temporal-credit test checks that mapped long-context gains
+change while BPTT attempted/accepted counts remain zero.
+
+This does not create another TRAIL implementation; the forward/inverse rail
+semantics of NaNLM's already-existing local credit are a separate parity
+question, and no new geometric advantage is claimed.
