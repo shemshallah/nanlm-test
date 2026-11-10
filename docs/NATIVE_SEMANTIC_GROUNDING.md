@@ -55,3 +55,22 @@ This is a **symbolic semantic inference milestone**, not an end-to-end learned s
 5. Introduce atomic root + overlay checkpoint manifests: the current sparse semantic ledger uses rename-on-save, but the root, event journal and ledger are not transactionally committed as a unit.
 
 The prototype intentionally separates facts taught in a controlled grammar, logical inference from those facts, and meaning learned from unconstrained prose. Treating any of these as interchangeable would invalidate the experiment.
+
+## Full HW4 WordNet semantic-scale evaluation
+
+The SHA-verified immutable HW4 SQLite source is converted by `tools/hw4_semantic_export.py` into an exact noun-synset index, with source-derived canonical IDs and typed ISA edges. The independent Python converter generates 300 shortest 3–5-hop positive query pairs not directly stated as edges and 300 unreachable negative controls. **Native C++ performs the evaluated inference**, not Python.
+
+The `nanlm ROOT semantic-project-wordnet` command explicitly projects all exact WordNet edges into the existing 8 MiB C256 NaN16 mirror fabric, including reverse typed lanes. It refuses to bootstrap into an already populated event journal. The exact sparse concept/edge index stays authoritative because physical head projections may collide.
+
+The `semantic-batch` command checks every label against an independent gold TSV, returns nonzero on error, and reports total accuracy, positives, negatives, mismatches, synsets and edges. The CI validates that read-only batch evaluation leaves the physical 8 MiB learner root unchanged. The full-scale test exists in `.github/workflows/native-semantic-grounding.yml` and in the separate `hw4-semantic-full-audit.yml` experiment.
+
+**Scientific scope:** composed query pairs were absent as direct edges, but constituent hypernym edges were loaded. Passing shows graph composition and error abstention, *not* automatically acquired meaning from Gutenberg prose. Do not claim full-WordNet CI success before its results are verified.
+
+## Distinct learning objectives
+
+1. Aggregate rank-three byte-pair geometry estimates order-one byte probabilities. It cannot model multiword roles merely by adding epochs.
+2. Train-only exact trigram memory improves held-out byte prediction by preserving one additional byte of causal context; it is still count-based memory, not a trained semantic encoder.
+3. The native WordNet bridge provides exact supervised symbolic meaning and multi-hop reasoning.
+4. The **remaining open objective** is to train contextual role/sense embeddings and typed relation operators *from raw linguistic context*, coupled to native recurrent/attention states and evaluated on genuinely new concepts, roles, sources and authors.
+
+Do not silently equate any one of these with the others.
