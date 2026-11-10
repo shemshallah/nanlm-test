@@ -307,6 +307,15 @@ int main(){
             "recurrent input gain failed root persistence");
    }
   }
+  // Heldout test remains *outside* the acceptance decision; report any
+  // post-recurrence interference rather than silently optimizing on test.
+  const auto byte_after_root=joint.evaluate_bytes(held);
+  const auto roles_after_root=joint.evaluate_roles(test_roles);
+  const auto senses_after_root=joint.evaluate_senses(test_senses,wn);
+  require(std::isfinite(byte_after_root.ce())&&
+          std::isfinite(roles_after_root.ce())&&
+          std::isfinite(senses_after_root.ce()),
+          "post-recurrence heldout metrics invalid");
   std::cout<<"JOINT_WAVE_NATIVE PASS"
            <<" byte_heldout_ce="<<held_joint.ce()
            <<" byte_only_ce="<<held_byte.ce()
@@ -326,6 +335,10 @@ int main(){
            <<" recurrent_semantic_loss_after="<<sense_after
            <<" recurrent_byte_dev_before="<<dev_before
            <<" recurrent_byte_dev_after="<<dev_after
+           <<" recurrent_byte_test_ce_before="<<held_joint.ce()
+           <<" recurrent_byte_test_ce_after="<<byte_after_root.ce()
+           <<" recurrent_role_test_ce_after="<<roles_after_root.ce()
+           <<" recurrent_sense_test_ce_after="<<senses_after_root.ce()
            <<" sense_recurrent_grad="<<sense_audit.first
            <<" sense_recurrent_fd="<<sense_audit.second
            <<" role_recurrent_grad="<<role_audit.first
