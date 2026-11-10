@@ -1,0 +1,90 @@
+name: WordNet 3.1 complete corpus - 50 geometric-credit epochs
+on:
+  push:
+    branches: ['experiment/wordnet31-50epochs']
+  workflow_dispatch:
+    inputs:
+      resume_run:
+        description: 'Prior successful run ID to download the checkpoint artifact from (optional)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+  actions: read
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build real unified NaNLM byte predictor with native geometric credit
+        run: make nanlm CXX=clang++
+      - name: Verify archive parser for both ZIP and TAR
+        run: python3 tests/test_wordnet31_full_corpus.py
+      - name: Fetch pinned, complete official Princeton WordNet 3.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/wordnet31_full_corpus.py --cache "${RUNNER_TEMP}/wn3.1.dict.tar.gz" --output "${RUNNER_TEMP}/wn31-full.txt" | tee wordnet31-inventory.log
+          python3 - "${RUNNER_TEMP}/wn31-full.manifest.json" <<'PY'
+          import json,sys
+          m=json.load(open(sys.argv[1]))
+          assert m['source']['official'] and m['synsets'] > 100000
+          assert m['corpus_bytes'] > 10000000
+          print('WORDNET31_COVERAGE_PASS synsets=%d bytes=%d' % (m['synsets'],m['corpus_bytes']))
+          PY
+      - name: Train real geometric-credit model on a measured pilot (not an epoch)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/wordnet31_50epochs.py --corpus "${RUNNER_TEMP}/wn31-full.txt" --manifest "${RUNNER_TEMP}/wn31-full.manifest.json" --state-dir "${RUNNER_TEMP}/wordnet31-pilot" --epochs 50 --pilot-only --budget-seconds 270 --initial-chunk-bytes 256 | tee wordnet31-pilot.log
+          grep -F '"status": "PILOT_ONLY"' wordnet31-pilot.log
+      - name: Preserve inventory and measured pilot, not dictionary content
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordnet31-preflight-${{ github.run_id }}
+          path: |
+            wordnet31-inventory.log
+            wordnet31-pilot.log
+          if-no-files-found: warn
+  training:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify full corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm CXX=clang++
+          python3 tools/wordnet31_full_corpus.py --cache "${RUNNER_TEMP}/wn3.1.dict.tar.gz" --output "${RUNNER_TEMP}/wn31-full.txt" > wordnet31-training-source.log
+      - name: Retrieve previous one-root checkpoint if resuming
+        if: ${{ inputs.resume_run != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_ID: ${{ inputs.resume_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p wordnet31-state
+          gh run download "$RESUME_ID" --repo "${{ github.repository }}" --name "wordnet31-state-$RESUME_ID" --dir wordnet31-state
+          test -f wordnet31-state/progress.json
+          test -f wordnet31-state/unified-root
+      - name: Attempt 50 full epochs; report actual progress and checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/wordnet31_50epochs.py --corpus "${RUNNER_TEMP}/wn31-full.txt" --manifest "${RUNNER_TEMP}/wn31-full.manifest.json" --state-dir wordnet31-state --epochs 50 --budget-seconds 900 --max-overlay-bytes 268435456 --initial-chunk-bytes 256 --max-chunk-bytes 8192 | tee wordnet31-training.log
+      - name: Upload durable model checkpoint, cursor, logs and current metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wordnet31-state-${{ github.run_id }}
+          path: |
+            wordnet31-state/
+            wordnet31-training.log
+            wordnet31-training-source.log
+          retention-days: 30
+          if-no-files-found: warn
