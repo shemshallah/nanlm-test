@@ -1,0 +1,71 @@
+name: HW5:0 Gutenberg paired attribution (same hardware slot)
+on:
+  push:
+    branches: ['experiment/hw5-paired-attribution-20261109']
+    paths:
+      - 'tools/hw5_paired_attribution.py'
+      - 'tests/test_hw5_paired_attribution.py'
+      - 'tools/hw5_context_experiment.py'
+      - 'tools/hw5_context_mirror_native.cpp'
+      - '.github/workflows/hw5-paired-attribution.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  hw5-paired-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native HW5 readout and run ordered-triple and paired-book tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/hw5_context_experiment.py tools/hw5_paired_attribution.py tests/test_hw5_paired_attribution.py
+          make hw5-context CXX=clang++
+          python3 -m unittest tests.test_hw5_context_native tests.test_hw5_paired_attribution -v
+      - name: Download immutable HW5:0 Gutenberg reference and verify pinned checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-release.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-release.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/hw5-release.tar.gz" -C "$RUNNER_TEMP"
+      - name: Restore the same immutable HW5 geometric student (run 42744089393)
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-gutenberg-transfer-from-wordnet103
+          run-id: 42744089393
+          github-token: ${{ github.token }}
+          path: previous-artifact
+      - name: Restore the HW5 train-only mirror and triple evidence (run 42746674921)
+        uses: actions/download-artifact@v4
+        with:
+          name: hw5-native-context-hypermatrix-dev-frozen
+          run-id: 42746674921
+          github-token: ${{ github.token }}
+          path: original-hw5-artifact
+      - name: Independently score each held-out book under dev-frozen native configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f previous-artifact/hw5-transfer-state/learner-root
+          test -f original-hw5-artifact/hw5-context-state/report.json
+          python3 tools/hw5_paired_attribution.py \
+            --reference "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --student previous-artifact/hw5-transfer-state/learner-root \
+            --hw5-artifact original-hw5-artifact/hw5-context-state \
+            --output hw5-paired-attribution-state | tee hw5-paired-attribution-summary.log
+      - name: Preserve actual native book scores, cluster inference and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-gutenberg-paired-attribution
+          path: |
+            hw5-paired-attribution-state/
+            hw5-paired-attribution-summary.log
+          retention-days: 30
+          if-no-files-found: warn
