@@ -57,6 +57,7 @@ jobs:
           echo "e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1  $root" | sha256sum -c -
           cp "$root" fasttrail-evidence/root-fast
           cp "$root" fasttrail-evidence/root-hybrid
+          for label in 0 005 010 050; do cp "$root" "fasttrail-evidence/root-blend-$label"; done
           echo e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1 > fasttrail-evidence/start.sha256
       - name: Verify immutable WordNet reference and export complete corpus
         run: |
@@ -74,6 +75,12 @@ jobs:
           corpus="$RUNNER_TEMP/hw4-complete/all.txt"
           /usr/bin/time -p -o fasttrail-evidence/fast.time ./hw4-onepass fasttrail-evidence/root-fast "$corpus" | tee fasttrail-evidence/fast.log
           /usr/bin/time -p -o fasttrail-evidence/hybrid.time ./hw4-fasttrail fasttrail-evidence/root-hybrid "$corpus" 58341529 64 0.25 | tee fasttrail-evidence/hybrid.log
+          for item in '0:0' '005:0.05' '010:0.10' '050:0.50'; do
+            label="${item%%:*}"
+            weight="${item#*:}"
+            /usr/bin/time -p -o "fasttrail-evidence/blend-$label.time" ./hw4-fasttrail "fasttrail-evidence/root-blend-$label" "$corpus" 58341529 64 "$weight" | tee "fasttrail-evidence/blend-$label.log"
+            ./nanlm "fasttrail-evidence/root-blend-$label" eval tests/fixtures/unified_quality_heldout.txt | tee "fasttrail-evidence/blend-$label-prose.log"
+          done
           ./nanlm fasttrail-evidence/root-fast eval tests/fixtures/unified_quality_heldout.txt | tee fasttrail-evidence/fast-prose.log
           ./nanlm fasttrail-evidence/root-hybrid eval tests/fixtures/unified_quality_heldout.txt | tee fasttrail-evidence/hybrid-prose.log
           sha256sum fasttrail-evidence/root-fast fasttrail-evidence/root-hybrid | tee fasttrail-evidence/roots.sha256
@@ -98,7 +105,29 @@ jobs:
           assert all(math.isfinite(float(v)) for v in (
               h['initial_teacher_ce'],h['final_teacher_ce'],
               h['rail_fast_cosine'],pf['ce_nats'],ph['ce_nats']))
+          ablations=[]
+          for label,weight in [('0',0.0),('005',0.05),('010',0.10),('050',0.50)]:
+              a=fields(base/f'blend-{label}.log','HW4_FASTTRAIL')
+              ap=fields(base/f'blend-{label}-prose.log','UNIFIED_EVAL')
+              assert abs(float(a['initial_teacher_ce'])-float(h['initial_teacher_ce']))<1e-7
+              assert float(a['final_teacher_ce'])<=float(a['initial_teacher_ce'])+1e-10
+              assert int(a['bptt_attempted'])==0
+              if weight==0.0:
+                  assert int(a['sampled_trail_transitions'])==0
+                  assert int(a['rail_selected'])==0
+              else:
+                  assert int(a['sampled_trail_transitions'])>100000
+              ablations.append({
+                  'blend':weight,
+                  'train_ce':float(a['final_teacher_ce']),
+                  'prose_ce':float(ap['ce_nats']),
+                  'prose_accuracy':float(ap['accuracy']),
+                  'rail_selected':bool(int(a['rail_selected'])),
+                  'sampled_trail_transitions':int(a['sampled_trail_transitions']),
+                  'total_seconds':float(a['total_seconds'])
+              })
           report={
+              'ablations':ablations,
               'source_sha256':'6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604',
               'start_root_sha256':'e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1',
               'sampled_trail_transitions':int(h['sampled_trail_transitions']),
