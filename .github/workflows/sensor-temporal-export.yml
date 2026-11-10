@@ -71,7 +71,7 @@ jobs:
               ("eagle", "LIKES", "fish"), ("whale", "LIKES", "bird"),
           ]
           for idx, (subject, relation, obj) in enumerate(training + heldout, 1):
-              print(f"INGEST\\tsrc_{idx}\\t+\\t{subject}\\t{relation}\\t{obj}")
+              print(f"INGEST\tsrc_{idx}\t+\t{subject}\t{relation}\t{obj}")
           print("QUIT")
           PY
           ! grep -q '^ERROR' native-composition.log
