@@ -98,6 +98,16 @@ class HW4CorpusTests(unittest.TestCase):
             self.assertEqual(a["total"]["synsets"],12)
             self.assertEqual(a["total"]["senses"],24)
             self.assertEqual(a["total"]["relations"],12)
+            all_records=(base/"out"/"all.txt").read_bytes()
+            self.assertEqual(len(all_records),sum(
+                a["files"][s]["bytes"] for s in ("train","dev","test")))
+            self.assertEqual(a["files"]["all"]["sha256"],sha256(base/"out"/"all.txt"))
+            all_manifest=json.loads((base/"out"/"all.manifest.json").read_text())
+            self.assertEqual(all_manifest["synsets"],12)
+            self.assertEqual(all_manifest["senses"],24)
+            self.assertEqual(all_manifest["relations"],12)
+            self.assertIsNone(all_manifest["heldout_sha256"])
+            self.assertTrue(all_manifest["teacher_immutable"])
             self.assertEqual(a["source_owner"],"NaNROUTER/MC0:0")
             for split,keys in groups.items():
                 report=a["files"][split]

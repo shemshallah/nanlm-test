@@ -187,6 +187,10 @@ def generate(store: Path, output: Path, *, include_typed: bool = True) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     counts = {s: Counter() for s in SPLITS}
     writers = {s:(output / (s+".txt")).open("wb") for s in SPLITS}
+    # A single complete corpus in exact synset order. Split copies remain
+    # available for controls, but training all.txt invalidates their
+    # source-held-out status for this particular one-pass experiment.
+    all_writer=(output/"all.txt").open("wb")
     edge_writers = ({s:(output / (s+".edges.tsv")).open("w", encoding="utf-8")
                      for s in SPLITS} if include_typed else {})
     seen = set()
@@ -216,6 +220,7 @@ def generate(store: Path, output: Path, *, include_typed: bool = True) -> dict:
                     if b"\xff" in raw:
                         raise ValueError("0xFF reserved by native byte learner")
                     writers[split].write(raw)
+                    all_writer.write(raw)
                     counts[split][category] += 1
                     counts[split]["bytes"] += len(raw)
                 emit(f"{subject} ({kind}): {safe(gloss)}", "definitions")
@@ -253,7 +258,7 @@ def generate(store: Path, output: Path, *, include_typed: bool = True) -> dict:
             if next_sense is not None or next_ptr is not None:
                 raise ValueError("orphan HW4 sense or relation rows")
     finally:
-        for f in list(writers.values())+list(edge_writers.values()):
+        for f in list(writers.values())+list(edge_writers.values())+[all_writer]:
             f.close()
     totals = Counter()
     for c in counts.values(): totals.update(c)
@@ -268,6 +273,17 @@ def generate(store: Path, output: Path, *, include_typed: bool = True) -> dict:
         "edges_sha256":sha256(output/(s+".edges.tsv")) if include_typed else None,
         "counts":dict(counts[s]),
     } for s in SPLITS}
+    output_files["all"]={
+        "corpus_file":"all.txt",
+        "sha256":sha256(output/"all.txt"),
+        "bytes":(output/"all.txt").stat().st_size,
+        "counts":dict(totals),
+        "source_split":"all sources; NOT held out",
+    }
+    if output_files["all"]["bytes"] != sum(
+        output_files[s]["bytes"] for s in SPLITS
+    ):
+        raise ValueError("one-pass full HW4 corpus byte coverage mismatch")
     report = {
         "schema": CORPUS_SCHEMA,
         "source_route": ROUTE,
@@ -300,6 +316,23 @@ def generate(store: Path, output: Path, *, include_typed: bool = True) -> dict:
     }
     (output/"train.manifest.json").write_text(json.dumps(
         train_manifest,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+    entire = output_files["all"]
+    all_manifest={
+        "archive_sha256":m["source_archive_sha256"],
+        "corpus_sha256":entire["sha256"],
+        "corpus_bytes":entire["bytes"],
+        "source_route":ROUTE,"source_owner":OWNER,
+        "source_hw4_root_sha256":m["root_sha256"],
+        "source_hw4_sqlite_sha256":m["sqlite_sha256"],
+        "source_generation":m["generation"],
+        "synsets":totals["synsets"],"senses":totals["senses"],
+        "relations":totals["relations"],
+        "synonyms":totals["synonyms"],
+        "split":"all","heldout_sha256":None,
+        "no_bptt":True,"teacher_immutable":True,
+    }
+    (output/"all.manifest.json").write_text(json.dumps(
+        all_manifest,sort_keys=True,indent=2)+"\n",encoding="utf-8")
     return report
 
 

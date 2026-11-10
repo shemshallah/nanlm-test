@@ -104,3 +104,7 @@ test_episodic_memory: tests/test_episodic_memory.cpp $(wildcard include/nanlm/*.
 # Fixed-seed control separating phase, edit-distance, and 85-triad hotspots.
 test_associative_memory: tests/test_associative_memory.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# HW4 full-corpus batch geometry learner; one C++ training pass, no BPTT.
+hw4-onepass: tools/hw4_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
