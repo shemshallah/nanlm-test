@@ -43,7 +43,8 @@ static std::string fixture(const std::string& root){
 static void cleanup(const std::string& name){
  for(const char* suffix:{"",".overlay",".overlay.tmp",".so3",".episodes",
    ".wordnet.tsv",".joint-wave",".joint-wave.tmp",
-   "-byte.joint-wave","-shuffle.joint-wave","-pareto.joint-wave"})
+   "-byte.joint-wave","-shuffle.joint-wave","-pareto.joint-wave",
+   "-frozen.joint-wave"})
   std::filesystem::remove(name+suffix);
 }
 struct Triple { J::Metrics byte,joint,shuffle; };
@@ -133,6 +134,7 @@ int main(int argc,char** argv) {
      J joint(wave,root);
      J shuffled(wave,root+"-shuffle");
      J pareto(wave,root+"-pareto");
+     J frozen(wave,root+"-frozen");
      std::mt19937_64 rng(seed);
      // Randomize *whole causal chunks* of training text; do not reverse
      // or shuffle bytes inside sentences, and keep seed order matched.
@@ -150,6 +152,7 @@ int main(int argc,char** argv) {
         joint.teach_byte(state,ch,0.02);
         shuffled.teach_byte(state,ch,0.02);
         pareto.teach_byte(state,ch,0.02);
+        frozen.teach_byte(state,ch,0.02);
        }
        wave.observe(state,ch);
       }
@@ -186,12 +189,14 @@ int main(int argc,char** argv) {
        joint.teach_role(state,role_data[i],0.035);
        shuffled.teach_role(state,randomized_roles[i],0.035);
        pareto_candidate->teach_role(state,role_data[i],0.035);
+       frozen.teach_role(state,role_data[i],0.035,false);
       }
       for(size_t i:so){
        const auto state=joint.state_for(sense_data[i].sentence);
        joint.teach_sense(state,sense_data[i],wn,0.035);
        shuffled.teach_sense(state,randomized_senses[i],wn,0.035);
        pareto_candidate->teach_sense(state,sense_data[i],wn,0.035);
+       frozen.teach_sense(state,sense_data[i],wn,0.035,false);
       }
       if((epoch+1)%3==0){
        // Strict Pareto acceptance: if learning synthetic semantics would
@@ -236,12 +241,22 @@ int main(int argc,char** argv) {
      check(universe.event_count()==events,"semantic head modified symbolic journal");
      const auto control_dev=compare(control,joint,shuffled,dev);
      const auto pareto_dev=pareto.evaluate_bytes(dev);
+     const auto frozen_dev=frozen.evaluate_bytes(dev);
+     check(frozen_dev.ce()==control_dev.byte.ce(),
+           "direct frozen encoder changed byte development CE");
+     check(frozen.projection_norm()==control.projection_norm(),
+           "direct semantic head optimization altered shared projection");
      check(pareto_dev.ce()<=control_dev.byte.ce()+1e-10,
            "Pareto semantic readout worsened byte-development baseline");
      const auto before_early=compare(control,joint,shuffled,early);
      const auto before_late=compare(control,joint,shuffled,late);
      const auto pareto_early=pareto.evaluate_bytes(early);
      const auto pareto_late=pareto.evaluate_bytes(late);
+     const auto frozen_early=frozen.evaluate_bytes(early);
+     const auto frozen_late=frozen.evaluate_bytes(late);
+     check(frozen_early.ce()==before_early.byte.ce()&&
+           frozen_late.ce()==before_late.byte.ce(),
+           "direct frozen encoder changed cross-author byte CE");
      check(pareto_early.count==before_early.byte.count&&
            pareto_late.count==before_late.byte.count,
            "Pareto model changed heldout sample sizes");
@@ -251,6 +266,8 @@ int main(int argc,char** argv) {
      const auto sense_before=joint.evaluate_senses(t_senses,wn);
      const auto pareto_role=pareto.evaluate_roles(t_roles);
      const auto pareto_sense=pareto.evaluate_senses(t_senses,wn);
+     const auto frozen_role=frozen.evaluate_roles(t_roles);
+     const auto frozen_sense=frozen.evaluate_senses(t_senses,wn);
      const auto role_shuf=shuffled.evaluate_roles(t_roles);
      const auto sense_shuf=shuffled.evaluate_senses(t_senses,wn);
      // Optional physical recurrent update: *only Alice dev* is consulted
@@ -284,6 +301,7 @@ int main(int argc,char** argv) {
        <<" dev_shuffled_ce="<<control_dev.shuffle.ce()
        <<" dev_post_recurrence_ce="<<after_dev.ce()
        <<" dev_pareto_ce="<<pareto_dev.ce()
+       <<" dev_frozen_ce="<<frozen_dev.ce()
        <<" pareto_batches_accepted="<<pareto_batches_accepted
        <<" pareto_batches_rejected="<<pareto_batches_rejected
        <<" pareto_head_only_batches="<<pareto_head_only_batches
@@ -292,17 +310,25 @@ int main(int argc,char** argv) {
        <<" pareto_sense_test_ce="<<pareto_sense.ce()
        <<" pareto_role_test_accuracy="<<pareto_role.accuracy()
        <<" pareto_sense_test_accuracy="<<pareto_sense.accuracy()
+       <<" frozen_role_test_ce="<<frozen_role.ce()
+       <<" frozen_sense_test_ce="<<frozen_sense.ce()
+       <<" frozen_role_test_accuracy="<<frozen_role.accuracy()
+       <<" frozen_sense_test_accuracy="<<frozen_sense.accuracy()
+       <<" frozen_role_updates="<<frozen.role_updates()
+       <<" frozen_sense_updates="<<frozen.sense_updates()
        <<" pareto_role_updates="<<pareto.role_updates()
        <<" pareto_sense_updates="<<pareto.sense_updates()
        <<" carol_early_byte_ce="<<before_early.byte.ce()
        <<" carol_early_joint_ce="<<before_early.joint.ce()
        <<" carol_early_shuffled_ce="<<before_early.shuffle.ce()
        <<" carol_early_pareto_ce="<<pareto_early.ce()
+       <<" carol_early_frozen_ce="<<frozen_early.ce()
        <<" carol_early_post_recurrence_ce="<<after_early.ce()
        <<" carol_late_byte_ce="<<before_late.byte.ce()
        <<" carol_late_joint_ce="<<before_late.joint.ce()
        <<" carol_late_shuffled_ce="<<before_late.shuffle.ce()
        <<" carol_late_pareto_ce="<<pareto_late.ce()
+       <<" carol_late_frozen_ce="<<frozen_late.ce()
        <<" carol_late_post_recurrence_ce="<<after_late.ce()
        <<" semantic_role_accuracy="<<role_before.accuracy()
        <<" semantic_role_shuffle_accuracy="<<role_shuf.accuracy()
