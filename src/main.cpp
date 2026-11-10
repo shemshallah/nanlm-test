@@ -19,7 +19,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -418,6 +418,47 @@ int main(int argc,char** argv){
    bridge.save();
    std::cout<<"NANLM_SEMANTIC_TRAIN sentences="<<seen
             <<" exact_claims="<<bridge.claims()<<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="semantic-batch"){
+   if(argc!=4)throw std::invalid_argument("semantic-batch EVALUATION_TSV");
+   WordNetIndex index;index.load(path+".wordnet.tsv");
+   SemanticBridge bridge(universe,index);
+   std::ifstream input(argv[3]);
+   if(!input)throw std::runtime_error("semantic evaluation queries absent");
+   std::string row;size_t total=0,matches=0,positives=0,negative=0,errors=0;
+   while(std::getline(input,row)){
+    if(row.empty())continue;
+    std::istringstream in(row);
+    std::string rel,subj,obj,gold,tail;
+    if(!std::getline(in,rel,'\t')||!std::getline(in,subj,'\t')||
+       !std::getline(in,obj,'\t')||!std::getline(in,gold,'\t')||
+       std::getline(in,tail,'\t'))
+      throw std::runtime_error("bad semantic query TSV row");
+    if(gold.size()!=1||gold[0]<'0'||gold[0]>'3')
+     throw std::invalid_argument("bad gold label in semantic evaluation");
+    SemanticBridge::Answer ans;
+    if(rel=="isa")ans=bridge.query_isa(subj,obj);
+    else if(rel=="ability")ans=bridge.query_ability(subj,obj);
+    else throw std::invalid_argument("unknown semantic batch relation");
+    const int expected=gold[0]-'0';
+    ++total;
+    if(expected==1)++positives;
+    if(expected==0)++negative;
+    if(ans.state==expected)++matches;
+    else{
+     ++errors;
+     if(errors<=5)std::cerr<<"SEMANTIC_MISMATCH relation="<<rel
+                         <<" subject="<<subj<<" object="<<obj
+                         <<" expected="<<expected<<" predicted="<<int(ans.state)<<"\n";
+    }
+   }
+   if(!input.eof()||total==0)throw std::runtime_error("invalid semantic evaluation stream");
+   std::cout<<std::setprecision(10)<<"NANLM_SEMANTIC_BATCH queries="<<total
+            <<" correct="<<matches<<" accuracy="<<double(matches)/total
+            <<" positives="<<positives<<" negatives="<<negative
+            <<" mismatches="<<errors<<" exact_wordnet_synsets="<<index.concepts()
+            <<" exact_wordnet_edges="<<index.relations()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+   if(errors)return 4;
   }else if(operation=="semantic-ask"){
    if(argc!=6)throw std::invalid_argument("semantic-ask isa|ability SUBJECT OBJECT");
    WordNetIndex index;index.load(path+".wordnet.tsv");
