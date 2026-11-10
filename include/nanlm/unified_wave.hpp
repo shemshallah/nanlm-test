@@ -172,6 +172,8 @@ private:
  bool triad_training_enabled_=true;
  bool resonance_retrieval_enabled_=false;
  bool wave_execution_enabled_=true;
+ // Explicit experimental CP contextual readout; legacy inference stays default.
+ bool cp_context_readout_enabled_=false;
  using GainVector=std::array<float,4>;
  static GainVector initial_gains(){return {0.12f,0.16f,0.06f,0.045f};}
  GainVector gains(uint8_t head)const{
@@ -1244,6 +1246,43 @@ public:
   refresh_triad(s,previous);
   ++s.tick;
  }
+ // Native C(256,2) contextual geometry learned by hw5-geometric-context.
+ // Reads ONLY the same FabricTeacher source[32..43] and target[48..59]
+ // vectors in the one 8 MiB root, never a second model/trigram lookup.
+ // Opt-in ensures original UnifiedWaveLanguage inference remains unchanged.
+ void enable_cp_context_readout(bool enabled=true){
+  cp_context_readout_enabled_=enabled;
+ }
+ bool cp_context_readout_enabled()const{return cp_context_readout_enabled_;}
+ Prediction predict_cp_context(const State& s)const{
+  Prediction out{};
+  if(!s.length){out.p.fill(1.0/N);return out;}
+  if(s.length==1){
+   const auto teacher=teacher_.predict(s.history[0]);
+   out.p=teacher.probability;out.best=teacher.choice;return out;
+  }
+  const auto& root=universe_.root();
+  const auto a=vector(root.h[s.history[s.length-2]],32);
+  const auto b=vector(root.h[s.history[s.length-1]],32);
+  std::array<double,N> logits{};
+  double highest=-std::numeric_limits<double>::infinity();
+  for(size_t c=0;c<N;++c){
+   const auto dst=vector(root.h[c],48);
+   for(size_t k=0;k<3;++k)
+    logits[c]+=double(b[k])*(4.0+4.0*double(a[k]))*double(dst[k]);
+   highest=std::max(highest,logits[c]);
+  }
+  double z=0;
+  for(size_t c=0;c<N;++c){
+   out.p[c]=std::exp(logits[c]-highest);
+   z+=out.p[c];
+  }
+  for(size_t c=0;c<N;++c){
+   out.p[c]/=z;
+   if(out.p[c]>out.p[out.best])out.best=static_cast<uint8_t>(c);
+  }
+  return out;
+ }
  Prediction predict(const State& s,unsigned disabled=0)const{
   if(disabled&~ABLATE_ALL)throw std::invalid_argument("unknown ablation bits");
   Prediction out{};
@@ -1261,6 +1300,8 @@ public:
    out.best=remembered;
    return out;
   }
+  if(cp_context_readout_enabled_ && s.length>=2 && disabled!=ABLATE_ALL)
+   return predict_cp_context(s);
   const uint8_t last=s.history[s.length-1];
   const auto baseline=teacher_.predict(last);
   const auto scales=global_scales();
