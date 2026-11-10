@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from functools import lru_cache
-from itertools import product
+from itertools import product, combinations
 import json
 from pathlib import Path
 import sys
@@ -112,6 +112,43 @@ def decode_exact(index, observed: frozenset[int]):
     return None, 'no_exact_candidate'
 
 
+
+def canonical_pairs(heads):
+    """The 15 physical C(256,2) pair indices for six 0..254 heads."""
+    values = sorted(heads)
+    if any(not 0 <= h < HEAD_COUNT for h in values):
+        raise ValueError('head outside 255-address experimental readout')
+    return frozenset(exp.pair_index(a, b) for a, b in combinations(values, 2))
+
+
+def build_pair_postings(index):
+    """Virtual read-only pair-to-candidate index; no native root writes."""
+    postings = {}
+    for heads, labels in index.items():
+        for pair in canonical_pairs(heads):
+            postings.setdefault(pair, set()).update(labels)
+    return postings
+
+
+def decode_pair_votes(postings, observed, min_pairs=10, margin=3):
+    """Recover from one missing/replaced head; abstain on ambiguity/noise."""
+    if not 5 <= len(observed) <= 6:
+        return None, 'insufficient_or_excess_heads', 0
+    votes = Counter()
+    for pair in canonical_pairs(observed):
+        votes.update(postings.get(pair, ()))
+    if not votes:
+        return None, 'no_pair_candidates', 0
+    ranked = sorted(votes.items(), key=lambda x: (-x[1], x[0]))
+    best, count = ranked[0]
+    runner = ranked[1][1] if len(ranked) > 1 else 0
+    if count < min_pairs:
+        return None, 'insufficient_pair_evidence', count
+    if count - runner < margin:
+        return None, 'ambiguous_pair_votes', count
+    return best, 'unique_pair_support', count
+
+
 def fit_role_credit_prototypes(training, epochs=120, rate=0.15):
     """Hash-blind local residual-credit comparison, never BPTT.
 
@@ -180,6 +217,7 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
     idx, vocabs, count = candidate_index(training, max_candidates=max_candidates)
     seen = {r['truth'] for r in training}
     local_role_credit = fit_role_credit_prototypes(training)
+    pair_postings = build_pair_postings(idx)
     last_frame_at_tick = {f['nanclock']: f for f in frames}
     answer = []
     for i, sample in enumerate(test):
@@ -189,6 +227,13 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
         if truth in seen:
             raise ValueError('test includes a previously indexed whole statement')
         guess, reason = decode_exact(idx, sample['heads'])
+        pair_guess, pair_reason, pair_votes = decode_pair_votes(
+            pair_postings, sample['heads'])
+        dropped = frozenset(sorted(sample['heads'])[1:])
+        missing_guess, _, _ = decode_pair_votes(pair_postings, dropped)
+        replacement = next(h for h in range(HEAD_COUNT) if h not in sample['heads'])
+        noisy = dropped | {replacement}
+        noisy_guess, _, _ = decode_pair_votes(pair_postings, noisy)
         frame = last_frame_at_tick[sample['tick']]
         static_guess, static_reason = decode_exact(idx, static_heads(frame))
         credit_guess, credit_score = predict_role_credit(
@@ -204,6 +249,12 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
             'temporal_guess': list(guess) if guess else None,
             'temporal_status': reason,
             'temporal_correct': guess == truth,
+            'pair_index_guess': list(pair_guess) if pair_guess else None,
+            'pair_index_status': pair_reason,
+            'pair_index_votes': pair_votes,
+            'pair_index_correct': pair_guess == truth,
+            'one_missing_head_correct': missing_guess == truth,
+            'one_replaced_head_correct': noisy_guess == truth,
             'static_guess': list(static_guess) if static_guess else None,
             'static_status': static_reason,
             'static_correct': static_guess == truth,
@@ -228,16 +279,23 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
         'static_exact': sum(x['static_correct'] for x in answer),
         'shuffled_exact': sum(x['shuffled_correct'] for x in answer),
         'local_role_credit_exact': sum(x['local_role_credit_correct'] for x in answer),
+        'pair_index_exact': sum(x['pair_index_correct'] for x in answer),
+        'one_missing_head_exact': sum(x['one_missing_head_correct'] for x in answer),
+        'one_replaced_head_exact': sum(x['one_replaced_head_correct'] for x in answer),
+        'pair_index_used_canonical_addresses': len(pair_postings),
         'abstentions': sum(x['temporal_guess'] is None for x in answer),
         'temporal_accuracy_all': sum(x['temporal_correct'] for x in answer) / n,
         'static_accuracy_all': sum(x['static_correct'] for x in answer) / n,
         'shuffled_accuracy_all': sum(x['shuffled_correct'] for x in answer) / n,
         'local_role_credit_accuracy_all': sum(x['local_role_credit_correct'] for x in answer) / n,
+        'pair_index_accuracy_all': sum(x['pair_index_correct'] for x in answer) / n,
         'random_closed_vocab_accuracy_reference': 1. / count if count else None,
         'results': answer,
         'limitations': ('Known component vocabulary only; deterministic native hash '
                         'routing replicated in the candidate generator, not a learned '
-                        'concept decoder. The hash-blind role-credit comparator is a '
+                        'concept decoder. Canonical-pair postings are a virtual '
+                        'read-only index, not writes to native physical cells. '
+                        'The hash-blind role-credit comparator is a '
                         'small local update surrogate, not production NaNLM geometric '
                         'credits. Unseen words cannot be recovered; exact '
                         'head signature can collide; static-only control is a basic '
