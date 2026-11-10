@@ -1,0 +1,134 @@
+name: HW4:0 complete WordNet single-pass native geometric learner
+on:
+  push:
+    branches: ['experiment/hw4-full-onepass-geometric-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  hw4-one-full-pass:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify the HW4 immutable release reader and full corpus exporter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+          python3 -m py_compile tools/hw4_reference_corpus.py
+      - name: Download and verify the pinned NaNROUTER HW4:0 generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" > hw4-source.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          base=Path(os.environ["RUNNER_TEMP"])/"hw4-complete"
+          a=json.loads((base/"hw4-corpus.manifest.json").read_text())
+          m=json.loads((base/"all.manifest.json").read_text())
+          assert a["source_owner"]=="NaNROUTER/MC0:0"
+          assert a["teacher_immutable"] is True
+          assert m["split"]=="all" and m["no_bptt"]
+          assert (m["synsets"],m["senses"],m["relations"])==(117791,207235,378203)
+          assert m["synonyms"]==53869,m["synonyms"]
+          assert m["corpus_bytes"]==58341529,m["corpus_bytes"]
+          assert sum(a["files"][s]["bytes"] for s in ("train","dev","test"))==m["corpus_bytes"]
+          print("HW4_ONEPASS_SOURCE_PASS",json.dumps(m,sort_keys=True))
+          PY
+      - name: Compile native NaNLM existing root and rank-three geometric credit optimizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm hw4-onepass CXX=clang++
+      - name: Train every HW4-derived source byte exactly once and evaluate student
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p hw4-onepass-state
+          root="$PWD/hw4-onepass-state/learner-root"
+          ./nanlm "$root" init | tee hw4-student-init.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt \
+            | tee hw4-before-unseen-text.log
+          ./hw4-onepass "$root" "$RUNNER_TEMP/hw4-complete/all.txt" \
+            | tee hw4-full-onepass.log
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt \
+            | tee hw4-after-unseen-text.log
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          log=Path("hw4-full-onepass.log").read_text()
+          assert log.startswith("HW4_FULL_GEOMETRIC_PASS "),log
+          pairs=dict(re.findall(r"([a-z_]+)=([^\s]+)",log))
+          manifest=json.loads((Path(__import__("os").environ["RUNNER_TEMP"])/"hw4-complete"/"all.manifest.json").read_text())
+          assert int(pairs["input_bytes"])==manifest["corpus_bytes"]
+          assert int(pairs["transitions"])==manifest["corpus_bytes"]-1
+          assert int(pairs["bptt_attempted"])==0
+          assert int(pairs["aggregate_step_accepted"])==1
+          assert float(pairs["train_after_ce"]) < float(pairs["train_before_ce"])
+          root=Path("hw4-onepass-state/learner-root")
+          assert root.stat().st_size==8388608
+          def parse_eval(path):
+              raw=Path(path).read_text()
+              assert raw.startswith("UNIFIED_EVAL "),raw
+              f=dict(re.findall(r"([a-z_]+)=([^\s]+)",raw))
+              return {"ce_nats":float(f["ce_nats"]),
+                      "accuracy":float(f["accuracy"]),
+                      "tokens":int(f["bytes"])}
+          before=parse_eval("hw4-before-unseen-text.log")
+          after=parse_eval("hw4-after-unseen-text.log")
+          assert after["tokens"]==before["tokens"]>100
+          def sha(path):
+              h=hashlib.sha256()
+              with path.open("rb") as file:
+                  for piece in iter(lambda:file.read(1048576),b""):
+                      h.update(piece)
+              return h.hexdigest()
+          output={
+              "schema":"nanlm-test.hw4-full-onepass-geometric.v1",
+              "source_route":manifest["source_route"],
+              "source_owner":manifest["source_owner"],
+              "hw4_release_sha256":"87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695",
+              "hw4_root_sha256":manifest["source_hw4_root_sha256"],
+              "hw4_sqlite_sha256":manifest["source_hw4_sqlite_sha256"],
+              "corpus_sha256":manifest["corpus_sha256"],
+              "complete_synsets":manifest["synsets"],
+              "complete_senses":manifest["senses"],
+              "complete_relations":manifest["relations"],
+              "complete_synonyms":manifest["synonyms"],
+              "bytes_trained":int(pairs["input_bytes"]),
+              "epochs_completed":1,
+              "method":"one full stream, one aggregate geometric rank-3 credit step; not per-byte recurrent TRAIN",
+              "bptt_attempted":0,"hw4_immutable":True,
+              "trainer_metrics":{name:float(pairs[name]) for name in
+                  ("train_before_ce","train_after_ce",
+                   "train_before_accuracy","train_after_accuracy",
+                   "gradient_max","step")},
+              "other_text_before":before,"other_text_after":after,
+              "model_root_bytes":root.stat().st_size,
+              "model_root_sha256":sha(root),
+          }
+          Path("hw4-onepass-state/report.json").write_text(json.dumps(
+              output,sort_keys=True,indent=2)+"\n")
+          print("HW4_ONEPASS_FINAL",json.dumps(output,sort_keys=True))
+          PY
+      - name: Save complete native model and reproducible metrics, not source dictionary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-onepass-student-${{ github.run_id }}
+          path: |
+            hw4-onepass-state/
+            hw4-source.log
+            hw4-full-onepass.log
+            hw4-before-unseen-text.log
+            hw4-after-unseen-text.log
+          retention-days: 30
+          if-no-files-found: warn
