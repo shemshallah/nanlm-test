@@ -1,0 +1,11 @@
+# HW4:0 complete WordNet — ten sequential TRAIL epochs
+
+This experimental continuation stacks on PR #34. Four independently CI-verified full-corpus native two-rail TRAIL sweeps already trained the *same* one 8,388,608-byte learner. The pinned epoch-4 root is SHA-256 `e97549fecc783ea2551f14924e3aaf1ade2046af6e663aa44dc158f254a9e873` (run #42740670559). Six more full 58,341,529-byte passes, epochs 5–10, resume **exactly** from that checkpoint. No second student, no model reset.
+
+The complete corpus originates solely from read-only `nan://GM0:SC0:MC0:BS0:0:HW4:0` release `hw4-wordnet31-full-g1`, archive SHA-256 `87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695`, corpus SHA-256 `6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604`. Source: 117,791 synsets, 207,235 senses, 378,203 pointers, 53,869 synonym lists. Ten full passes should represent exactly **583,415,290** processed bytes and **583,415,280** adjacent byte transitions.
+
+Each pass computes 255-candidate forward and inverse TD-eligibility state on every transition using frozen model values, then attempts one scratch-gated update to rank-three FabricTeacher head vectors. This is **not ten full online UnifiedWaveLanguage / temporal/triad/spectral optimization epochs**, and BPTT is disabled. Independently log teacher-training CE/top1, 974-byte unrelated prose CE/top1, elapsed scan seconds, signed credit L1, accepted update and every root SHA. Preserve only the final single 8 MiB student, receipts and logs in the CI artifact. No source corpus redistribution and no HW4 or native main-ring writes.
+
+The ten-epoch reporter refuses wrong or missing checkpoint lineage, wrong source hash/record count, incomplete passes, nonfinite scores, regressing corpus CE within an accepted scratch update, changed checkpoint on rejected update, unexpected BPTT, mismatched prose continuity, or a root hash disagreement.
+
+**Critical limitation:** training on *all* WordNet bytes leaves no WordNet-heldout split. Lower byte-pair CE is not a demonstrated increase in concept decoding, semantic retrieval, language fluency, or standing-wave recall. Track actual mixed-geometry sensor and role decoder results separately. Do not merge draft as scientifically validated.
