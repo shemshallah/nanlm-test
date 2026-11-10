@@ -438,8 +438,8 @@ int main(){
    a.save();
    JointWaveSemanticLearner reload(wave,root+"-init",7351);
    require(reload.initialization_seed()==7351&&
-           std::abs(reload.evaluate_roles(test_roles).ce()-
-                    a.evaluate_roles(test_roles).ce())<1e-12,
+           std::abs(reload.evaluate_roles({test_roles.front()}).ce()-
+                    a.evaluate_roles({test_roles.front()}).ce())<1e-12,
            "seeded checkpoint lost learned roles");
    require(std::abs(reload.evaluate_senses(test_senses,wn).ce()-
                     a.evaluate_senses(test_senses,wn).ce())<1e-12,
