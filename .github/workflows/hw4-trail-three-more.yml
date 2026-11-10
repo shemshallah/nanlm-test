@@ -1,0 +1,100 @@
+name: HW4 full WordNet TRAIL - 3 additional sequential sweeps
+on:
+  push:
+    branches: ['experiment/hw4-trail-three-passes-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  three-more-full-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build exactly the same native two-rail training kernel as first pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm hw4-trail CXX=clang++
+          python3 -m py_compile tools/hw4_trail_three_pass_report.py
+      - name: Restore verified result of previous complete HW4 TRAIL pass
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/hw4-first-pass hw4-trail-3more-state
+          gh run download 42739524950 --repo shemshallah/nanlm-test \
+            --name hw4-full-trail-42739524950 --dir /tmp/hw4-first-pass
+          previous="$(find /tmp/hw4-first-pass -type f -name learner-root | head -n1)"
+          test -n "$previous"
+          test "$(stat -c '%s' "$previous")" -eq 8388608
+          echo "a95a89f2856264d190d996363d39dc11bb8bb5ca8f30eae98c3cc915a2433695  $previous" | sha256sum -c -
+          cp -p "$(dirname "$previous")"/learner-root* hw4-trail-3more-state/
+          echo "HW4_TRAIL_RESTORED_FIRST_PASS_SHA256=$(sha256sum hw4-trail-3more-state/learner-root | cut -d' ' -f1)"
+      - name: Re-fetch and verify the identical complete HW4:0 WordNet source
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" | tee hw4-source-3more.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          m=json.loads((Path(os.environ["RUNNER_TEMP"])/"hw4-complete"/"all.manifest.json").read_text())
+          assert m["corpus_bytes"] == 58341529
+          assert m["corpus_sha256"] == "6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604"
+          assert (m["synsets"],m["senses"],m["relations"],m["synonyms"]) == (
+              117791,207235,378203,53869)
+          assert m["teacher_immutable"] and m["heldout_sha256"] is None
+          print("HW4_TRAIL_THREE_MORE_SOURCE_VERIFIED",m["corpus_sha256"])
+          PY
+      - name: Sequential complete passes 2, 3, 4 with immutable source and one evolving model
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="hw4-trail-3more-state/learner-root"
+          corpus="$RUNNER_TEMP/hw4-complete/all.txt"
+          ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt \
+            | tee hw4-trail-3more-state/prose-pass1.log
+          for pass in 2 3 4; do
+            echo "HW4_TRAIL_BEGIN_ADDITIONAL_PASS epoch=$pass"
+            /usr/bin/time -v -o "hw4-trail-3more-state/resource-pass$pass.log" \
+              ./hw4-trail "$root" "$corpus" 58341529 \
+              | tee "hw4-trail-3more-state/trail-pass$pass.log"
+            ./nanlm "$root" eval tests/fixtures/unified_quality_heldout.txt \
+              | tee "hw4-trail-3more-state/prose-pass$pass.log"
+            sha256sum "$root" | cut -d' ' -f1 \
+              > "hw4-trail-3more-state/sha-pass$pass.txt"
+            grep -F 'input_bytes=58341529 transition_updates=58341528' \
+              "hw4-trail-3more-state/trail-pass$pass.log"
+            grep -F 'bptt_attempted=0' \
+              "hw4-trail-3more-state/trail-pass$pass.log"
+            echo "HW4_TRAIL_END_ADDITIONAL_PASS epoch=$pass root_sha=$(cat "hw4-trail-3more-state/sha-pass$pass.txt")"
+          done
+      - name: Validate all three full passes and publish digest-pinned results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_trail_three_pass_report.py \
+            hw4-trail-3more-state \
+            "$RUNNER_TEMP/hw4-complete/all.manifest.json" \
+            | tee hw4-trail-three-more-results.log
+          grep '^HW4_TRAIL_THREE_MORE_FINAL ' hw4-trail-three-more-results.log
+      - name: Preserve final 8 MiB root, metrics, all 3 timings, not corpus or duplicate roots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-trail-three-more-${{ github.run_id }}
+          path: |
+            hw4-trail-3more-state/
+            hw4-trail-three-more-results.log
+            hw4-source-3more.log
+          retention-days: 30
+          if-no-files-found: warn
