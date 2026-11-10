@@ -59,7 +59,7 @@ def parse(text:str):
     rows=[]
     for line in text.splitlines():
         if not line.startswith("HW5_CONTEXT_SCORE "):continue
-        values=dict(re.findall(r"([a-z_]+)=([^\s]+)",line))
+        values=dict(re.findall(r"([a-z0-9_]+)=([^\s]+)",line))
         for name in ("ce_nats","accuracy","beta","lambda","delta","kappa"):
             values[name]=float(values[name])
         values["transitions"]=int(values["transitions"])
@@ -100,7 +100,7 @@ def experiment(store:Path,student:Path,output:Path):
                     str(output/"train.lengths"),str(trained_root),str(trained_triples)],
                     output/"build.log")
     assert trained_root.stat().st_size==8388608
-    bank=dict(re.findall(r"([a-z_]+)=([^\s]+)",next(line for line in built.splitlines()
+    bank=dict(re.findall(r"([a-z0-9_]+)=([^\s]+)",next(line for line in built.splitlines()
                          if line.startswith("HW5_CONTEXT_BANK_BUILT "))))
     assert int(bank["books"])==len(splits["train"])
     assert int(bank["bytes"])==sum(d["bytes"] for d in splits["train"])
