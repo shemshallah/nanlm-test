@@ -6,8 +6,11 @@ on:
       - 'tests/test_sensor_temporal_export.py'
       - 'tests/test_sensor_temporal_aggregate.py'
       - 'tests/test_sensor_temporal_concept_probe.py'
+      - 'tests/test_sensor_temporal_compositional_probe.py'
       - 'tools/sensor_temporal_aggregate.py'
       - 'tools/sensor_temporal_concept_probe.py'
+      - 'tools/sensor_temporal_compositional_probe.py'
+      - 'docs/SENSOR_COMPOSITION_ABLATION.md'
       - 'docs/SENSOR_TEMPORAL_CONCEPT_BRIDGE.md'
       - '.github/workflows/sensor-temporal-export.yml'
       - 'include/nanlm/sensor_timeslices.hpp'
@@ -39,7 +42,7 @@ jobs:
             src/sensor_resident.cpp -o sensor-resident
           SNAP=$(mktemp /tmp/nanlm-temporal-XXXXXX)
           rm -f "$SNAP"
-          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices" "$SNAP.probe" "$SNAP.probe.tmp" "$SNAP.probe.slices"' EXIT
+          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices" "$SNAP.probe" "$SNAP.probe.tmp" "$SNAP.probe.slices" "$SNAP.compose" "$SNAP.compose.tmp" "$SNAP.compose.slices"' EXIT
           printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_c\t-\tpenguin\tISA\tanimal\nTICK\nMEASURE\nTIMELINE\t8\nQUIT\n' | ./sensor-resident "$SNAP" | tee native-resident.log
           python3 tools/sensor_temporal_export.py "$SNAP.slices" summary | tee temporal-summary.jsonl
           python3 tools/sensor_temporal_export.py "$SNAP.slices" frames | tee temporal-frames.jsonl
@@ -56,6 +59,26 @@ jobs:
           python3 tools/sensor_temporal_concept_probe.py "$SNAP.probe.slices" --journal "$SNAP.probe" | tee temporal-concept-probe.json
           python3 -c 'import json; r=json.load(open("temporal-concept-probe.json")); assert r["eligible_known_concept_events"]==6,r; assert r["predicted"]==6,r; assert r["correct"]==6,r; assert r["accuracy_all_eligible"]>r["most_frequent_training_label_baseline"],r; print("PASS: source-disjoint numeric concept retrieval beats majority baseline")'
           test "$(stat -c%s "$SNAP.probe.slices")" = 8388608
+          python3 - <<'PY' | ./sensor-resident "$SNAP.compose" > native-composition.log
+          training = [
+              ("penguin", "ISA", "bird"), ("eagle", "ISA", "animal"),
+              ("whale", "ISA", "fish"), ("penguin", "LIKES", "fish"),
+              ("eagle", "LIKES", "bird"), ("whale", "LIKES", "animal"),
+          ]
+          heldout = [
+              ("penguin", "ISA", "animal"), ("eagle", "ISA", "fish"),
+              ("whale", "ISA", "bird"), ("penguin", "LIKES", "animal"),
+              ("eagle", "LIKES", "fish"), ("whale", "LIKES", "bird"),
+          ]
+          for idx, (subject, relation, obj) in enumerate(training + heldout, 1):
+              print(f"INGEST\\tsrc_{idx}\\t+\\t{subject}\\t{relation}\\t{obj}")
+          print("QUIT")
+          PY
+          ! grep -q '^ERROR' native-composition.log
+          python3 tools/sensor_temporal_compositional_probe.py "$SNAP.compose.slices" \
+            --journal "$SNAP.compose" --training-events 6 | tee temporal-composition.json
+          python3 -c 'import json; r=json.load(open("temporal-composition.json")); assert r["candidate_product"]==18,r; assert r["test_events"]==6,r; assert r["temporal_exact"]==6,r; assert r["static_exact"]<6,r; assert r["shuffled_exact"]<6,r; assert r["abstentions"]==0,r; print("PASS: native unseen-triple recovery beats static and time-shuffle controls")'
+          test "$(stat -c%s "$SNAP.compose.slices")" = 8388608
           python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
           grep -q '^MATRIX\|^SLICE' native-resident.log
           grep -q 'GLOBAL' temporal-deltas.csv
@@ -76,4 +99,6 @@ jobs:
             temporal-concepts.jsonl
             temporal-concept-probe.json
             native-concept-probe.log
+            native-composition.log
+            temporal-composition.json
           if-no-files-found: ignore
