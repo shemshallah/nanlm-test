@@ -54,7 +54,7 @@ test: test_byte_model test_recurrent_byte test_unified test_unified_wave test_te
 	./test_episodic_memory
 	./test_associative_memory
 clean:
-	rm -f test_frequency_bptt test_sequence_bptt test_wave_bptt test_fabric_integrity test_temporal_credit nanlm-diagnostics test_hypermatrix test_triad_waveformer test_episodic_memory test_associative_memory test_adaptive_triads test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
+	rm -f hw5-cp8 test_frequency_bptt test_sequence_bptt test_wave_bptt test_fabric_integrity test_temporal_credit nanlm-diagnostics test_hypermatrix test_triad_waveformer test_episodic_memory test_associative_memory test_adaptive_triads test_unified_wave test_hybrid_byte test_unified test_recurrent_byte test_byte_model test_nan16 validate_harmony test_harmony nanlm test_universe test_wordnet test_teacher test_quaternion test_multiloss test_learning_validation
 
 validate_harmony: tests/validate_harmony.cpp $(wildcard include/nanlm/*.hpp) include/nanlm/nan16.h
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
@@ -115,4 +115,8 @@ hw5-onepass: tools/hw5_geometric_native.cpp $(wildcard include/nanlm/*.hpp)
 
 # HW5 context: trained ONLY on Gutenberg train titles; native NaN16 mirror bank + sparse exact triples.
 hw5-context: tools/hw5_context_mirror_native.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# HW5:0 train-only rank-8 geometric CP residual; SAME Gutenberg hardware slot.
+hw5-cp8: tools/hw5_cp8_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
