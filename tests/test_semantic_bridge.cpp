@@ -70,6 +70,31 @@ int main(){
   check(m.query_isa("artifact","entity").state==3,"persistent contradiction");
   check(u.event_count()==prior_events,"reload must not project duplicate NaN16 events");
  }
+ {
+  const std::string projection=root+"-projection";
+  Universe u(projection);WordNetIndex wn;wn.load(root+".wordnet.tsv");
+  SemanticBridge mind(u,wn);
+  const size_t original_events=u.event_count();
+  check(original_events==0,"projection must start from new native journal");
+  const auto created=mind.project_wordnet_to_existing_universe();
+  check(created==wn.relations()&&u.event_count()==wn.relations(),
+        "all exact WordNet edges projected into same native memory");
+  const auto& edge=wn.edges().front();
+  const auto* a=wn.get_concept(edge.src);
+  const auto* b=wn.get_concept(edge.dst);
+  uint8_t x=static_cast<uint8_t>(source(a->leaf)%255u);
+  uint8_t y=static_cast<uint8_t>(target(b->leaf)%255u);
+  if(x==y)y=static_cast<uint8_t>((unsigned(y)+1u)%255u);
+  check(u.query(x,y,edge.type).support>0,"physical typed mirror projection exists");
+  check(u.query(y,x,inverse_type(edge.type)).support>0,
+        "physical reverse-lane relation exists");
+  try{
+   mind.project_wordnet_to_existing_universe();
+   throw std::runtime_error("duplicate bootstrap was accepted");
+  }catch(const std::invalid_argument&){}
+ }
+ for(const std::string suffix:{"",".overlay",".semantic.tsv",".wordnet.tsv",".so3"})
+  std::filesystem::remove(root+"-projection"+suffix);
  for(const std::string suffix:{"",".overlay",".semantic.tsv",".wordnet.tsv",".so3"})
   std::filesystem::remove(root+suffix);
  std::cout<<"PASS: grounded synsets, 3-hop entailment, signed specificity, "
