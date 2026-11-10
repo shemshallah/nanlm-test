@@ -336,7 +336,7 @@ class JointWaveSemanticLearner {
   const auto a=encode(s,direction);
   return sigmoid(dot(it->second,a.h)+role_bias_.at(rel));
  }
- double teach_role(const State& s,const Role& row,double lr) {
+ double teach_role(const State& s,const Role& row,double lr,bool update_shared=true) {
   lr_valid(lr);
   if(row.label!=0&&row.label!=1)throw std::invalid_argument("nonbinary role");
   const std::string rel=lower(row.relation);
@@ -356,7 +356,9 @@ class JointWaveSemanticLearner {
    head[d]-=lr*delta*a.h[d];
   }
   role_bias_[rel]-=lr*delta;
-  adjust(a,dh,lr,direction);
+  if(update_shared)adjust(a,dh,lr,direction);
+  else for(size_t d=0;d<D;++d)
+   orientation_[d]-=lr*std::clamp(dh[d]*(1-a.h[d]*a.h[d]),-5.,5.)*direction;
   ++role_updates_;
   return -(row.label?safe_log(p):safe_log(1-p));
  }
@@ -379,7 +381,7 @@ class JointWaveSemanticLearner {
   for(size_t i=1;i<logits.size();++i)if(logits[i]>logits[best])best=i;
   return SensePrediction{ids[best],logits[best]/total};
  }
- double teach_sense(const State& s,const Sense& row,const WordNetIndex& wn,double lr){
+ double teach_sense(const State& s,const Sense& row,const WordNetIndex& wn,double lr,bool update_shared=true){
   lr_valid(lr);check_target(row);
   const auto ids=candidates(wn,row.target);
   if(std::find(ids.begin(),ids.end(),row.gold)==ids.end())
@@ -412,7 +414,7 @@ class JointWaveSemanticLearner {
    }
    sense_bias_[id]-=lr*delta;
   }
-  adjust(a,dh,lr,0);
+  if(update_shared)adjust(a,dh,lr,0);
   ++sense_updates_;
   return -safe_log(gold_prob);
  }
