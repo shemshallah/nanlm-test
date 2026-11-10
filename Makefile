@@ -116,3 +116,11 @@ hw5-onepass: tools/hw5_geometric_native.cpp $(wildcard include/nanlm/*.hpp)
 # Grounded semantics on the same NaN16 Universe; separate from byte-only accuracy.
 test_semantic_bridge: tests/test_semantic_bridge.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# Native contextual semantic credit: supervised role/sense-style sentence encoder.
+test_contextual_roles: tests/test_contextual_roles.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+.PHONY: test-contextual-roles
+test-contextual-roles: test_contextual_roles
+	./test_contextual_roles
