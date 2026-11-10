@@ -44,7 +44,7 @@ static void cleanup(const std::string& name){
  for(const char* suffix:{"",".overlay",".overlay.tmp",".so3",".episodes",
    ".wordnet.tsv",".joint-wave",".joint-wave.tmp",
    "-byte.joint-wave","-shuffle.joint-wave","-pareto.joint-wave",
-   "-frozen.joint-wave"})
+   "-frozen.joint-wave","-surgery.joint-wave"})
   std::filesystem::remove(name+suffix);
 }
 struct Triple { J::Metrics byte,joint,shuffle; };
@@ -135,6 +135,7 @@ int main(int argc,char** argv) {
      J shuffled(wave,root+"-shuffle");
      J pareto(wave,root+"-pareto");
      J frozen(wave,root+"-frozen");
+     J surgery(wave,root+"-surgery");
      std::mt19937_64 rng(seed);
      // Randomize *whole causal chunks* of training text; do not reverse
      // or shuffle bytes inside sentences, and keep seed order matched.
@@ -153,6 +154,7 @@ int main(int argc,char** argv) {
         shuffled.teach_byte(state,ch,0.02);
         pareto.teach_byte(state,ch,0.02);
         frozen.teach_byte(state,ch,0.02);
+        surgery.teach_byte(state,ch,0.02);
        }
        wave.observe(state,ch);
       }
@@ -180,6 +182,11 @@ int main(int argc,char** argv) {
      size_t pareto_batches_rejected=0; // shared credit denied; head-only kept
      size_t pareto_head_only_batches=0;
      double pareto_shared_alpha_sum=0.0;
+     double surgery_accepted_dev=surgery.evaluate_bytes(dev).ce();
+     size_t surgery_batches_accepted=0,surgery_batches_rejected=0;
+     size_t surgery_head_only_batches=0,surgery_conflicting_batches=0;
+     double surgery_shared_alpha_sum=0.0;
+     auto surgery_candidate=std::make_unique<J>(surgery);
      auto pareto_candidate=std::make_unique<J>(pareto);
      for(size_t epoch=0;epoch<18;++epoch){
       std::shuffle(ro.begin(),ro.end(),rng);
@@ -190,6 +197,7 @@ int main(int argc,char** argv) {
        shuffled.teach_role(state,randomized_roles[i],0.035);
        pareto_candidate->teach_role(state,role_data[i],0.035);
        frozen.teach_role(state,role_data[i],0.035,false);
+      surgery_candidate->teach_role(state,role_data[i],0.035);
       }
       for(size_t i:so){
        const auto state=joint.state_for(sense_data[i].sentence);
@@ -197,6 +205,7 @@ int main(int argc,char** argv) {
        shuffled.teach_sense(state,randomized_senses[i],wn,0.035);
        pareto_candidate->teach_sense(state,sense_data[i],wn,0.035);
        frozen.teach_sense(state,sense_data[i],wn,0.035,false);
+      surgery_candidate->teach_sense(state,sense_data[i],wn,0.035);
       }
       if((epoch+1)%3==0){
        // Strict Pareto acceptance: if learning synthetic semantics would
@@ -234,6 +243,39 @@ int main(int argc,char** argv) {
         ++pareto_batches_rejected;
        }
        pareto_candidate=std::make_unique<J>(pareto);
+      // Sixth arm: semantic gradient displacement projected onto the
+      // non-conflicting Alice DEV half-space; exact CE still decides.
+      // Never add byte-gradient descent, or consult Dickens at this gate.
+      const double alignment=surgery.shared_byte_directional_derivative(
+          *surgery_candidate,dev);
+      check(std::isfinite(alignment),"nonfinite semantic-byte alignment");
+      if(alignment>0)++surgery_conflicting_batches;
+      bool surgery_shared=false;
+      for(const double alpha : {1.0,0.25,0.0625,0.015625,0.00390625}){
+       auto trial=std::make_unique<J>(surgery);
+       trial->blend_projected_semantics_from(*surgery_candidate,dev,alpha);
+       if(trial->shared_displacement_norm(surgery)<=1e-12)continue;
+       const double trial_ce=trial->evaluate_bytes(dev).ce();
+       if(std::isfinite(trial_ce)&&trial_ce<=surgery_accepted_dev+1e-12){
+        surgery.adopt_readout_from(*trial);
+        surgery_accepted_dev=trial_ce;
+        ++surgery_batches_accepted;
+        surgery_shared_alpha_sum+=alpha;
+        surgery_shared=true;
+        break;
+       }
+      }
+      if(!surgery_shared){
+       auto head_only=std::make_unique<J>(surgery);
+       head_only->blend_projected_semantics_from(*surgery_candidate,dev,0.0);
+       const double same_ce=head_only->evaluate_bytes(dev).ce();
+       check(std::abs(same_ce-surgery_accepted_dev)<=1e-12,
+             "projected rejection modified byte probabilities");
+       surgery.adopt_readout_from(*head_only);
+       ++surgery_batches_rejected;
+       ++surgery_head_only_batches;
+      }
+      surgery_candidate=std::make_unique<J>(surgery);
       }
      }
      // Check this is a matched comparison of a *single* fixed language
@@ -242,11 +284,14 @@ int main(int argc,char** argv) {
      const auto control_dev=compare(control,joint,shuffled,dev);
      const auto pareto_dev=pareto.evaluate_bytes(dev);
      const auto frozen_dev=frozen.evaluate_bytes(dev);
+    const auto surgery_dev=surgery.evaluate_bytes(dev);
      check(frozen_dev.ce()==control_dev.byte.ce(),
            "direct frozen encoder changed byte development CE");
      check(frozen.projection_norm()==control.projection_norm(),
            "direct semantic head optimization altered shared projection");
-     check(pareto_dev.ce()<=control_dev.byte.ce()+1e-10,
+     check(surgery_dev.ce()<=control_dev.byte.ce()+1e-10,
+          "projected semantic arm worsened byte-development baseline");
+    check(pareto_dev.ce()<=control_dev.byte.ce()+1e-10,
            "Pareto semantic readout worsened byte-development baseline");
      const auto before_early=compare(control,joint,shuffled,early);
      const auto before_late=compare(control,joint,shuffled,late);
@@ -254,6 +299,8 @@ int main(int argc,char** argv) {
      const auto pareto_late=pareto.evaluate_bytes(late);
      const auto frozen_early=frozen.evaluate_bytes(early);
      const auto frozen_late=frozen.evaluate_bytes(late);
+    const auto surgery_early=surgery.evaluate_bytes(early);
+    const auto surgery_late=surgery.evaluate_bytes(late);
      check(frozen_early.ce()==before_early.byte.ce()&&
            frozen_late.ce()==before_late.byte.ce(),
            "direct frozen encoder changed cross-author byte CE");
@@ -268,6 +315,8 @@ int main(int argc,char** argv) {
      const auto pareto_sense=pareto.evaluate_senses(t_senses,wn);
      const auto frozen_role=frozen.evaluate_roles(t_roles);
      const auto frozen_sense=frozen.evaluate_senses(t_senses,wn);
+    const auto surgery_role=surgery.evaluate_roles(t_roles);
+    const auto surgery_sense=surgery.evaluate_senses(t_senses,wn);
      const auto role_shuf=shuffled.evaluate_roles(t_roles);
      const auto sense_shuf=shuffled.evaluate_senses(t_senses,wn);
      // Optional physical recurrent update: *only Alice dev* is consulted
@@ -302,6 +351,16 @@ int main(int argc,char** argv) {
        <<" dev_post_recurrence_ce="<<after_dev.ce()
        <<" dev_pareto_ce="<<pareto_dev.ce()
        <<" dev_frozen_ce="<<frozen_dev.ce()
+      <<" dev_surgery_ce="<<surgery_dev.ce()
+      <<" surgery_batches_accepted="<<surgery_batches_accepted
+      <<" surgery_batches_rejected="<<surgery_batches_rejected
+      <<" surgery_head_only_batches="<<surgery_head_only_batches
+      <<" surgery_conflicting_batches="<<surgery_conflicting_batches
+      <<" surgery_shared_alpha_sum="<<surgery_shared_alpha_sum
+      <<" surgery_role_test_ce="<<surgery_role.ce()
+      <<" surgery_sense_test_ce="<<surgery_sense.ce()
+      <<" surgery_role_test_accuracy="<<surgery_role.accuracy()
+      <<" surgery_sense_test_accuracy="<<surgery_sense.accuracy()
        <<" pareto_batches_accepted="<<pareto_batches_accepted
        <<" pareto_batches_rejected="<<pareto_batches_rejected
        <<" pareto_head_only_batches="<<pareto_head_only_batches
@@ -323,12 +382,14 @@ int main(int argc,char** argv) {
        <<" carol_early_shuffled_ce="<<before_early.shuffle.ce()
        <<" carol_early_pareto_ce="<<pareto_early.ce()
        <<" carol_early_frozen_ce="<<frozen_early.ce()
+      <<" carol_early_surgery_ce="<<surgery_early.ce()
        <<" carol_early_post_recurrence_ce="<<after_early.ce()
        <<" carol_late_byte_ce="<<before_late.byte.ce()
        <<" carol_late_joint_ce="<<before_late.joint.ce()
        <<" carol_late_shuffled_ce="<<before_late.shuffle.ce()
        <<" carol_late_pareto_ce="<<pareto_late.ce()
        <<" carol_late_frozen_ce="<<frozen_late.ce()
+      <<" carol_late_surgery_ce="<<surgery_late.ce()
        <<" carol_late_post_recurrence_ce="<<after_late.ce()
        <<" semantic_role_accuracy="<<role_before.accuracy()
        <<" semantic_role_shuffle_accuracy="<<role_shuf.accuracy()
