@@ -70,7 +70,7 @@ jobs:
             --reference "$RUNNER_TEMP/hw5-gutenberg-reference" \
             --student previous-artifact/hw5-transfer-state/learner-root \
             --output hw5-context-state | tee hw5-context-summary.log
-      - name: HW5:0 independent book-cluster geometric attribution against frozen native readouts
+      - name: "HW5:0 independent book-cluster geometric attribution against frozen native readouts"
         if: github.ref_name == 'experiment/hw5-paired-attribution-20261109'
         shell: bash
         run: |
@@ -80,7 +80,7 @@ jobs:
             --student previous-artifact/hw5-transfer-state/learner-root \
             --hw5-artifact hw5-context-state \
             --output hw5-paired-attribution-state | tee hw5-paired-attribution-summary.log
-      - name: HW5:0 native train-only CP8 learning, dev-selected checkpoint, test-once audit
+      - name: "HW5:0 native train-only CP8 learning, dev-selected checkpoint, test-once audit"
         if: github.ref_name == 'experiment/hw5-native-cp8-geometry-20261109'
         shell: bash
         run: |
