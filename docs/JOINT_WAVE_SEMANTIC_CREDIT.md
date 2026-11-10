@@ -98,3 +98,56 @@ Run 42754322831 initially allowed up to +0.01 byte CE but in fact reduced the me
 2. Repeat the safeguarded recurrent updates across independent corpora and seeds, audit the frequency-gain gradient and compare to detached readout on unseen-book byte loss.
 3. Compare multiple fixed seeds and label permutations; evaluate unseen templates, unseen predicates and real Gutenberg heldout books, with corpus disjointness and leakage controls.
 4. Gate acceptance on non-interference in language CE and exact WordNet reasoning. Keep exact claims separate from probabilistic outputs.
+
+
+## Pinned cross-author Gutenberg transfer and interference audit
+
+The next stage implements a source-verified natural-language test in
+`tools/joint_gutenberg_audit.cpp`, prepared by
+`tools/prepare_joint_gutenberg.py` and summarized by
+`tools/report_joint_gutenberg.py`. It reuses the existing
+`tools/public_domain_benchmark.py` pinning of GITenberg Alice and Dickens
+repositories by immutable commit and SHA-256. The sources are downloaded only
+during Actions; only content hashes, offsets, exact split bytes and metric
+receipts go into artifacts. No copyrighted source text is checked into GitHub.
+
+| Corpus | Role | Body character slice |
+|---|---|---:|
+| Alice's Adventures in Wonderland | Wave and byte readout training | 1,000–3,600 |
+| Alice's Adventures in Wonderland | Independent byte-development gate | 50,000–50,640 |
+| A Christmas Carol | Cross-author early heldout test | 1,200–2,170 |
+| A Christmas Carol | Cross-author later heldout test | 28,000–28,970 |
+
+The recurrent NaNLM root is initialized using only the first 1,300 training
+bytes. For each of three seeded causal-chunk training orders, three matched
+readouts share the same frozen native UnifiedWave foundation:
+
+1. Byte-only supervised next-byte CE on Alice train.
+2. The same byte updates plus small supervised synthetic role/synset gradients.
+3. The same byte updates plus fixed-permutation randomized role/synset labels.
+
+The semantic training examples are synthetic and **are not acquired from the
+Gutenberg sources**. This evaluates whether a semantic signal learned elsewhere
+transfers to natural prose while separating shuffled-label effects.
+
+The opt-in exact-root recurrent update uses the pretrained joint readout and
+one supervised synthetic sense. Only noncontiguous Alice development CE may
+authorize the write, with **zero permitted byte-development regression**.
+The test book is never an optimizer input or a selection criterion. Cross-author
+byte CE is measured both before and after any accepted recurrent update;
+independent semantic role and sense CE are also recorded to detect interference.
+
+The output includes per-seed, per-book-part CE, paired byte-only/joint/shuffled
+deltas, recurrent accepted/rejected status, exact 8 MiB root size, unchanged
+symbolic event count, and an aggregated JSON report. Three orders from one
+deterministic initialization are **not three independent model initializations**,
+and cannot support a population confidence interval, p-value or a general
+language-improvement claim. Negative results are acceptable, reported outcomes.
+
+Reproduce in GitHub Actions via
+`joint-gutenberg-audit.yml`. To reproduce manually, first run
+`python3 tools/prepare_joint_gutenberg.py <TEMP_DIR>` on a connected
+machine, compile the C++ audit with GCC/Clang C++20 -O2 -Werror, run it with
+the four split paths and the integer seed count 3, then run
+`tools/report_joint_gutenberg.py` with the receipt and manifest.
+
