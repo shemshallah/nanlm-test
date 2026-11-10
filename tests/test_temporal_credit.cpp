@@ -1,6 +1,9 @@
 #include "nanlm/unified_wave.hpp"
 #include <cmath>
 #include <cstring>
+#include <algorithm>
+#include <array>
+#include <vector>
 #include <filesystem>
 #include <iostream>
 #include <iomanip>
@@ -42,6 +45,23 @@ int main(){
   std::array<double,4> before_modes{};
   std::array<float,3> before_registers{};
   size_t before_events=0,before_episodes=0;
+  std::array<uint8_t,32> before_selected_heads{};
+  std::vector<uint8_t> head_bytes,pair_bytes;
+  std::array<double,UnifiedWaveLanguage::N> before_wave{},before_inverse{};
+  std::array<double,TriadWaveFormer::GROUPS> before_routing{};
+  auto first_differences=[](const std::vector<uint8_t>& saved,
+                            const void* now,size_t size,const char* label){
+   const auto* bytes=reinterpret_cast<const uint8_t*>(now);
+   size_t changes=0;
+   for(size_t i=0;i<size;++i)if(saved.at(i)!=bytes[i]){
+    if(changes<10)
+     std::cerr<<"TEMPORAL_RELOAD_BYTE "<<label
+              <<" offset="<<i<<" before="<<unsigned(saved[i])
+              <<" after="<<unsigned(bytes[i])<<"\n";
+    ++changes;
+   }
+   std::cerr<<"TEMPORAL_RELOAD_RAW "<<label<<" changed_bytes="<<changes<<"\n";
+  };
   const std::string context="A"+std::string(40,'b');
   {
    Universe u(path);
@@ -121,6 +141,12 @@ int main(){
    before_modes=m.spectral().eigenvalues;
    before_registers={gain(u,'Z'),gain(u,'W'),gain(u,'Y')};
    before_events=u.event_count();before_episodes=m.episodic_records();
+   before_wave=probe.wave;before_inverse=probe.inverse_wave;
+   before_routing=probe.workspace.routing;
+   const auto* heads=reinterpret_cast<const uint8_t*>(&u.root().h);
+   head_bytes.assign(heads,heads+sizeof(u.root().h));
+   const auto* pairs=reinterpret_cast<const uint8_t*>(&u.root().p);
+   pair_bytes.assign(pairs,pairs+sizeof(u.root().p));
    u.sync();
   }
   {
@@ -146,6 +172,27 @@ int main(){
     std::cerr<<"TEMPORAL_RELOAD_ABLATION mask="<<ablations[i]
              <<" before="<<before_ablations[i]
              <<" after="<<m.predict(probe,ablations[i]).p['Z']<<"\n";
+   first_differences(head_bytes,&u.root().h,sizeof(u.root().h),"heads");
+   first_differences(pair_bytes,&u.root().p,sizeof(u.root().p),"pairs");
+   double wave_diff=0,inverse_diff=0,routing_diff=0;
+   size_t wave_changed=0,inverse_changed=0,routing_changed=0;
+   for(size_t i=0;i<before_wave.size();++i){
+    const double w=std::abs(before_wave[i]-probe.wave[i]);
+    const double inv=std::abs(before_inverse[i]-probe.inverse_wave[i]);
+    wave_diff=std::max(wave_diff,w);inverse_diff=std::max(inverse_diff,inv);
+    wave_changed+=w>1e-14;inverse_changed+=inv>1e-14;
+   }
+   for(size_t i=0;i<before_routing.size();++i){
+    const double difference=std::abs(before_routing[i]-probe.workspace.routing[i]);
+    routing_diff=std::max(routing_diff,difference);
+    routing_changed+=difference>1e-14;
+   }
+   std::cerr<<"TEMPORAL_RELOAD_STATE wave_max="<<wave_diff
+            <<" wave_changed="<<wave_changed
+            <<" inverse_max="<<inverse_diff
+            <<" inverse_changed="<<inverse_changed
+            <<" routing_max="<<routing_diff
+            <<" routing_changed="<<routing_changed<<"\n";
    for(size_t i=0;i<before_modes.size();++i)
     std::cerr<<"TEMPORAL_RELOAD_SPECTRAL mode="<<i
              <<" before="<<before_modes[i]
