@@ -56,6 +56,18 @@ GitHub Actions run 42752883590, native GCC and Clang jobs succeeded on the first
 
 Caveats: the very small byte CE delta is insufficient to establish a statistically reliable benefit, and the sense accuracy equals its negative control on this small test. The first shuffled-label implementation changed the target every epoch; the subsequent revision replaces it with a fixed seeded permutation and adds separate role-only and sense-only ablations. **Do not use old shuffled metrics to describe the revised protocol.**
 
+## Revised protocol receipt (fixed seeded labels; separate semantic objectives)
+
+Run 42753102857 completed successfully for both GCC and Clang. The GCC job reported:
+
+| Held-out measure | Joint role+sense | Byte only | Role only | Sense only | Shuffled labels |
+|---|---:|---:|---:|---:|---:|
+| Byte CE, synthetic heldout | 4.22553 | 4.22605 | 4.22605 | 4.22558 | 4.22661 |
+
+The unchanged production UnifiedWave byte CE was 4.22618. In this one small seed, the positive byte shift primarily tracks the **sense** objective; role-only was indistinguishable at the printed precision. Heldout role accuracy was 62.5% versus 50% randomized, and heldout sense accuracy was 75% versus 25% randomized. The joint shared-readout prediction for the space byte moved +0.0000682806 under semantic training.
+
+This is a valid initial mechanistic/control result, but these data do not resolve significance, robust improvement across seeds, generalization to unseen relations, or natural semantics. The next benchmark must report confidence intervals and absolute/proportional deltas across independently generated heldout examples.
+
 ## Next required experiment
 
 1. Connect the preceding shared contextual lexical embeddings to the wave readout, preserving end-to-end derivatives to both roles and senses instead of creating parallel encoders.
