@@ -290,6 +290,30 @@ int main(){
      proposed.teach_sense(proposed.state_for(row.sentence),row,wn,0.04);
    }
    const auto semantic_proposal_loss=proposed.evaluate_senses(senses,wn).ce();
+   // Train semantics on the representation that is *actually retained*.
+   // This avoids copying semantic heads from an altered latent projection.
+   JointWaveSemanticLearner frozen=head_only;
+   for(size_t epoch=0;epoch<18;++epoch){
+    for(const auto& row:roles)
+     frozen.teach_role(frozen.state_for(row.sentence),row,0.04,false);
+    for(const auto& row:senses)
+     frozen.teach_sense(frozen.state_for(row.sentence),row,wn,0.04,false);
+   }
+   require(frozen.projection_norm()==initial_norm,
+           "frozen semantic updates changed shared projection");
+   require(frozen.evaluate_bytes(held).ce()==initial_byte,
+           "direct frozen semantic updates changed heldout byte CE");
+   const auto pfrozen=frozen.predict_byte(probe_state);
+   for(size_t i=0;i<UnifiedWaveLanguage::N;++i)
+    require(pfrozen.p[i]==pbase.p[i],
+            "direct frozen semantic training changed byte probabilities");
+   require(frozen.role_updates()==roles.size()*18&&
+           frozen.sense_updates()==senses.size()*18,
+           "frozen semantic training stopped unexpectedly");
+   require(std::isfinite(frozen.evaluate_roles(test_roles).ce())&&
+           std::isfinite(frozen.evaluate_senses(test_senses,wn).ce()),
+           "direct frozen semantic model returned nonfinite prediction");
+
    JointWaveSemanticLearner alpha_zero=head_only;
    alpha_zero.blend_semantics_from(proposed,0.0);
    require(alpha_zero.role_updates()==proposed.role_updates()&&
