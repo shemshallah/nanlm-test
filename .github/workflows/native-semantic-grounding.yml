@@ -76,6 +76,8 @@ jobs:
           root="$RUNNER_TEMP/native-semantic-root"
           cp "$RUNNER_TEMP/semantic-export/wordnet-noun.wordnet.tsv" "$root.wordnet.tsv"
           ./nanlm "$root" init
+          ./nanlm "$root" semantic-project-wordnet | tee semantic-projection-log.txt
+          grep -F "projected=" semantic-projection-log.txt
           sha256sum "$root" | cut -d' ' -f1 > "$RUNNER_TEMP/before.sha"
           ./nanlm "$root" semantic-batch "$RUNNER_TEMP/semantic-export/semantic-queries.tsv" | tee semantic-batch-log.txt
           grep -F 'queries=600 correct=600 accuracy=1' semantic-batch-log.txt
@@ -89,5 +91,6 @@ jobs:
           path: |
             semantic-source-log.txt
             semantic-batch-log.txt
+            semantic-projection-log.txt
           retention-days: 30
           if-no-files-found: warn
