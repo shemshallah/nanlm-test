@@ -3,6 +3,7 @@
 #include "nanlm/wordnet.hpp"
 #include "nanlm/semantic.hpp"
 #include "nanlm/contextual_roles.hpp"
+#include "nanlm/contextual_senses.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -20,7 +21,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV|semantic-project-wordnet|context-train TSV EPOCHS LR|context-eval TSV|context-query SENTENCE SUBJECT OBJECT RELATION}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV|semantic-project-wordnet|context-train TSV EPOCHS LR|context-eval TSV|context-query SENTENCE SUBJECT OBJECT RELATION|sense-train TSV EPOCHS LR|sense-eval TSV|sense-query SENTENCE TARGET}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -404,6 +405,46 @@ int main(int argc,char** argv){
                   std::stof(argv[7]),std::stoull(argv[8]));
    universe.sync();
    std::cout<<"stored inverse-addressed temporal pair\n";
+  }else if(operation=="sense-train"){
+   if(argc!=6)throw std::invalid_argument("sense-train TSV EPOCHS LR");
+   std::ifstream input(argv[3]);
+   if(!input)throw std::runtime_error("sense training TSV unavailable");
+   const auto examples=ContextualSenseLearner::read_senses(input);
+   const int epochs=number(4);
+   if(epochs<=0)throw std::invalid_argument("sense epochs must be positive");
+   const double rate=std::stod(argv[5]);
+   WordNetIndex wn;wn.load(path+".wordnet.tsv");
+   ContextualSenseLearner model(universe);
+   model.train_senses(examples,wn,static_cast<size_t>(epochs),rate);
+   const auto metrics=model.evaluate_senses(examples,wn);
+   model.save_senses();
+   std::cout<<std::setprecision(10)
+            <<"NANLM_SENSE_TRAIN samples="<<examples.size()
+            <<" updates="<<model.sense_updates()
+            <<" ce="<<metrics.ce()<<" accuracy="<<metrics.accuracy()
+            <<" trained_synsets="<<model.trained_senses()
+            <<" shared_vocabulary="<<model.tokens()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="sense-eval"){
+   if(argc!=4)throw std::invalid_argument("sense-eval TSV");
+   std::ifstream input(argv[3]);
+   if(!input)throw std::runtime_error("sense evaluation TSV unavailable");
+   const auto examples=ContextualSenseLearner::read_senses(input);
+   WordNetIndex wn;wn.load(path+".wordnet.tsv");
+   ContextualSenseLearner model(universe);
+   const auto m=model.evaluate_senses(examples,wn);
+   std::cout<<std::setprecision(10)
+            <<"NANLM_SENSE_EVAL samples="<<m.rows
+            <<" ce="<<m.ce()<<" accuracy="<<m.accuracy()
+            <<" correct="<<m.correct<<"\n";
+  }else if(operation=="sense-query"){
+   if(argc!=5)throw std::invalid_argument("sense-query SENTENCE TARGET");
+   WordNetIndex wn;wn.load(path+".wordnet.tsv");
+   ContextualSenseLearner model(universe);
+   const auto p=model.infer(argv[3],argv[4],wn);
+   std::cout<<std::setprecision(10)<<"NANLM_SENSE_QUERY state="
+            <<(p?"learned":"unknown")<<" id="<<(p?p->synset:0)
+            <<" confidence="<<(p?p->confidence:0.0)<<"\n";
   }else if(operation=="context-train"){
    if(argc!=6)throw std::invalid_argument("context-train TSV EPOCHS LR");
    std::ifstream input(argv[3]);

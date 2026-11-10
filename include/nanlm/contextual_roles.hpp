@@ -21,6 +21,7 @@
 
 namespace nanlm {
 class ContextualRoleLearner {
+ friend class ContextualSenseLearner;
  public:
  static constexpr size_t D=24;
  using Vector=std::array<double,D>;
