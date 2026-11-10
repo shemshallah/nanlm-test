@@ -250,6 +250,31 @@ class JointWaveSemanticLearner {
   swap(role_updates_,candidate.role_updates_);
   swap(sense_updates_,candidate.sense_updates_);
  }
+ // Controlled semantic consolidation: keep supervised semantic heads and
+ // role-only orientation, but line-search the genuinely shared projection
+ // and bias toward the trained proposal. alpha=0 is a semantic-head-only
+ // ablation, not language transfer. Byte readout weights never change.
+ void blend_semantics_from(const JointWaveSemanticLearner& candidate,double alpha){
+  if(&wave_!=&candidate.wave_||filename_!=candidate.filename_||
+     byte_updates_!=candidate.byte_updates_)
+   throw std::invalid_argument("cannot blend unrelated semantic state");
+  if(!std::isfinite(alpha)||alpha<0||alpha>1)
+   throw std::invalid_argument("shared semantic blend must be 0..1");
+  for(size_t i=0;i<N;++i)
+   for(size_t d=0;d<D;++d)
+    projection_[i][d]+=alpha*(candidate.projection_[i][d]-projection_[i][d]);
+  for(size_t d=0;d<D;++d)
+   bias_[d]+=alpha*(candidate.bias_[d]-bias_[d]);
+  // This orientation term appears in role inference, never next-byte
+  // prediction; semantic-head updates therefore cannot harm byte CE.
+  orientation_=candidate.orientation_;
+  role_heads_=candidate.role_heads_;
+  role_bias_=candidate.role_bias_;
+  sense_heads_=candidate.sense_heads_;
+  sense_bias_=candidate.sense_bias_;
+  role_updates_=candidate.role_updates_;
+  sense_updates_=candidate.sense_updates_;
+ }
  uint64_t byte_updates()const{return byte_updates_;}
  uint64_t role_updates()const{return role_updates_;}
  uint64_t sense_updates()const{return sense_updates_;}
