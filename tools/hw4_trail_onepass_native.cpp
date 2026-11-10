@@ -52,7 +52,7 @@ double ce(const Counts& n,const std::array<uint64_t,V>& rows,
   top1+=n[a][p.choice];
   for(size_t b=0;b<V;++b)
    if(n[a][b]>0)
-    total-=long double(n[a][b])*
+    total-=static_cast<long double>(n[a][b])*
            std::log(std::max(p.probability[b],1e-300));
  }
  accuracy=double(top1)/double(transitions);
