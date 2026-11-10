@@ -22,7 +22,7 @@ jobs:
       - name: Build joint UnifiedWave / role / exact synset gradient probe
         run: |
           set -euo pipefail
-          \${{ matrix.cxx }} -std=c++20 -O2 -Wall -Wextra -Wpedantic -Iinclude tests/test_joint_wave_semantics.cpp -o test_joint_wave_semantics
+          ${{ matrix.cxx }} -std=c++20 -O2 -Wall -Wextra -Wpedantic -Iinclude tests/test_joint_wave_semantics.cpp -o test_joint_wave_semantics
       - name: Run heldout and matched ablation controls
         run: |
           set -euo pipefail
@@ -33,7 +33,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-joint-wave-\${{ matrix.cxx }}-\${{ github.run_id }}
+          name: native-joint-wave-${{ matrix.cxx }}-${{ github.run_id }}
           path: joint-wave-results.txt
           retention-days: 30
           if-no-files-found: warn
