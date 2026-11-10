@@ -24,7 +24,7 @@ All joint readout parameters persist as an FNV-integrity-checked, atomic-renamed
     g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Iinclude tests/test_joint_wave_semantics.cpp -o test_joint_wave_semantics
     ./test_joint_wave_semantics
 
-Run both GCC and Clang in the native-joint-wave-semantics.yml workflow. The fixed synthetic fixture has role-reversal pairs with names absent from training, two exact bank WordNet sense IDs, held-out sentence recombinations and a separate held-out byte string. Training data are explicitly synthetic and small: no Gutenberg semantics claim follows.
+Run both GCC and Clang with warnings-as-errors in the native-joint-wave-semantics.yml workflow; or use make test-joint-wave-semantics. The fixed synthetic fixture has role-reversal pairs with names absent from training, two exact bank WordNet sense IDs, held-out sentence recombinations and a separate held-out byte string. Training data are explicitly synthetic and small: no Gutenberg semantics claim follows.
 
 Required controls:
 
@@ -90,7 +90,7 @@ The first guarded proposal was accepted and persisted directly in the mapped NaN
 | Synset supervision CE | 0.393033 | 0.392068 |
 | Independent byte development CE | 4.12775 | 4.12773 |
 
-The run allowed up to +0.01 byte CE but in fact reduced the measured byte CE. A subsequent revision makes **zero allowed byte regression** the strict acceptance setting; that revision must be separately checked before reporting its CI receipt. These are one-sentence, one-development-sample micro-tests and do not imply a general improvement.
+Run 42754322831 initially allowed up to +0.01 byte CE but in fact reduced the measured byte CE. **Run 42754454073** subsequently enforced the stricter **zero allowed byte regression** acceptance gate and passed on GCC and Clang with the same accepted update and the same before/after metrics. These are one-sentence, one-development-sample micro-tests and do not imply a general improvement.
 
 ## Next required experiment
 
