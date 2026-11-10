@@ -107,6 +107,12 @@ def experiment(store:Path,student:Path,output:Path):
     assert int(bank["adjacent"])==int(bank["bytes"])-int(bank["books"])
     assert int(bank["lag2"])==int(bank["bytes"])-2*int(bank["books"])
     assert int(bank["root_bytes"])==8388608
+    assert int(bank["addressed_pairs"])==32640
+    assert int(bank["reserved_pairs"])==255  # gateway 0xff is structural, not corpus data
+    assert 0<=int(bank["evidence_pairs"])<=32385
+    assert int(bank["evidence_pairs"])+int(bank["absent_active_pairs"])==32385
+    assert 0<=int(bank["directed_adjacent_pairs"])<=255*255
+    # Coverage means addressable topology, not fabricated evidence.
     # A train-only model must NOT be byte-identical to the all-books source.
     assert sha(trained_root)!=source_root_sha
     before_student=sha(student)

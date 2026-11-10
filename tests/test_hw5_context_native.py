@@ -31,9 +31,22 @@ class MirrorContextTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stdout)
             self.assertIn("books=2",result.stdout)
             self.assertIn("gateway_head=255",result.stdout)
+            self.assertIn("addressed_pairs=32640",result.stdout)
+            self.assertIn("reserved_pairs=255",result.stdout)
             self.assertEqual(root.stat().st_size,ROOT)
             data=root.read_bytes()
             self.assertEqual(data[255*128:256*128],bytes(128))
+            addressed=0
+            for a in range(256):
+                for b in range(a+1,256):
+                    at=offset(a,b)
+                    self.assertEqual(scalar(data,at+160),a)
+                    self.assertEqual(scalar(data,at+164),b)
+                    self.assertEqual(data[at+168:at+172],b"H5P1")
+                    if b==255:
+                        self.assertEqual(data[at:at+88],bytes(88))
+                    addressed+=1
+            self.assertEqual(addressed,32640)
             self.assertEqual(scalar(data,0),0)
             self.assertEqual(scalar(data,ord("a")*128),ord("a"))
             xy=offset(ord("a"),ord("b"))
@@ -49,6 +62,8 @@ class MirrorContextTests(unittest.TestCase):
             cd=offset(ord("c"),ord("d"))
             self.assertEqual(scalar(data,cd),0)
             self.assertEqual(scalar(data,cd+4),0)
+            self.assertEqual(scalar(data,cd+160),ord("c"))
+            self.assertEqual(scalar(data,cd+164),ord("d"))
             raw=overlay.read_bytes()
             self.assertEqual(raw[:8],b"HW5TRI01")
             count=struct.unpack_from("<Q",raw,8)[0]
