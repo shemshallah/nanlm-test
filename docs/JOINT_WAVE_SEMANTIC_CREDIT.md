@@ -15,7 +15,7 @@ All three objectives update the **same** 255 x 24 projection P and bias.
 - Role: relation-keyed sigmoid with supervised, ordered subject/object and binary BCE; orientation is derived from exact entity token positions. Readout remains a learnable semantic classifier, not an asserted fact.
 - Sense: masked synset softmax over 2..64 exact WordNet candidate IDs. A candidate absent from training causes abstention. Supervised cross-entropy updates the same P and bias.
 
-Gradients are analytic through the shared projection and heads; they stop at the **fixed** wave input x. No semantic gradient goes through the oscillator recurrence, triad routing, FabricTeacher, or physical NaN16 pair cells. This is not full BPTT or unsupervised semantics.
+The first, detached-readout experiment differentiates through the shared projection while keeping the wave input x fixed. The *subsequent* opt-in eight-step semantic recurrence path differentiates through the oscillator and can update physical recurrent input-gain registers following guarded replay. Neither path differentiates triad routing, QKV kernels or FabricTeacher; neither asserts a WordNet claim. This is truncated recurrent BPTT, not full end-to-end differentiation of every language component or unsupervised semantics.
 
 All joint readout parameters persist as an FNV-integrity-checked, atomic-renamed single experimental sidecar (ROOT.joint-wave), with bounded parser and corruption rejection. Saving a sidecar is not a transactional checkpoint of all root components. A separate byte-only and semantic-shuffled model runs on the **same frozen underlying wave**, not a second universe.
 
@@ -72,11 +72,29 @@ This is a valid initial mechanistic/control result, but these data do not resolv
 
 The next commit adds a **read-only, eight-transition reverse-mode derivative through the actual UnifiedWave oscillator**. This is a separate capability from training the 24D readout. The semantic role/synset softmax supplies a terminal gradient with respect to 255 forward and 255 inverse wave activations; UnifiedWave propagates these gradients through both second-order recurrences, directed scattering, the input-gain register and frequency shift. It does not differentiate unrelated teacher, attention or triad parameters.
 
-The native test uses a complete eight-byte causal tape and independently perturbs the *existing* input-gain register by plus/minus 0.005, replaying the exact physical wave from the tape's fixed starting state. Raw original gain-register bytes, including the magic marker, are restored after each test. The analytic role and sense derivatives must agree with the central difference within a numerical tolerance. The test does **not** yet accept any persistent recurrent update. A gradient audit, even when it succeeds, does not prove a safe optimizer or a general language benefit.
+The native test uses a complete eight-byte causal tape and independently perturbs the *existing* input-gain register by plus/minus 0.005, replaying the exact physical wave from the tape's fixed starting state. Raw original gain-register bytes, including the magic marker, are restored after each test. The analytic role and sense derivatives must agree with central differences within a numerical tolerance. An opt-in safeguarded update then uses the analytic semantic gradient to propose changes to the *existing* mapped recurrent input-gain registers, replays the entire sentence to verify semantic CE, and compares against a separate byte-development sample before committing. Every rejected proposal restores all original gain bytes and magic markers. A valid single-step optimizer still does not prove robust long-run semantic acquisition.
+
+## Verified physically committed recurrent step
+
+Run 42754322831 passed on GCC and Clang. The analytic and finite-difference gradients matched:
+
+| Objective | Analytic | Finite difference |
+|---|---:|---:|
+| Exact synset loss | 0.00884468 | 0.00884466 |
+| Ordered role loss | 0.00691626 | 0.00691634 |
+
+The first guarded proposal was accepted and persisted directly in the mapped NaNLM root:
+
+| Measured objective | Before | After |
+|---|---:|---:|
+| Synset supervision CE | 0.393033 | 0.392068 |
+| Independent byte development CE | 4.12775 | 4.12773 |
+
+The run allowed up to +0.01 byte CE but in fact reduced the measured byte CE. A subsequent revision makes **zero allowed byte regression** the strict acceptance setting; that revision must be separately checked before reporting its CI receipt. These are one-sentence, one-development-sample micro-tests and do not imply a general improvement.
 
 ## Next required experiment
 
 1. Connect the preceding shared contextual lexical embeddings to the wave readout, preserving end-to-end derivatives to both roles and senses instead of creating parallel encoders.
-2. After the read-only semantic recurrence gradient is verified, implement guarded, replay-validated root updates and compare with detached readout on heldout byte loss.
+2. Repeat the safeguarded recurrent updates across independent corpora and seeds, audit the frequency-gain gradient and compare to detached readout on unseen-book byte loss.
 3. Compare multiple fixed seeds and label permutations; evaluate unseen templates, unseen predicates and real Gutenberg heldout books, with corpus disjointness and leakage controls.
 4. Gate acceptance on non-interference in language CE and exact WordNet reasoning. Keep exact claims separate from probabilistic outputs.
