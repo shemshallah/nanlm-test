@@ -5,7 +5,9 @@ on:
       - 'tools/sensor_temporal_export.py'
       - 'tests/test_sensor_temporal_export.py'
       - 'tests/test_sensor_temporal_aggregate.py'
+      - 'tests/test_sensor_temporal_concept_probe.py'
       - 'tools/sensor_temporal_aggregate.py'
+      - 'tools/sensor_temporal_concept_probe.py'
       - 'docs/SENSOR_TEMPORAL_CONCEPT_BRIDGE.md'
       - '.github/workflows/sensor-temporal-export.yml'
       - 'include/nanlm/sensor_timeslices.hpp'
@@ -37,7 +39,7 @@ jobs:
             src/sensor_resident.cpp -o sensor-resident
           SNAP=$(mktemp /tmp/nanlm-temporal-XXXXXX)
           rm -f "$SNAP"
-          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices"' EXIT
+          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices" "$SNAP.probe" "$SNAP.probe.tmp" "$SNAP.probe.slices"' EXIT
           printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_c\t-\tpenguin\tISA\tanimal\nTICK\nMEASURE\nTIMELINE\t8\nQUIT\n' | ./sensor-resident "$SNAP" | tee native-resident.log
           python3 tools/sensor_temporal_export.py "$SNAP.slices" summary | tee temporal-summary.jsonl
           python3 tools/sensor_temporal_export.py "$SNAP.slices" frames | tee temporal-frames.jsonl
@@ -50,6 +52,10 @@ jobs:
           python3 -c 'import json; rows=[json.loads(x) for x in open("temporal-concepts.jsonl")]; assert len(rows)==3,rows; assert any(r["phrase"]=="penguin is a bird" and r["evidence_state"]=="supports" for r in rows),rows; print("PASS: source-grounded concept labels, no geometric word inversion")'
           grep -q 'mean_vector_0' temporal-aggregates.csv
           grep -q 'GLOBAL' temporal-aggregates.csv
+          printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_a\t+\tbird\tISA\tanimal\nINGEST\tsrc_a\t-\tpenguin\tISA\tanimal\nINGEST\tsrc_b\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_b\t-\tpenguin\tISA\tanimal\nQUIT\n' | ./sensor-resident "$SNAP.probe" > native-concept-probe.log
+          python3 tools/sensor_temporal_concept_probe.py "$SNAP.probe.slices" --journal "$SNAP.probe" > temporal-concept-probe.json
+          python3 -c 'import json; r=json.load(open("temporal-concept-probe.json")); assert r["eligible_known_concept_events"]==6,r; assert r["predicted"]==6,r; assert r["correct"]==6,r; assert r["accuracy_all_eligible"]>r["most_frequent_training_label_baseline"],r; print("PASS: source-disjoint numeric concept retrieval beats majority baseline")'
+          test "$(stat -c%s "$SNAP.probe.slices")" = 8388608
           python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
           grep -q '^MATRIX\|^SLICE' native-resident.log
           grep -q 'GLOBAL' temporal-deltas.csv
@@ -68,4 +74,6 @@ jobs:
             temporal-mirrors.csv
             temporal-aggregates.csv
             temporal-concepts.jsonl
+            temporal-concept-probe.json
+            native-concept-probe.log
           if-no-files-found: ignore
