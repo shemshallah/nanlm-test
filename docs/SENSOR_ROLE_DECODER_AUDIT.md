@@ -86,3 +86,29 @@ still decide support, refutation and source attribution.
 All experimental code remains confined to `nanlm-test` PR #29. No production
 NaN16 root, NaNROUTER ring, HW4, Android APK or broader network instance is
 modified.
+
+## Unified numerical → lexical → source-evidence output
+
+`tools/sensor_temporal_full_readout.py` combines the three already-audited
+streams into one JSON result, without blending their epistemic roles:
+
+```bash
+python3 tools/sensor_temporal_full_readout.py snapshot.sensor.tsv.slices \
+  --journal snapshot.sensor.tsv --role-trace numeric-role-probe.tsv \
+  --training-events 6 --max-items 64
+```
+
+For each numeric decoded event, it returns the learned lexical triple and
+uncalibrated role probabilities, a short English phrase, and **two distinct**
+evidence states: immediately before the event versus at the event, with
+source names and bounded proof chains from the V2 journal. It also includes
+aggregate global sensor vector history, counted hot trihead histories,
+canonical pair histories, and a warning that these aggregate quantities are
+**not attributed to the decoded word**. An abstaining decoder emits no phrase.
+The command retains strict V2/MATS count checks and accepts only a bounded
+number of output events.
+
+This is a useful operational format, not a new learned semantic inference
+mechanism: lexical identity comes from supervised role-probe readout; truth
+and logical evidence come from the original journal; global temporal metrics
+are independent descriptive statistics. Do not fuse their confidence fields.
