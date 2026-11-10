@@ -52,7 +52,7 @@ private:
    if(!seq||family!=static_cast<std::uint8_t>(family_)||version!=1||
       length> SLOT_BYTES-RECORD_HEADER)return std::nullopt;
    // Reserved header bytes must be zero.
-   if(r.u16()!=0||r.u16()!=0)return std::nullopt;
+   if(r.u16()!=0)return std::nullopt;
    std::vector<std::uint8_t> payload(length);
    file.read(reinterpret_cast<char*>(payload.data()),static_cast<std::streamsize>(length));
    if(!file)return std::nullopt;
@@ -104,7 +104,7 @@ public:
   w.u64(seq);w.u64(frame.nanclock);
   w.u32(static_cast<std::uint32_t>(payload.size()));
   w.u32(checksum(payload,seq,frame.nanclock));
-  w.u8(static_cast<std::uint8_t>(family_));w.u8(1);w.u16(0);w.u16(0);
+  w.u8(static_cast<std::uint8_t>(family_));w.u8(1);w.u16(0);
   const auto& header=w.bytes();
   if(header.size()!=RECORD_HEADER)throw std::logic_error("wrong family record header width");
   std::fstream f(path_,std::ios::in|std::ios::out|std::ios::binary);
