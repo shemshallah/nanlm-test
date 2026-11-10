@@ -99,6 +99,7 @@ struct Bank{
  TripleMap triple;
  Counts adjacent{},skip{};
  std::array<uint64_t,V> context{},out{},in{},start{},end{};
+ std::array<uint64_t,CONTEXTS> triple_context{};
  uint64_t transitions=0,lag2=0,bytes=0,books=0;
  void learn(const std::vector<uint8_t>& x){
   if(x.size()<3)throw std::runtime_error("short document");
@@ -193,11 +194,13 @@ struct Bank{
       ||(i&&k<=prev)||!triple.emplace(k,n).second)
     throw std::runtime_error("malformed sorted exact triples");
    prev=k;
+   triple_context[((k>>16)&255)*V+((k>>8)&255)]+=n;
   }
   if(t.peek()!=EOF)throw std::runtime_error("extra trigram bytes");
   for(const auto& [k,n]:triple){
    const unsigned a=k>>16,b=(k>>8)&255,c=k&255;
-   if(n>adjacent[a][b]||n>skip[a][c])throw std::runtime_error("inconsistent triple evidence");
+   if(n>adjacent[a][b]||n>skip[a][c]||triple_context[a*V+b]>adjacent[a][b])
+    throw std::runtime_error("inconsistent triple evidence");
   }
  }
  uint32_t get(unsigned a,unsigned b,unsigned c)const{
@@ -253,12 +256,12 @@ struct Eval{
   for(auto& v:p)v/=sum;
   return p;
  }
- // Sparse exact trigram count, normalized to a Laplace-smoothed
+ // Sparse exact trigram count with its own document-boundary-aware denominator,\n // normalized to a Laplace-smoothed
  // C(256,2) directed pair bank, optional second-step mirror and geometry.
  Prob distribution(unsigned a,unsigned b,const Config& c)const{
   const auto geo=geom3(a,b,c.kappa);
   Prob p{};double sum=0;
-  const double support=double(bank.adjacent[a][b]);
+  const double support=double(bank.triple_context[a*V+b]);
   for(unsigned j=0;j<V;++j){
    const double tri=(double(bank.get(a,b,j))+c.beta*bi[b][j])/(support+c.beta);
    p[j]=(1-c.lambda-c.delta)*tri+c.delta*skip[a][j]+c.lambda*geo[j];
