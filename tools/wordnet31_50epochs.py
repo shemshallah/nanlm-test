@@ -96,6 +96,14 @@ def evaluate(root:Path, heldout:Path | None = None,
             "heldout_full_bytes":held.stat().st_size}
 
 
+def learner_artifact_hashes(root:Path)->dict:
+    # Detect torn/mispaired root and sidecar checkpoint generations. This
+    # detects unsafe replay; it does not claim multi-file atomicity.
+    return {suffix:sha(Path(str(root)+suffix))
+            for suffix in ("",".overlay",".so3",".episodes")
+            if Path(str(root)+suffix).is_file()}
+
+
 def checkpoint(args:argparse.Namespace,source:dict)->None:
     start=time.monotonic()
     corpus=args.corpus
@@ -116,7 +124,8 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
             p["epochs_target"]!=args.epochs or
             p.get("heldout_sha256")!=heldout_digest or
             p.get("heldout_eval_bytes",0)!=eval_limit or
-            p.get("source_hw4_root_sha256")!=source.get("source_hw4_root_sha256")):
+            p.get("source_hw4_root_sha256")!=source.get("source_hw4_root_sha256") or
+            p.get("source_hw4_sqlite_sha256")!=source.get("source_hw4_sqlite_sha256")):
             raise RuntimeError("resumption is not using exactly the original full corpus")
     else:
         if root.exists():
@@ -125,11 +134,16 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
            "heldout_sha256":heldout_digest,
            "heldout_eval_bytes":eval_limit,
            "source_hw4_root_sha256":source.get("source_hw4_root_sha256"),
+           "source_hw4_sqlite_sha256":source.get("source_hw4_sqlite_sha256"),
            "epochs_completed":0,"offset":0,"total_bytes_seen":0,
            "total_scored":0,"chunks":0,"total_runtime_seconds":0.0,
            "epoch_nll":0.0,"epoch_scored":0,"epoch_credit_accepted":0,
            "epoch_history":[],"initial_eval":None,"recent_eval":None}
         atomic_json(progress_file,p)
+    if p["total_bytes_seen"]>0:
+        expected=p.get("learner_artifact_sha256")
+        if not isinstance(expected,dict) or not expected or learner_artifact_hashes(root)!=expected:
+            raise RuntimeError("learner root or sidecar diverged from last committed progress; refusing unsafe replay")
     log=state_dir/"chunks.jsonl"
     print("WORDNET31_TRAIN_CONFIG "+json.dumps({
         "archive_sha256":source["archive_sha256"],"corpus_sha256":fingerprint,
@@ -205,6 +219,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
             print("WORDNET31_EPOCH "+json.dumps({
                 **p["epoch_history"][-1],"heldout":p["recent_eval"]
             },sort_keys=True),flush=True)
+        p["learner_artifact_sha256"]=learner_artifact_hashes(root)
         atomic_json(progress_file,p)
         remaining_budget=args.budget_seconds-(time.monotonic()-start)
         if remaining_budget<2*spent:
@@ -220,6 +235,7 @@ def checkpoint(args:argparse.Namespace,source:dict)->None:
     if not args.pilot_only and root.is_file():
         try:
             p["recent_eval"]=evaluate(root,heldout_path,eval_limit)
+            p["learner_artifact_sha256"]=learner_artifact_hashes(root)
             atomic_json(progress_file,p)
         except Exception as e:
             print(f"WORDNET31_EVAL_ERROR {type(e).__name__}: {e}",flush=True)
