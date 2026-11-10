@@ -79,7 +79,7 @@ int main(int argc,char** argv){
     previous=int(symbol);
    }
   }
-  if(input.bad()||seen<1024||transition_count+1!=seen)
+  if(input.bad()||seen<(mode=="train"?1024u:64u)||transition_count+1!=seen)
    throw std::runtime_error("incomplete single-pass HW5 read");
   Universe u(model);
   UnifiedWaveLanguage mind(u); // existing 8 MiB HW0 student layout
