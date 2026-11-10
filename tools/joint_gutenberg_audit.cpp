@@ -113,6 +113,9 @@ int main(int argc,char** argv) {
   check(n>=2&&n<=8,"seed count must be 2..8");
   for(size_t k=0;k<n;++k){
    const uint64_t seed=20261109ull+103ull*k;
+   // Independently vary the READOUT initializer, not the physical root.
+   // Within each seed every true/shuffled arm gets the identical start.
+   const uint64_t init_seed=271828ull+104729ull*k;
    const std::string root=(std::filesystem::temp_directory_path()/
     ("nanlm-gutenberg-joint-"+std::to_string(::getpid())+"-"+std::to_string(k))).string();
    cleanup(root);
@@ -130,13 +133,13 @@ int main(int argc,char** argv) {
      check(trained.tokens>1000&&std::isfinite(trained.ce()),
            "Alice physical wave foundation failed");
      const auto events=universe.event_count();
-     J control(wave,root+"-byte");
-     J joint(wave,root);
-     J shuffled(wave,root+"-shuffle");
-     J pareto(wave,root+"-pareto");
-     J frozen(wave,root+"-frozen");
-     J surgery(wave,root+"-surgery");
-     J sham(wave,root+"-sham");
+     J control(wave,root+"-byte",init_seed);
+     J joint(wave,root,init_seed);
+     J shuffled(wave,root+"-shuffle",init_seed);
+     J pareto(wave,root+"-pareto",init_seed);
+     J frozen(wave,root+"-frozen",init_seed);
+     J surgery(wave,root+"-surgery",init_seed);
+     J sham(wave,root+"-sham",init_seed);
      std::mt19937_64 rng(seed);
      // Randomize *whole causal chunks* of training text; do not reverse
      // or shuffle bytes inside sentences, and keep seed order matched.
@@ -391,6 +394,7 @@ int main(int argc,char** argv) {
      // cross-author test and from all supervision examples.
      std::cout<<std::setprecision(10)<<"JOINT_GUTENBERG_SEED"
        <<" seed="<<seed
+       <<" readout_init_seed="<<init_seed
        <<" train_bytes="<<train.size()
        <<" dev_tokens="<<control_dev.byte.count
        <<" early_tokens="<<before_early.byte.count
