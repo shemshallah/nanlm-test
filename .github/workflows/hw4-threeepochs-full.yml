@@ -1,1 +1,169 @@
-The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
+name: HW4:0 full WordNet three-epoch native geometric learner
+on:
+  push:
+    branches: ['experiment/hw4-threeepochs-geometric-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  hw4-three-full-passes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate immutable HW4 source tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_hw4_reference_corpus -v
+          python3 -m py_compile tools/hw4_reference_corpus.py
+      - name: Download SHA256-pinned HW4 WordNet 3.1 reference, verify and export entire corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py \
+            --archive "$RUNNER_TEMP/hw4-release.tar.gz" \
+            --output "$RUNNER_TEMP/hw4-complete" | tee hw4-source.log
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          base=Path(os.environ['RUNNER_TEMP'])/'hw4-complete'
+          manifest=json.loads((base/'all.manifest.json').read_text())
+          source=json.loads((base/'hw4-corpus.manifest.json').read_text())
+          assert source['source_owner']=='NaNROUTER/MC0:0' and source['teacher_immutable'] is True
+          assert manifest['split']=='all' and manifest['no_bptt']
+          assert manifest['source_route']=='nan://GM0:SC0:MC0:BS0:0:HW4:0'
+          assert (manifest['synsets'],manifest['senses'],manifest['relations'],manifest['synonyms'])==(117791,207235,378203,53869)
+          assert manifest['corpus_bytes']==58341529
+          text=base/'all.txt'
+          assert text.stat().st_size==58341529
+          h=hashlib.sha256()
+          with text.open('rb') as f:
+            for block in iter(lambda:f.read(1<<20),b''): h.update(block)
+          assert h.hexdigest()==manifest['corpus_sha256'],(h.hexdigest(),manifest['corpus_sha256'])
+          print('HW4_THREEEPOCHS_SOURCE_VERIFIED',json.dumps({'bytes':text.stat().st_size,'sha256':h.hexdigest(),'synsets':manifest['synsets']},sort_keys=True))
+          PY
+      - name: Build native 8 MiB NaNLM and no-BPTT geometric credit optimizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          make nanlm hw4-onepass CXX=clang++
+      - name: Train full WordNet for three epochs, evaluate every epoch and save durable root
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,math,os,re,subprocess,time
+          state=Path('hw4-threeepochs-state')
+          state.mkdir(exist_ok=False)
+          root=state/'learner-root'
+          manifest=json.loads((Path(os.environ['RUNNER_TEMP'])/'hw4-complete'/'all.manifest.json').read_text())
+          full=Path(os.environ['RUNNER_TEMP'])/'hw4-complete'/'all.txt'
+          fixture='tests/fixtures/unified_quality_heldout.txt'
+          def sha(path):
+              h=hashlib.sha256()
+              with Path(path).open('rb') as f:
+                  for block in iter(lambda:f.read(1<<20),b''): h.update(block)
+              return h.hexdigest()
+          def execute(cmd,log):
+              start=time.perf_counter()
+              result=subprocess.run(cmd,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,check=False)
+              seconds=time.perf_counter()-start
+              (state/log).write_text(result.stdout)
+              print(log, 'elapsed_seconds=',round(seconds,3),'exit=',result.returncode, flush=True)
+              if result.returncode!=0:
+                  print(result.stdout[-4000:],flush=True)
+                  raise RuntimeError(f'{cmd[0]} failed, see {state/log}')
+              return result.stdout, seconds
+          def fields(raw,prefix):
+              lines=[line for line in raw.splitlines() if line.startswith(prefix+' ')]
+              if len(lines)!=1:
+                  raise AssertionError(f'expected exactly one {prefix} row: '+raw[-1000:])
+              return dict(re.findall(r'([a-z_]+)=([^\s]+)',lines[0]))
+          def evaluate(label):
+              log,seconds=execute(['./nanlm',str(root),'eval',fixture],f'{label}-prose-eval.log')
+              f=fields(log,'UNIFIED_EVAL')
+              return {'ce_nats':float(f['ce_nats']),'top1_accuracy':float(f['accuracy']),
+                      'bytes':int(f['bytes']),'elapsed_seconds':seconds}
+          _,init_seconds=execute(['./nanlm',str(root),'init'],'student-init.log')
+          assert root.stat().st_size==8388608
+          before_prose=evaluate('before')
+          previous_after=None
+          results=[]
+          record={
+            'schema':'nanlm-test.hw4-threeepochs-geometric.v1',
+            'source_route':manifest['source_route'],
+            'source_owner':manifest['source_owner'],
+            'hw4_release_sha256':'87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695',
+            'hw4_root_sha256':manifest['source_hw4_root_sha256'],
+            'hw4_sqlite_sha256':manifest['source_hw4_sqlite_sha256'],
+            'corpus_sha256':manifest['corpus_sha256'],
+            'full_corpus_bytes':manifest['corpus_bytes'],
+            'source_synsets':manifest['synsets'],
+            'source_senses':manifest['senses'],
+            'source_relations':manifest['relations'],
+            'source_synonyms':manifest['synonyms'],
+            'requested_epochs':3,
+            'completed_epochs':0,
+            'source_reference_immutable':True,
+            'bptt_attempted':0,
+            'method':'three independent full-corpus sequential scans and three accepted aggregate native rank-3 geometric-credit updates; no per-byte TRAIL or BPTT',
+            'prose_before':before_prose,
+            'model_init_seconds':init_seconds,
+            'epochs':results,
+          }
+          for epoch in range(1,4):
+              stdout,elapsed=execute(['./hw4-onepass',str(root),str(full)],f'epoch-{epoch}-train.log')
+              f=fields(stdout,'HW4_FULL_GEOMETRIC_PASS')
+              assert int(f['input_bytes'])==manifest['corpus_bytes']
+              assert int(f['transitions'])==manifest['corpus_bytes']-1
+              assert int(f['bptt_attempted'])==0 and int(f['aggregate_step_accepted'])==1
+              assert int(f['root_bytes'])==8388608 and root.stat().st_size==8388608
+              ce_b,ce_a=float(f['train_before_ce']),float(f['train_after_ce'])
+              acc_b,acc_a=float(f['train_before_accuracy']),float(f['train_after_accuracy'])
+              assert all(math.isfinite(x) for x in (ce_b,ce_a,acc_b,acc_a))
+              assert ce_a<ce_b,(epoch,ce_b,ce_a)
+              if previous_after is not None:
+                  assert abs(ce_b-previous_after)<5e-6,(epoch,'continuity',ce_b,previous_after)
+              previous_after=ce_a
+              prose=evaluate(f'epoch-{epoch}')
+              row={'epoch':epoch,'input_bytes':int(f['input_bytes']),
+                   'transitions':int(f['transitions']),
+                   'nonzero_byte_pairs':int(f['nonzero_pairs']),
+                   'train_before_ce':ce_b,'train_after_ce':ce_a,
+                   'train_before_accuracy':acc_b,'train_after_accuracy':acc_a,
+                   'gradient_max':float(f['gradient_max']),
+                   'step':float(f['step']),
+                   'aggregate_step_accepted':True,
+                   'training_seconds':elapsed,
+                   'prose_after':prose,
+                   'model_root_sha256':sha(root)}
+              results.append(row)
+              record['completed_epochs']=epoch
+              record['total_input_bytes_scanned']=epoch*manifest['corpus_bytes']
+              record['total_transitions_scored']=epoch*(manifest['corpus_bytes']-1)
+              record['final_model_root_sha256']=row['model_root_sha256']
+              record['total_training_seconds']=sum(r['training_seconds'] for r in results)
+              (state/'report.json').write_text(json.dumps(record,sort_keys=True,indent=2)+'\n')
+              print('HW4_THREEEPOCHS_EPOCH',json.dumps(row,sort_keys=True),flush=True)
+          assert record['completed_epochs']==3
+          assert record['total_input_bytes_scanned']==175024587
+          assert record['total_transitions_scored']==175024584
+          assert record['bptt_attempted']==0
+          print('HW4_THREEEPOCHS_FINAL',json.dumps(record,sort_keys=True),flush=True)
+          PY
+      - name: Upload student root and each epoch metrics; never upload copyrighted corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-threeepochs-student
+          path: |
+            hw4-threeepochs-state/
+            hw4-source.log
+          retention-days: 30
+          if-no-files-found: warn
