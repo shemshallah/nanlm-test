@@ -102,6 +102,10 @@ class TemporalExportTests(unittest.TestCase):
         self.assertEqual(global_change["delta_ticks"], 4)
         self.assertAlmostEqual(global_change["vector_delta_norm"], math.sqrt(2))
         self.assertAlmostEqual(global_change["tensor_delta_fro"], 3.)
+        self.assertEqual(global_change["vector_delta"], [-1., 1., 0.])
+        self.assertEqual(global_change["tensor_delta"], [1.] * 9)
+        self.assertEqual(global_change["vector_derivative"], [-.25, .25, 0.])
+        self.assertEqual(global_change["tensor_derivative"], [.25] * 9)
         self.assertAlmostEqual(global_change["vector_speed_per_tick"], math.sqrt(2) / 4)
         self.assertAlmostEqual(global_change["angular_change_rad"], math.pi / 2)
         self.assertAlmostEqual(global_change["angular_rate_rad_per_tick"], math.pi / 8)
@@ -148,6 +152,11 @@ class TemporalExportTests(unittest.TestCase):
         c = next(c for c in exp.delta_rows(frames) if c["level"] == "MIRROR")
         self.assertEqual(c["canonical_flux_delta"], 3.0)
         self.assertEqual(c["flux_rate_per_tick"], 1.5)
+        raw = subprocess.run([sys.executable, str(SCRIPT), str(self.path),
+                              "mirrors"], capture_output=True, text=True,
+                             check=True).stdout.strip().splitlines()
+        self.assertEqual(len(raw), 2)
+        self.assertEqual([json.loads(r)["canonical_flux"] for r in raw], [2.0, 5.0])
 
     def test_corrupted_frame_rejected_without_false_measurement(self):
         make_sidecar(self.path, [
@@ -195,6 +204,7 @@ class TemporalExportTests(unittest.TestCase):
         self.assertEqual(summary["last_nanclock"], 3)
         self.assertIn(",id,heads,", invoke("samples", "--format", "csv"))
         self.assertIn('"delta_ticks":2', invoke("deltas"))
+        self.assertIn("vector_delta", invoke("deltas", "--format", "csv"))
         self.assertEqual(len(invoke("frames", "--limit", "1").splitlines()), 1)
 
 
