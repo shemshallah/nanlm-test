@@ -1,0 +1,64 @@
+name: NaNLM full WordNet native ISA composition and hard-negative controls
+on:
+  push:
+    branches: ['experiment/native-semantic-grounding-20261109']
+    paths:
+      - 'tools/hw4_semantic_export.py'
+      - 'src/main.cpp'
+      - 'include/nanlm/semantic.hpp'
+      - '.github/workflows/hw4-semantic-full-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  full-semantic-graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile same-root native semantics and validate source exporter
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/hw4_semantic_export.py tools/hw4_reference_corpus.py
+          make nanlm test_semantic_bridge CXX=clang++
+          ./test_semantic_bridge
+      - name: Download and verify immutable exact HW4 WordNet snapshot
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-immutable.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-immutable.tar.gz" | sha256sum -c -
+      - name: Convert complete exact WordNet noun synsets and generate disjoint proof queries
+        run: |
+          set -euo pipefail
+          python3 tools/hw4_semantic_export.py \
+            --archive "$RUNNER_TEMP/hw4-immutable.tar.gz" \
+            --output "$RUNNER_TEMP/semantic-export" \
+            --positive-and-negative-per-class 300 --seed 20261109 \
+            | tee semantic-source-log.txt
+          test "$(wc -l < "$RUNNER_TEMP/semantic-export/semantic-queries.tsv")" -eq 600
+      - name: Verify 600 native 3-5-hop positive and unreachable negative queries
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/native-semantic-root"
+          cp "$RUNNER_TEMP/semantic-export/wordnet-noun.wordnet.tsv" "$root.wordnet.tsv"
+          ./nanlm "$root" init
+          ./nanlm "$root" semantic-project-wordnet | tee semantic-projection-log.txt
+          grep -F "projected=" semantic-projection-log.txt
+          sha256sum "$root" | cut -d' ' -f1 > "$RUNNER_TEMP/before.sha"
+          ./nanlm "$root" semantic-batch "$RUNNER_TEMP/semantic-export/semantic-queries.tsv" | tee semantic-batch-log.txt
+          grep -F 'queries=600 correct=600 accuracy=1' semantic-batch-log.txt
+          grep -F 'mismatches=0' semantic-batch-log.txt
+          test "$(sha256sum "$root" | cut -d' ' -f1)" = "$(cat "$RUNNER_TEMP/before.sha")"
+      - name: Preserve reproducibility reports, not full training corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-semantic-wordnet-audit-${{ github.run_id }}
+          path: |
+            semantic-source-log.txt
+            semantic-batch-log.txt
+            semantic-projection-log.txt
+          retention-days: 30
+          if-no-files-found: warn
