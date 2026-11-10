@@ -290,6 +290,28 @@ struct Eval{
   if(s.items!=n||!std::isfinite(s.nll))throw std::runtime_error("scoring coverage mismatch");
   return s;
  }
+ // Diagnostic only: same frozen native probabilities, three nonoverlapping
+ // support regimes. This must sum back to the ordinary aggregate score.
+ std::array<Scores,3> score_strata(const Config& c)const{
+  std::array<Scores,3> regimes{};
+  for(const auto& [ab,labels]:observed){
+   const unsigned a=ab/V,b=ab%V;
+   const auto p=distribution(a,b,c);
+   const auto best=unsigned(std::max_element(p.begin(),p.end())-p.begin());
+   const bool context_seen=bank.triple_context[ab]>0;
+   for(unsigned j=0;j<V;++j)if(labels[j]){
+    const unsigned group=!context_seen?2:(bank.get(a,b,j)>0?0:1);
+    auto& bucket=regimes[group];
+    bucket.items+=labels[j];
+    bucket.correct+=labels[j]*(best==j);
+    bucket.nll-=double(labels[j])*std::log(std::max(p[j],1.e-300));
+   }
+  }
+  uint64_t total=0;
+  for(const auto& r:regimes)total+=r.items;
+  if(total!=n)throw std::runtime_error("nonexclusive native stratum coverage");
+  return regimes;
+ }
  Scores score_base(int kind)const{
   Scores s{};
   for(const auto& [ab,labels]:observed){
@@ -311,6 +333,16 @@ static void output(const std::string& tag,const Config& c,const Scores& s){
   <<" delta="<<c.delta<<" kappa="<<c.kappa
   <<" ce_nats="<<(s.nll/double(s.items))
   <<" accuracy="<<(double(s.correct)/double(s.items))
+  <<" transitions="<<s.items<<" exact_model=HW5_train_only"
+  <<" bptt_attempted=0\n";
+}
+static void output_stratum(const char* name,const Config& c,const Scores& s){
+ const auto count=double(s.items);
+ std::cout<<std::setprecision(12)<<"HW5_CONTEXT_STRATUM"
+  <<" regime="<<name<<" beta="<<c.beta<<" lambda="<<c.lambda
+  <<" delta="<<c.delta<<" kappa="<<c.kappa
+  <<" ce_nats="<<(s.items?s.nll/count:0.)
+  <<" accuracy="<<(s.items?double(s.correct)/count:0.)
   <<" transitions="<<s.items<<" exact_model=HW5_train_only"
   <<" bptt_attempted=0\n";
 }
@@ -354,6 +386,10 @@ int main(int argc,char** argv){
     if(argc!=12)throw std::invalid_argument("fixed requires BETA LAMBDA DELTA KAPPA");
     const Config c{std::stod(argv[8]),std::stod(argv[9]),std::stod(argv[10]),std::stod(argv[11])};
     output("context_hybrid",c,e.score(c));
+    const auto by_support=e.score_strata(c);
+    output_stratum("seen_exact_triple",c,by_support[0]);
+    output_stratum("seen_context_unseen_continuation",c,by_support[1]);
+    output_stratum("unseen_context",c,by_support[2]);
    }else throw std::invalid_argument("unknown scoring mode");
   }else throw std::invalid_argument("unknown subcommand");
   return 0;
