@@ -1,0 +1,61 @@
+name: NaNLM pinned Gutenberg cross-author semantic transfer audit
+on:
+  push:
+    branches: ['experiment/joint-wave-semantic-credit-20261109']
+    paths:
+      - 'include/nanlm/joint_wave_semantics.hpp'
+      - 'include/nanlm/unified_wave.hpp'
+      - 'tools/joint_gutenberg_audit.cpp'
+      - 'tools/prepare_joint_gutenberg.py'
+      - 'tools/report_joint_gutenberg.py'
+      - '.github/workflows/joint-gutenberg-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: joint-gutenberg-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cross-author:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and prepare immutable public-domain sources
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/prepare_joint_gutenberg.py tools/report_joint_gutenberg.py
+          mkdir -p joint-gutenberg-corpus
+          python3 tools/prepare_joint_gutenberg.py joint-gutenberg-corpus | tee joint-gutenberg-sources.log
+      - name: Compile both native C++20 compilers under warnings-as-errors
+        run: |
+          set -euo pipefail
+          g++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tools/joint_gutenberg_audit.cpp -o joint_gutenberg_gcc
+          clang++ -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tools/joint_gutenberg_audit.cpp -o joint_gutenberg_clang
+      - name: Three paired train-order seeds, Alice train/dev and Dickens heldout
+        run: |
+          set -euo pipefail
+          ./joint_gutenberg_clang \
+            joint-gutenberg-corpus/train_alice.txt \
+            joint-gutenberg-corpus/dev_alice.txt \
+            joint-gutenberg-corpus/test_carol_early.txt \
+            joint-gutenberg-corpus/test_carol_late.txt \
+            3 | tee joint-gutenberg-results.log
+          python3 tools/report_joint_gutenberg.py \
+            joint-gutenberg-results.log \
+            joint-gutenberg-corpus/manifest.json \
+            joint-gutenberg-report.json | tee joint-gutenberg-aggregate.log
+          grep -F 'JOINT_GUTENBERG_REPORT PASS' joint-gutenberg-aggregate.log
+      - name: Archive immutable provenance and numerical receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-joint-gutenberg-${{ github.run_id }}
+          path: |
+            joint-gutenberg-sources.log
+            joint-gutenberg-results.log
+            joint-gutenberg-aggregate.log
+            joint-gutenberg-report.json
+            joint-gutenberg-corpus/manifest.json
+          retention-days: 30
+          if-no-files-found: warn

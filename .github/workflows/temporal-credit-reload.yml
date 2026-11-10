@@ -1,0 +1,40 @@
+name: HW0 temporal-credit reload invariance
+on:
+  push:
+    branches: ['experiment/joint-wave-semantic-credit-20261109']
+    paths:
+      - 'include/nanlm/unified_wave.hpp'
+      - 'include/nanlm/universe.hpp'
+      - 'tests/test_temporal_credit.cpp'
+      - '.github/workflows/temporal-credit-reload.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: temporal-credit-reload-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile the real 48-step root reload regression
+        run: |
+          set -euo pipefail
+          ${{ matrix.compiler }} -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_temporal_credit.cpp -o temporal_credit_probe
+      - name: Compare in-memory and reopened physical-root predictions
+        run: |
+          set -euo pipefail
+          ./temporal_credit_probe 2>&1 | tee temporal-credit-reload.log
+          grep -F "PASS: 48-step causal eligibility credit" temporal-credit-reload.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: temporal-credit-${{ matrix.compiler }}
+          path: temporal-credit-reload.log
+          if-no-files-found: ignore

@@ -1,6 +1,9 @@
 #include "nanlm/unified_wave.hpp"
 #include <cmath>
 #include <cstring>
+#include <algorithm>
+#include <array>
+#include <vector>
 #include <filesystem>
 #include <iostream>
 #include <iomanip>
@@ -24,6 +27,40 @@ int main(){
   ("nanlm-temporal-credit-"+std::to_string(::getpid()))).string();
  try{
   double saved=0;
+  // Probe individual readout families to diagnose root reload invariance.
+  const std::array<unsigned,12> ablations{{
+   0u, UnifiedWaveLanguage::ABLATE_LONG_CONTEXT,
+   UnifiedWaveLanguage::ABLATE_WAVE,
+   UnifiedWaveLanguage::ABLATE_ATTENTION,
+   UnifiedWaveLanguage::ABLATE_SPECTRAL,
+   UnifiedWaveLanguage::ABLATE_CYCLE,
+   UnifiedWaveLanguage::ABLATE_INVERSE_EVIDENCE,
+   UnifiedWaveLanguage::ABLATE_HYPEREDGE,
+   UnifiedWaveLanguage::ABLATE_BPTT_READOUT,
+   UnifiedWaveLanguage::ABLATE_TRIAD,
+   UnifiedWaveLanguage::ABLATE_EPISODIC,
+   UnifiedWaveLanguage::ABLATE_ALL
+  }};
+  std::array<double,12> before_ablations{};
+  std::array<double,4> before_modes{};
+  std::array<float,3> before_registers{};
+  size_t before_events=0,before_episodes=0;
+  std::vector<uint8_t> head_bytes,pair_bytes;
+  std::array<double,UnifiedWaveLanguage::N> before_wave{},before_inverse{};
+  std::array<double,TriadWaveFormer::GROUPS> before_routing{};
+  auto first_differences=[](const std::vector<uint8_t>& saved,
+                            const void* now,size_t size,const char* label){
+   const auto* bytes=reinterpret_cast<const uint8_t*>(now);
+   size_t changes=0;
+   for(size_t i=0;i<size;++i)if(saved.at(i)!=bytes[i]){
+    if(changes<10)
+     std::cerr<<"TEMPORAL_RELOAD_BYTE "<<label
+              <<" offset="<<i<<" before="<<unsigned(saved[i])
+              <<" after="<<unsigned(bytes[i])<<"\n";
+    ++changes;
+   }
+   std::cerr<<"TEMPORAL_RELOAD_RAW "<<label<<" changed_bytes="<<changes<<"\n";
+  };
   const std::string context="A"+std::string(40,'b');
   {
    Universe u(path);
@@ -82,6 +119,12 @@ int main(){
    // the same derived operator before the in-process measurement so
    // restart/reload compares identical model states.
    m.refresh_spectrum();
+   // This probe was built BEFORE the two new W/Y edges were asserted.
+   // Refreshing derived spectral/arc caches does not retroactively advance
+   // causal activations. Replay the exact context under the current graph
+   // so both in-process and reopened predictions share the same operator.
+   probe.reset();
+   for(unsigned char b:context)m.observe(probe,b);
    const auto signed_full=m.predict(probe);
    const auto signed_off=m.predict(
       probe,UnifiedWaveLanguage::ABLATE_LONG_CONTEXT);
@@ -98,6 +141,17 @@ int main(){
    check(u.root().h[255].data[UnifiedWaveLanguage::LONG_GAIN_OFFSET]==0,
          "sign-consensus probe modified network ingress");
    saved=m.predict(probe).p['Z'];
+   for(size_t i=0;i<ablations.size();++i)
+    before_ablations[i]=m.predict(probe,ablations[i]).p['Z'];
+   before_modes=m.spectral().eigenvalues;
+   before_registers={gain(u,'Z'),gain(u,'W'),gain(u,'Y')};
+   before_events=u.event_count();before_episodes=m.episodic_records();
+   before_wave=probe.wave;before_inverse=probe.inverse_wave;
+   before_routing=probe.workspace.routing;
+   const auto* heads=reinterpret_cast<const uint8_t*>(&u.root().h);
+   head_bytes.assign(heads,heads+sizeof(u.root().h));
+   const auto* pairs=reinterpret_cast<const uint8_t*>(&u.root().p);
+   pair_bytes.assign(pairs,pairs+sizeof(u.root().p));
    u.sync();
   }
   {
@@ -108,7 +162,51 @@ int main(){
    const double restored=m.predict(probe).p['Z'];
    std::cerr<<"TEMPORAL_RELOAD_DIAGNOSTIC saved="<<std::setprecision(17)<<saved
             <<" restored="<<restored<<" difference="<<restored-saved<<"\n";
-   check(std::fabs(restored-saved)<1e-7,
+   std::cerr<<"TEMPORAL_RELOAD_COMPONENTS"
+            <<" events_before="<<before_events
+            <<" events_after="<<u.event_count()
+            <<" episodes_before="<<before_episodes
+            <<" episodes_after="<<m.episodic_records()
+            <<" gainZ_before="<<before_registers[0]
+            <<" gainZ_after="<<gain(u,'Z')
+            <<" gainW_before="<<before_registers[1]
+            <<" gainW_after="<<gain(u,'W')
+            <<" gainY_before="<<before_registers[2]
+            <<" gainY_after="<<gain(u,'Y')<<"\n";
+   for(size_t i=0;i<ablations.size();++i)
+    std::cerr<<"TEMPORAL_RELOAD_ABLATION mask="<<ablations[i]
+             <<" before="<<before_ablations[i]
+             <<" after="<<m.predict(probe,ablations[i]).p['Z']<<"\n";
+   first_differences(head_bytes,&u.root().h,sizeof(u.root().h),"heads");
+   first_differences(pair_bytes,&u.root().p,sizeof(u.root().p),"pairs");
+   double wave_diff=0,inverse_diff=0,routing_diff=0;
+   size_t wave_changed=0,inverse_changed=0,routing_changed=0;
+   for(size_t i=0;i<before_wave.size();++i){
+    const double w=std::abs(before_wave[i]-probe.wave[i]);
+    const double inv=std::abs(before_inverse[i]-probe.inverse_wave[i]);
+    wave_diff=std::max(wave_diff,w);inverse_diff=std::max(inverse_diff,inv);
+    wave_changed+=w>1e-14;inverse_changed+=inv>1e-14;
+   }
+   for(size_t i=0;i<before_routing.size();++i){
+    const double difference=std::abs(before_routing[i]-probe.workspace.routing[i]);
+    routing_diff=std::max(routing_diff,difference);
+    routing_changed+=difference>1e-14;
+   }
+   std::cerr<<"TEMPORAL_RELOAD_STATE wave_max="<<wave_diff
+            <<" wave_changed="<<wave_changed
+            <<" inverse_max="<<inverse_diff
+            <<" inverse_changed="<<inverse_changed
+            <<" routing_max="<<routing_diff
+            <<" routing_changed="<<routing_changed<<"\n";
+   for(size_t i=0;i<before_modes.size();++i)
+    std::cerr<<"TEMPORAL_RELOAD_SPECTRAL mode="<<i
+             <<" before="<<before_modes[i]
+             <<" after="<<m.spectral().eigenvalues[i]<<"\n";
+   for(size_t i=0;i<ablations.size();++i)
+    check(std::abs(before_ablations[i]-
+                   m.predict(probe,ablations[i]).p['Z'])<1e-12,
+          "individual wave ablation changed after root reload");
+   check(std::fabs(restored-saved)<1e-12,
          "48-step causal credit changed after root reload");
   }
   for(const auto& ext:{"",".so3",".overlay",".overlay.tmp"})

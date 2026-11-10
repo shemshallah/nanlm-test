@@ -1,0 +1,40 @@
+name: NaNLM joint UnifiedWave semantic gradients
+on:
+  push:
+    branches: ['experiment/joint-wave-semantic-credit-20261109']
+    paths:
+      - 'include/nanlm/joint_wave_semantics.hpp'
+      - 'include/nanlm/unified_wave.hpp'
+      - 'tests/test_joint_wave_semantics.cpp'
+      - '.github/workflows/native-joint-wave-semantics.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-joint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: ['g++', 'clang++']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build joint UnifiedWave / role / exact synset gradient probe
+        run: |
+          set -euo pipefail
+          ${{ matrix.cxx }} -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_joint_wave_semantics.cpp -o test_joint_wave_semantics
+      - name: Run heldout and matched ablation controls
+        run: |
+          set -euo pipefail
+          ./test_joint_wave_semantics | tee joint-wave-results.txt
+          grep -F 'JOINT_WAVE_NATIVE PASS' joint-wave-results.txt
+          grep -F 'gradient_through_recurrence=1' joint-wave-results.txt
+      - name: Archive evaluation receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-joint-wave-${{ matrix.cxx }}-${{ github.run_id }}
+          path: joint-wave-results.txt
+          retention-days: 30
+          if-no-files-found: warn

@@ -974,6 +974,73 @@ public:
   }
   return objective/double(count);
  }
+ // Exact reverse recurrence credit from an EXTERNAL differentiable loss on
+ // the terminal wave state (e.g. contextual semantic CE). This does not
+ // differentiate attention, QKV, or the byte teacher; the recurrent wave
+ // transition itself is exact with its current fixed spectrum/evidence.
+ // Read-only: callers must separately validate and commit any register step.
+ BpttGradient semantic_wave_gradient(
+     const std::deque<State>& states,
+     const std::deque<uint8_t>& symbols,
+     const WaveAdjoint& terminal)const{
+  if(symbols.empty()||symbols.size()>BPTT_STEPS||
+     states.size()!=symbols.size()+1)
+   throw std::invalid_argument("invalid semantic truncated wave tape");
+  for(double x:terminal.x)if(!std::isfinite(x))
+   throw std::invalid_argument("nonfinite semantic wave adjoint");
+  for(double x:terminal.y)if(!std::isfinite(x))
+   throw std::invalid_argument("nonfinite inverse semantic adjoint");
+  for(double x:terminal.xp)if(!std::isfinite(x))
+   throw std::invalid_argument("nonfinite previous wave adjoint");
+  for(double x:terminal.yp)if(!std::isfinite(x))
+   throw std::invalid_argument("nonfinite previous inverse adjoint");
+  BpttGradient result{};
+  result.steps=symbols.size();
+  WaveAdjoint adj=terminal;
+  std::array<double,N> oscillator{},frequency_slope{};
+  for(size_t i=0;i<N;++i){
+   double modal=0;
+   for(size_t m=0;m<MODES;++m)
+    modal+=eigen_.eigenvalues[m]*eigen_.vectors[m][i]*eigen_.vectors[m][i];
+   const double theta=omega_+0.1*std::tanh(modal)+
+                      recurrent_frequency(static_cast<uint8_t>(i));
+   oscillator[i]=2.0*damping_*std::cos(theta);
+   frequency_slope[i]=-2.0*damping_*std::sin(theta);
+  }
+  for(size_t step=symbols.size();step>0;--step){
+   const auto& after=states[step];
+   const auto& before=states[step-1];
+   const uint8_t byte=symbols[step-1];
+   if(byte>=N||after.tick!=before.tick+1||after.length==0||
+      after.history[after.length-1]!=byte)
+    throw std::invalid_argument("inconsistent semantic causal tape");
+   WaveAdjoint prev{};
+   for(size_t i=0;i<N;++i){
+    // The updated old_wave holds the previous wave exactly.
+    prev.x[i]+=adj.xp[i];prev.y[i]+=adj.yp[i];
+    const double dx=std::fabs(after.wave[i])<3.0?adj.x[i]:0.;
+    const double dy=std::fabs(after.inverse_wave[i])<3.0?adj.y[i]:0.;
+    prev.x[i]+=oscillator[i]*dx;
+    prev.y[i]+=oscillator[i]*dy;
+    prev.xp[i]-=damping_*damping_*dx;
+    prev.yp[i]-=damping_*damping_*dy;
+    if(i==byte)result.input[i]+=dx+dy;
+    result.frequency[i]+=frequency_slope[i]*
+                         (dx*before.wave[i]+dy*before.inverse_wave[i]);
+    for(const auto& arc:incoming_[i])
+     prev.x[arc.head]+=0.08*arc.weight*dx/in_degree_[i];
+    for(const auto& arc:outgoing_[i])
+     prev.y[arc.head]+=0.08*arc.weight*dy/out_degree_[i];
+   }
+   adj=prev;
+  }
+  for(double v:result.input)result.norm+=v*v;
+  for(double v:result.frequency)result.norm+=v*v;
+  result.norm=std::sqrt(result.norm);
+  if(!std::isfinite(result.norm))
+   throw std::runtime_error("nonfinite semantic recurrence gradient");
+  return result;
+ }
  BpttGradient bptt_gradient(const std::deque<State>& states,
                            const std::deque<uint8_t>& symbols,
                            uint8_t label,bool sequence=false){
