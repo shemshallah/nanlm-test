@@ -1,0 +1,44 @@
+name: Native NaNLM semantic grounding and compositional inference
+on:
+  push:
+    branches: ['experiment/native-semantic-grounding-20261109']
+    paths:
+      - 'include/nanlm/semantic.hpp'
+      - 'include/nanlm/wordnet.hpp'
+      - 'tests/test_semantic_bridge.cpp'
+      - 'src/main.cpp'
+      - 'Makefile'
+      - '.github/workflows/native-semantic-grounding.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  semantic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        cxx: ['clang++', 'g++']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native model and semantic tests
+        run: |
+          set -euo pipefail
+          make nanlm test_wordnet test_semantic_bridge CXX=${{ matrix.cxx }}
+          ./test_wordnet
+          ./test_semantic_bridge
+      - name: Check same-root semantic CLI, inference and abstention
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/sem-root"
+          ./nanlm "$root" import-wordnet tests/fixtures/data.noun
+          printf 'Entity can exist.\nObject cannot exist.\nArtifact can exist.\n' > "$RUNNER_TEMP/claims.txt"
+          ./nanlm "$root" semantic-train "$RUNNER_TEMP/claims.txt" fixture-CI
+          ./nanlm "$root" semantic-ask ability artifact exist | tee "$RUNNER_TEMP/known.txt"
+          grep -F 'state=1' "$RUNNER_TEMP/known.txt"
+          ./nanlm "$root" semantic-ask isa artifact entity | tee "$RUNNER_TEMP/isa.txt"
+          grep -F 'state=1' "$RUNNER_TEMP/isa.txt"
+          ./nanlm "$root" semantic-ask ability artifact unknown | tee "$RUNNER_TEMP/miss.txt"
+          grep -F 'state=0' "$RUNNER_TEMP/miss.txt"
+          ./nanlm "$root" semantic-ask isa entity artifact | tee "$RUNNER_TEMP/reverse.txt"
+          grep -F 'state=0' "$RUNNER_TEMP/reverse.txt"
