@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -16,7 +18,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -80,6 +82,55 @@ int main(int argc,char** argv){
             <<" projection_accepted="<<mind.projection_accepted()
             <<" adapter_accepted="<<mind.adapter_accepted()
             <<" frequency_training_enabled="<<int(mind.frequency_learning_enabled())<<"\n";
+  }else if(operation=="train-chunk"){
+   // Resumable, byte-counted WordNet experiment on the SAME root.
+   // The base model remains the existing geometric-credit trainer.
+   if(argc!=7)
+    throw std::invalid_argument(
+      "train-chunk requires CORPUS OFFSET LENGTH ABSOLUTE_STEP");
+   const uint64_t start=std::stoull(argv[4]);
+   const uint64_t length=std::stoull(argv[5]);
+   const uint64_t step=std::stoull(argv[6]);
+   if(length==0||length>65536||step>UINT64_MAX-length-2)
+    throw std::invalid_argument("invalid bounded WordNet training extent");
+   std::ifstream input(argv[3],std::ios::binary);
+   if(!input)throw std::runtime_error("WordNet corpus unavailable");
+   input.seekg(0,std::ios::end);
+   const auto end=input.tellg();
+   if(end<0||uint64_t(end)<start||uint64_t(end)-start<length)
+    throw std::out_of_range("training extent exceeds WordNet corpus");
+   std::string prefix;
+   const uint64_t prefix_start=start>64?start-64:0;
+   if(start>0){
+    const size_t warmup=static_cast<size_t>(start-prefix_start);
+    prefix.resize(warmup);
+    input.seekg(static_cast<std::streamoff>(prefix_start));
+    if(!input.read(prefix.data(),static_cast<std::streamsize>(warmup)))
+     throw std::runtime_error("WordNet warmup read failed");
+   }
+   std::string sample(static_cast<size_t>(length),'\0');
+   input.seekg(static_cast<std::streamoff>(start));
+   if(!input.read(sample.data(),static_cast<std::streamsize>(length)))
+    throw std::runtime_error("WordNet chunk read failed");
+   if(sample.find(static_cast<char>(255))!=std::string::npos)
+    throw std::invalid_argument("WordNet contains reserved 0xFF");
+   UnifiedWaveLanguage mind(universe);
+   if(mind.bptt_enabled())throw std::logic_error("WordNet must use geometric credits");
+   std::istringstream portion(sample);
+   const auto result=mind.train(portion,1,prefix,step);
+   universe.sync();
+   std::cout<<std::setprecision(10)
+            <<"WORDNET_CHUNK corpus_offset="<<start
+            <<" bytes="<<length
+            <<" global_step="<<step
+            <<" scored="<<result.tokens
+            <<" online_ce="<<result.ce()
+            <<" online_accuracy="<<result.accuracy()
+            <<" temporal_credit_accepted="<<mind.temporal_credit_accepted()
+            <<" bptt_attempted="<<mind.bptt_attempted()
+            <<" events="<<universe.event_count()
+            <<" hyperedges="<<universe.hyperedge_count()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
   }else if(operation=="memorize"){
    if(argc!=5)throw std::invalid_argument("memorize requires TSV_FILE SOURCE");
    std::ifstream file(argv[3],std::ios::binary);

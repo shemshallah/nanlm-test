@@ -13,6 +13,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace nanlm {
@@ -1426,8 +1427,18 @@ public:
   }
   return result;
  }
- Metrics train(std::istream& corpus,uint64_t initial_time=1){
+ Metrics train(std::istream& corpus,uint64_t initial_time=1,
+               std::string_view warmup={},uint64_t global_step=0){
   State state{};
+  // Resume the recurrent context from up to 64 previous corpus bytes,
+  // without training twice on those bytes or creating a second model.
+  if(warmup.size()>WINDOW)
+   throw std::invalid_argument("WordNet warmup exceeds causal window");
+  for(unsigned char ch:warmup){
+   if(ch==255)state.reset();
+   else observe(state,ch);
+  }
+  if(global_step)trained_=global_step;
   // Default local/geometric learning does not retain recurrent tape states.
   std::deque<State> tape_states{};
   std::deque<uint8_t> tape_inputs{};
