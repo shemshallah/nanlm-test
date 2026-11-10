@@ -75,3 +75,37 @@ The numerical stream is information-losing and its lexical routing is hashed;
 there is no mathematically justified unique inverse from a 3-vector to words.
 For real language, maintain a separate evidence-backed vocabulary/provenance
 index and label inferred relationships as inferences, not observations.
+
+## Source-disjoint numerical-to-lexical retrieval probe
+
+`tools/sensor_temporal_concept_probe.py` is a separate *experiment* that tries
+retrieval (not generative decoding) from verified numeric changes alone:
+
+```sh
+python3 tools/sensor_temporal_concept_probe.py snapshot.sensor.tsv.slices \
+    --journal snapshot.sensor.tsv
+```
+
+For each source-journal event with a verified adjacent before/after frame, it
+computes which sparse head channels gained support/refute charge **beyond**
+the default 0.97 per-tick decay. Newly observed heads are marked present, not
+interpreted as a missing zero measurement. It forms a sparse head-ID signature,
+indexes signatures with their *training* journal concept labels and searches
+for the nearest label by Jaccard similarity. Test-event source labels are
+withheld from indexing and reintroduced only to score correctness. Predictions
+with weak similarity or ambiguous ties **abstain**. The output reports eligible
+known-label events, coverage, correctness, refutation-polarity recovery and a
+most-frequent-training-concept baseline. Never report only accuracy among
+non-abstentions or infer unknown concept names.
+
+The source-disjoint test tests **repeated known facts under new sources**;
+it cannot demonstrate comprehension of previously unseen words or concepts.
+The experiment assumes a leak coefficient of 0.97, no dropped intermediary
+frames, and one assertion per NaNclock ingest. The stored three-vectors and
+head IDs remain a lossy hash-routed representation; their relationship to
+words is acquired by supervision, not mathematical inversion.
+
+The next meaningful advance would add an unsupervised concept cluster index,
+then a supervised calibrated retriever tested on held-out source/claim splits,
+compare these representations to frozen static snapshots, and only then
+incorporate them as optional geometric credit signals into the model.
