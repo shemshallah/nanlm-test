@@ -1,0 +1,59 @@
+name: HW5:0 Gutenberg 20-epoch geometric-credit transfer from WordNet-103
+on:
+  push:
+    branches: ['experiment/hw5-gutenberg-transfer-20261109']
+    paths:
+      - 'tools/hw5_geometric_native.cpp'
+      - 'tools/hw5_transfer_experiment.py'
+      - 'Makefile'
+      - '.github/workflows/hw5-gutenberg-transfer.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  gutenberg-transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile byte-transition geometric learner and report script
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/hw5_transfer_experiment.py
+          make hw5-onepass CXX=clang++
+      - name: Fetch immutable 20,597,424-byte Gutenberg HW5 reference
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw5-gutenberg-c256-g1/hw5-gutenberg-c256-g1.tar.gz \
+            --output "$RUNNER_TEMP/hw5-reference.tar.gz"
+          echo "906a9030a11a67cc2635a6700344826d4c924e49596e57949a969cf78e1a7a18  $RUNNER_TEMP/hw5-reference.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/hw5-reference.tar.gz" -C "$RUNNER_TEMP"
+          test -s "$RUNNER_TEMP/hw5-gutenberg-reference/generation-00000001/train.txt"
+      - name: Restore exact 103-epoch HW4 student checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: hw4-hundredepochs-student
+          run-id: 42741208752
+          github-token: ${{ github.token }}
+          path: hw4-base-artifact
+      - name: Train 20 Gutenberg epochs and evaluate book-held-out dev/test
+        run: |
+          set -euo pipefail
+          test -f hw4-base-artifact/hw4-hundredepochs-state/learner-root
+          python3 tools/hw5_transfer_experiment.py \
+            --store "$RUNNER_TEMP/hw5-gutenberg-reference" \
+            --previous hw4-base-artifact/hw4-hundredepochs-state/learner-root \
+            --output hw5-transfer-state \
+            --epochs 20 | tee hw5-transfer-run.log
+      - name: Preserve learner root, progress, controls and validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw5-gutenberg-transfer-from-wordnet103
+          path: |
+            hw5-transfer-state/
+            hw5-transfer-run.log
+          retention-days: 30
+          if-no-files-found: warn
