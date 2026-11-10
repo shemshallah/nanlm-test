@@ -7,9 +7,12 @@ on:
       - 'tests/test_sensor_temporal_aggregate.py'
       - 'tests/test_sensor_temporal_concept_probe.py'
       - 'tests/test_sensor_temporal_compositional_probe.py'
+      - 'tests/test_sensor_temporal_wave_forecast.py'
       - 'tools/sensor_temporal_aggregate.py'
       - 'tools/sensor_temporal_concept_probe.py'
       - 'tools/sensor_temporal_compositional_probe.py'
+      - 'tools/sensor_temporal_wave_forecast.py'
+      - 'docs/SENSOR_WAVE_PREDICTION_AUDIT.md'
       - 'docs/SENSOR_COMPOSITION_ABLATION.md'
       - 'docs/SENSOR_TEMPORAL_CONCEPT_BRIDGE.md'
       - '.github/workflows/sensor-temporal-export.yml'
@@ -42,7 +45,7 @@ jobs:
             src/sensor_resident.cpp -o sensor-resident
           SNAP=$(mktemp /tmp/nanlm-temporal-XXXXXX)
           rm -f "$SNAP"
-          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices" "$SNAP.probe" "$SNAP.probe.tmp" "$SNAP.probe.slices" "$SNAP.compose" "$SNAP.compose.tmp" "$SNAP.compose.slices"' EXIT
+          trap 'rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices" "$SNAP.probe" "$SNAP.probe.tmp" "$SNAP.probe.slices" "$SNAP.compose" "$SNAP.compose.tmp" "$SNAP.compose.slices" "$SNAP.wave" "$SNAP.wave.tmp" "$SNAP.wave.slices"' EXIT
           printf 'INGEST\tsrc_a\t+\tpenguin\tISA\tbird\nINGEST\tsrc_b\t+\tbird\tISA\tanimal\nINGEST\tsrc_c\t-\tpenguin\tISA\tanimal\nTICK\nMEASURE\nTIMELINE\t8\nQUIT\n' | ./sensor-resident "$SNAP" | tee native-resident.log
           python3 tools/sensor_temporal_export.py "$SNAP.slices" summary | tee temporal-summary.jsonl
           python3 tools/sensor_temporal_export.py "$SNAP.slices" frames | tee temporal-frames.jsonl
@@ -79,6 +82,18 @@ jobs:
             --journal "$SNAP.compose" --training-events 6 | tee temporal-composition.json
           python3 -c 'import json; r=json.load(open("temporal-composition.json")); assert r["candidate_product"]==18,r; assert r["test_events"]==6,r; assert r["temporal_exact"]==6,r; assert r["static_exact"]<6,r; assert r["shuffled_exact"]<6,r; assert r["abstentions"]==0,r; print("PASS: native unseen-triple recovery beats static and time-shuffle controls")'
           test "$(stat -c%s "$SNAP.compose.slices")" = 8388608
+          {
+            printf 'INGEST\twave_a\t+\tpenguin\tISA\tbird\n'
+            printf 'INGEST\twave_b\t+\tbird\tISA\tanimal\n'
+            printf 'INGEST\twave_c\t-\tpenguin\tISA\tanimal\n'
+            for i in $(seq 1 55); do printf 'TICK\n'; done
+            printf 'QUIT\n'
+          } | ./sensor-resident "$SNAP.wave" > native-wave.log
+          ! grep -q '^ERROR' native-wave.log
+          python3 tools/sensor_temporal_wave_forecast.py "$SNAP.wave.slices" \
+            --level GLOBAL --id 255 --min-ticks 32 --holdout-ticks 10 | tee temporal-wave.json
+          python3 -c 'import json; r=json.load(open("temporal-wave.json")); assert r["status"]=="evaluated",r; assert r["retained_distinct_ticks"]>=50,r; assert not r["oscillatory_predictive_candidate"],r; assert r["holdout_rmse"]["known_leak"] <= r["holdout_rmse"]["persistence"],r; print("PASS: long native idle decay is NOT classified as a standing wave")'
+          test "$(stat -c%s "$SNAP.wave.slices")" = 8388608
           python3 -c 'import json; d=json.load(open("temporal-summary.jsonl")); assert d["valid_frames"] >= 6, d; assert d["rejected_candidate_frames"] == 0, d; assert d["same_tick_frame_pairs"] >= 1, d; assert d["last_nanclock"] >= 4, d; print("PASS: native C++ temporal frames decoded and analyzed")'
           grep -q '^MATRIX\|^SLICE' native-resident.log
           grep -q 'GLOBAL' temporal-deltas.csv
@@ -101,4 +116,6 @@ jobs:
             native-concept-probe.log
             native-composition.log
             temporal-composition.json
+            native-wave.log
+            temporal-wave.json
           if-no-files-found: ignore
