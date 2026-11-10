@@ -114,3 +114,7 @@ hw4-onepass: tools/hw4_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
 # corpus; commits only to an independent NaNLM 8MiB student root.
 hw4-trail: tools/hw4_trail_onepass_native.cpp $(wildcard include/nanlm/*.hpp)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
+
+# Native HW4 sampled two-rail + exact aggregate byte-pair CE hybrid.
+hw4-fasttrail: tools/hw4_fasttrail_native.cpp $(wildcard include/nanlm/*.hpp)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@

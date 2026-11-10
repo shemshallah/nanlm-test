@@ -1,0 +1,156 @@
+name: HW4 FastTRAIL native hybrid vs aggregate baseline
+on:
+  push:
+    branches: ['experiment/hw4-fasttrail-hybrid-20261109']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  native-hybrid-smoke-and-full-corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native learners under strict C++20 warnings
+        run: |
+          set -euo pipefail
+          make nanlm hw4-onepass hw4-trail hw4-fasttrail CXX=clang++
+          python3 -m unittest discover -s tests -p 'test_hw4_reference_corpus.py' -v
+      - name: Smoke test deterministic synthetic text
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p=Path(os.environ['RUNNER_TEMP'])/'smoke/corpus.txt'
+          pattern=b"the owl observes the forest. the forest shelters an owl. "
+          p.write_bytes((pattern*2000)[:65536])
+          assert p.stat().st_size==65536
+          PY
+          ./nanlm "$RUNNER_TEMP/smoke/student.root" init
+          test "$(stat -c '%s' "$RUNNER_TEMP/smoke/student.root")" -eq 8388608
+          ./hw4-fasttrail "$RUNNER_TEMP/smoke/student.root" "$RUNNER_TEMP/smoke/corpus.txt" 65536 16 0.25 | tee "$RUNNER_TEMP/smoke/hybrid.log"
+          grep -q '^HW4_FASTTRAIL input_bytes=65536 transition_updates=65535 ' "$RUNNER_TEMP/smoke/hybrid.log"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, math
+          s=(Path(os.environ['RUNNER_TEMP'])/'smoke/hybrid.log').read_text().strip()
+          v=dict(x.split('=',1) for x in s.split()[1:] if '=' in x)
+          assert 1000<int(v['sampled_trail_transitions'])<65535
+          assert math.isfinite(float(v['rail_fast_cosine']))
+          assert float(v['final_teacher_ce'])<=float(v['initial_teacher_ce'])+1e-10
+          assert int(v['bptt_attempted'])==0 and int(v['root_bytes'])==8388608
+          print('FASTTRAIL_SMOKE_PASS',v)
+          PY
+      - name: Restore exact pinned epoch-103 student
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prior" fasttrail-evidence
+          gh run download 42741208752 --repo shemshallah/nanlm-test --name hw4-hundredepochs-student --dir "$RUNNER_TEMP/prior"
+          root="$(find "$RUNNER_TEMP/prior" -type f -name learner-root | head -n1)"
+          test -n "$root" && test -f "$root"
+          test "$(stat -c '%s' "$root")" -eq 8388608
+          echo "e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1  $root" | sha256sum -c -
+          cp "$root" fasttrail-evidence/root-fast
+          cp "$root" fasttrail-evidence/root-hybrid
+          for label in 0 005 010 050; do cp "$root" "fasttrail-evidence/root-blend-$label"; done
+          echo e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1 > fasttrail-evidence/start.sha256
+      - name: Verify immutable WordNet reference and export complete corpus
+        run: |
+          set -euo pipefail
+          curl --fail --location --show-error --silent --retry 4 \
+            https://github.com/shemshallah/NaNROUTER/releases/download/hw4-wordnet31-full-g1/hw4-wordnet31-full-reference.tar.gz \
+            --output "$RUNNER_TEMP/hw4-release.tar.gz"
+          echo "87dbcdd2d209db95e8d15be68109ef3642e78ef540ea12ad71f3b04982876695  $RUNNER_TEMP/hw4-release.tar.gz" | sha256sum -c -
+          python3 tools/hw4_reference_corpus.py --archive "$RUNNER_TEMP/hw4-release.tar.gz" --output "$RUNNER_TEMP/hw4-complete" | tee fasttrail-evidence/source.log
+          echo "6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604  $RUNNER_TEMP/hw4-complete/all.txt" | sha256sum -c -
+          test "$(stat -c '%s' "$RUNNER_TEMP/hw4-complete/all.txt")" -eq 58341529
+      - name: Fast-only vs FastTRAIL from identical roots
+        run: |
+          set -euo pipefail
+          corpus="$RUNNER_TEMP/hw4-complete/all.txt"
+          /usr/bin/time -p -o fasttrail-evidence/fast.time ./hw4-onepass fasttrail-evidence/root-fast "$corpus" | tee fasttrail-evidence/fast.log
+          /usr/bin/time -p -o fasttrail-evidence/hybrid.time ./hw4-fasttrail fasttrail-evidence/root-hybrid "$corpus" 58341529 64 0.25 | tee fasttrail-evidence/hybrid.log
+          for item in '0:0' '005:0.05' '010:0.10' '050:0.50'; do
+            label="${item%%:*}"
+            weight="${item#*:}"
+            /usr/bin/time -p -o "fasttrail-evidence/blend-$label.time" ./hw4-fasttrail "fasttrail-evidence/root-blend-$label" "$corpus" 58341529 64 "$weight" | tee "fasttrail-evidence/blend-$label.log"
+            ./nanlm "fasttrail-evidence/root-blend-$label" eval tests/fixtures/unified_quality_heldout.txt | tee "fasttrail-evidence/blend-$label-prose.log"
+          done
+          ./nanlm fasttrail-evidence/root-fast eval tests/fixtures/unified_quality_heldout.txt | tee fasttrail-evidence/fast-prose.log
+          ./nanlm fasttrail-evidence/root-hybrid eval tests/fixtures/unified_quality_heldout.txt | tee fasttrail-evidence/hybrid-prose.log
+          sha256sum fasttrail-evidence/root-fast fasttrail-evidence/root-hybrid | tee fasttrail-evidence/roots.sha256
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,math
+          base=Path('fasttrail-evidence')
+          def fields(path,marker):
+              lines=[s for s in path.read_text().splitlines() if s.startswith(marker+' ')]
+              assert len(lines)==1,(path,lines)
+              return dict(part.split('=',1) for part in lines[0].split()[1:] if '=' in part)
+          f=fields(base/'fast.log','HW4_FULL_GEOMETRIC_PASS')
+          h=fields(base/'hybrid.log','HW4_FASTTRAIL')
+          pf=fields(base/'fast-prose.log','UNIFIED_EVAL')
+          ph=fields(base/'hybrid-prose.log','UNIFIED_EVAL')
+          assert int(h['input_bytes'])==58341529
+          assert int(h['transition_updates'])==58341528
+          assert 100000<int(h['sampled_trail_transitions'])<58341528
+          assert int(h['bptt_attempted'])==0 and int(h['root_bytes'])==8388608
+          assert float(h['final_teacher_ce'])<=float(h['initial_teacher_ce'])+1e-10
+          assert abs(float(f['train_before_ce'])-float(h['initial_teacher_ce']))<1e-7
+          assert all(math.isfinite(float(v)) for v in (
+              h['initial_teacher_ce'],h['final_teacher_ce'],
+              h['rail_fast_cosine'],pf['ce_nats'],ph['ce_nats']))
+          ablations=[]
+          for label,weight in [('0',0.0),('005',0.05),('010',0.10),('050',0.50)]:
+              a=fields(base/f'blend-{label}.log','HW4_FASTTRAIL')
+              ap=fields(base/f'blend-{label}-prose.log','UNIFIED_EVAL')
+              assert abs(float(a['initial_teacher_ce'])-float(h['initial_teacher_ce']))<1e-7
+              assert float(a['final_teacher_ce'])<=float(a['initial_teacher_ce'])+1e-10
+              assert int(a['bptt_attempted'])==0
+              if weight==0.0:
+                  assert int(a['sampled_trail_transitions'])==0
+                  assert int(a['rail_selected'])==0
+              else:
+                  assert int(a['sampled_trail_transitions'])>100000
+              ablations.append({
+                  'blend':weight,
+                  'train_ce':float(a['final_teacher_ce']),
+                  'prose_ce':float(ap['ce_nats']),
+                  'prose_accuracy':float(ap['accuracy']),
+                  'rail_selected':bool(int(a['rail_selected'])),
+                  'sampled_trail_transitions':int(a['sampled_trail_transitions']),
+                  'total_seconds':float(a['total_seconds'])
+              })
+          report={
+              'ablations':ablations,
+              'source_sha256':'6c29dc5027012a8ef6ec50404a7bdbb50be81a4d018c1f327665f826d8784604',
+              'start_root_sha256':'e10325f7f9ba71cd9e43419722f98b417e86e59ac74b15885478f831beca88f1',
+              'sampled_trail_transitions':int(h['sampled_trail_transitions']),
+              'fast_train_ce':float(f['train_after_ce']),
+              'hybrid_train_ce':float(h['final_teacher_ce']),
+              'fast_prose_ce':float(pf['ce_nats']),
+              'hybrid_prose_ce':float(ph['ce_nats']),
+              'fast_prose_accuracy':float(pf['accuracy']),
+              'hybrid_prose_accuracy':float(ph['accuracy']),
+              'hybrid_rail_selected':bool(int(h['rail_selected'])),
+              'hybrid_accepted':bool(int(h['accepted'])),
+              'hybrid_scan_seconds':float(h['scan_seconds']),
+              'hybrid_total_seconds':float(h['total_seconds']),
+              'scope':'same-root byte-pair training comparison, not evidence of semantic transfer'
+          }
+          (base/'comparison.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print('FASTTRAIL_COMPARE',json.dumps(report,sort_keys=True))
+          PY
+      - name: Preserve evidence and both final student roots, not WordNet corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hw4-fasttrail-comparison-${{ github.run_id }}
+          path: fasttrail-evidence/
+          retention-days: 30
+          if-no-files-found: warn
