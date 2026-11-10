@@ -188,7 +188,8 @@ int main(int argc,char** argv) {
      const auto control_dev=compare(control,joint,shuffled,dev);
      const auto before_early=compare(control,joint,shuffled,early);
      const auto before_late=compare(control,joint,shuffled,late);
-     const auto t_roles=test_roles(),t_senses=test_senses();
+     const auto t_roles=test_roles();
+     const auto t_senses=test_senses();
      const auto role_before=joint.evaluate_roles(t_roles);
      const auto sense_before=joint.evaluate_senses(t_senses,wn);
      const auto role_shuf=shuffled.evaluate_roles(t_roles);
