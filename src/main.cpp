@@ -19,7 +19,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT|semantic-batch EVAL_TSV|semantic-project-wordnet}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -418,6 +418,16 @@ int main(int argc,char** argv){
    bridge.save();
    std::cout<<"NANLM_SEMANTIC_TRAIN sentences="<<seen
             <<" exact_claims="<<bridge.claims()<<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="semantic-project-wordnet"){
+   if(argc!=3)throw std::invalid_argument("semantic-project-wordnet takes no extra arguments");
+   WordNetIndex index;index.load(path+".wordnet.tsv");
+   SemanticBridge bridge(universe,index);
+   const size_t projected=bridge.project_wordnet_to_existing_universe();
+   if(universe.event_count()!=projected)throw std::runtime_error("native semantic projection lost edges");
+   std::cout<<"NANLM_SEMANTIC_PROJECTION exact_synsets="<<index.concepts()
+            <<" typed_edges="<<index.relations()<<" projected="<<projected
+            <<" events="<<universe.event_count()
+            <<" root_bytes="<<ROOT_BYTES<<"\n";
   }else if(operation=="semantic-batch"){
    if(argc!=4)throw std::invalid_argument("semantic-batch EVALUATION_TSV");
    WordNetIndex index;index.load(path+".wordnet.tsv");
