@@ -1,0 +1,27 @@
+name: HW4 student temporal-credit checkpoint reload
+on:
+  push:
+    branches: [experiment/hw4-readonly-geometric-corpus-20261109]
+    paths:
+      - tests/test_temporal_credit.cpp
+      - .github/workflows/hw4-credit-reload.yml
+  pull_request:
+    paths:
+      - tests/test_temporal_credit.cpp
+      - .github/workflows/hw4-credit-reload.yml
+permissions:
+  contents: read
+jobs:
+  credit-reload:
+    strategy:
+      matrix:
+        compiler: [g++, clang++]
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Native 48-step credit after restart
+        run: |
+          ${{ matrix.compiler }} -Iinclude -O3 -std=c++20 -Wall -Wextra -Wpedantic -Werror \
+            tests/test_temporal_credit.cpp -o /tmp/test_temporal_credit
+          /tmp/test_temporal_credit
