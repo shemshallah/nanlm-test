@@ -260,6 +260,53 @@ int main(){
    catch(const std::runtime_error&){rejected=true;}
    require(rejected,"corrupted shared checkpoint was accepted");
   }
+  // A live root update is opt-in and guarded by separate byte DEV CE.
+  // Run this only after checking earlier fixed-base predictions, checkpoint
+  // restart and corruption handling.
+  const std::string byte_dev=
+   "cash was deposited at the bank.\n"
+   "water rushed past the bank.\n";
+  const auto sense_before=joint.sense_loss(
+   joint.state_for(senses.front().sentence),senses.front(),wn);
+  const double dev_before=joint.evaluate_bytes(byte_dev).ce();
+  const auto journal_before_step=universe.event_count();
+  const bool accepted_recurrent=joint.guarded_sense_recurrent_step(
+   universe,senses.front(),wn,byte_dev,0.01);
+  const double sense_after=joint.sense_loss(
+   joint.state_for(senses.front().sentence),senses.front(),wn);
+  const double dev_after=joint.evaluate_bytes(byte_dev).ce();
+  require(universe.event_count()==journal_before_step,
+          "guarded recurrent step modified symbolic journal");
+  if(accepted_recurrent){
+   require(sense_after+1e-10<sense_before,
+           "accepted recurrence update failed exact semantic replay");
+   require(dev_after<=dev_before+0.01000000001,
+           "accepted recurrence update violated byte dev guard");
+  }else {
+   require(std::abs(sense_after-sense_before)<1e-12&&
+           std::abs(dev_after-dev_before)<1e-12,
+           "rejected recurrence update did not restore original root");
+  }
+  bool blocked_regression=false;
+  try {
+   joint.guarded_role_recurrent_step(universe,test_roles.front(),byte_dev,-0.001);
+  }catch(const std::invalid_argument&){blocked_regression=true;}
+  require(blocked_regression,"invalid byte regression budget accepted");
+  universe.sync();
+  // Independent Universe reader proves a committed gain is stored in the
+  // original mapped root rather than in an out-of-band recurrent model.
+  {
+   Universe reread(root);
+   for(uint8_t c:std::string("d a loan")){
+    const auto& original=universe.root().h[c].data;
+    const auto& loaded=reread.root().h[c].data;
+    require(std::memcmp(original+UnifiedWaveLanguage::BPTT_INPUT_OFFSET,
+                        loaded+UnifiedWaveLanguage::BPTT_INPUT_OFFSET,4)==0&&
+            original[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET]==
+            loaded[UnifiedWaveLanguage::BPTT_MAGIC_OFFSET],
+            "recurrent input gain failed root persistence");
+   }
+  }
   std::cout<<"JOINT_WAVE_NATIVE PASS"
            <<" byte_heldout_ce="<<held_joint.ce()
            <<" byte_only_ce="<<held_byte.ce()
@@ -274,6 +321,11 @@ int main(){
            <<" sense_accuracy="<<sense_score.accuracy()
            <<" sense_shuffled_accuracy="<<sense_shuffle.accuracy()
            <<" byte_probability_shift="<<(p1-p0)
+           <<" recurrent_update_accepted="<<int(accepted_recurrent)
+           <<" recurrent_semantic_loss_before="<<sense_before
+           <<" recurrent_semantic_loss_after="<<sense_after
+           <<" recurrent_byte_dev_before="<<dev_before
+           <<" recurrent_byte_dev_after="<<dev_after
            <<" sense_recurrent_grad="<<sense_audit.first
            <<" sense_recurrent_fd="<<sense_audit.second
            <<" role_recurrent_grad="<<role_audit.first
