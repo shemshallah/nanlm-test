@@ -24,8 +24,8 @@
 
 using namespace nanlm;
 static_assert(std::endian::native == std::endian::little);
-constexpr unsigned V=255, HEADS=256, PAIRS=32640;
-constexpr size_t HEAD_BYTES=128, PAIR_BYTES=256, ROOT_BYTES=8388608;
+constexpr unsigned V=255, HW5_HEADS=256, HW5_PAIRS=32640;
+constexpr size_t HEAD_BYTES=128, PAIR_BYTES=256, HW5_ROOT_BYTES=8388608;
 constexpr unsigned CONTEXTS=V*V;
 using Row=std::array<uint32_t,V>;
 using Counts=std::array<Row,V>;
@@ -45,12 +45,12 @@ static void write32(std::vector<uint8_t>& root,size_t off,uint32_t x){
  std::memcpy(root.data()+off,&x,4);
 }
 static size_t pair_id(unsigned a,unsigned b){
- if(!(a<b&&b<HEADS))throw std::invalid_argument("invalid pair");
+ if(!(a<b&&b<HW5_HEADS))throw std::invalid_argument("invalid pair");
  return 1+a*(511-a)/2+(b-a-1);
 }
 static size_t base(unsigned a,unsigned b){
  const auto x=std::min(a,b), y=std::max(a,b);
- return HEADS*HEAD_BYTES+(pair_id(x,y)-1)*PAIR_BYTES;
+ return HW5_HEADS*HEAD_BYTES+(pair_id(x,y)-1)*PAIR_BYTES;
 }
 static uint32_t pair_read(const std::vector<uint8_t>& root,
                           unsigned a,unsigned b,unsigned lane){
@@ -95,7 +95,7 @@ static uint64_t visit(const std::string& file,const std::vector<uint64_t>& sizes
  return total;
 }
 struct Bank{
- std::vector<uint8_t> root=std::vector<uint8_t>(ROOT_BYTES);
+ std::vector<uint8_t> root=std::vector<uint8_t>(HW5_ROOT_BYTES);
  TripleMap triple;
  Counts adjacent{},skip{};
  std::array<uint64_t,V> context{},out{},in{},start{},end{};
@@ -134,7 +134,7 @@ struct Bank{
  void save(const std::string& rootpath,const std::string& triplepath)const{
   std::ofstream r(rootpath,std::ios::binary|std::ios::trunc);
   if(!r)throw std::runtime_error("cannot write training projection");
-  r.write(reinterpret_cast<const char*>(root.data()),ROOT_BYTES);
+  r.write(reinterpret_cast<const char*>(root.data()),HW5_ROOT_BYTES);
   if(!r)throw std::runtime_error("failed training projection");
   std::vector<std::pair<uint32_t,uint32_t>> sorted(triple.begin(),triple.end());
   std::sort(sorted.begin(),sorted.end());
@@ -152,8 +152,8 @@ struct Bank{
  void load(const std::string& rootpath,const std::string& triplepath){
   std::ifstream r(rootpath,std::ios::binary);
   if(!r)throw std::runtime_error("missing training projection");
-  r.read(reinterpret_cast<char*>(root.data()),ROOT_BYTES);
-  if(static_cast<size_t>(r.gcount())!=ROOT_BYTES||r.peek()!=EOF)
+  r.read(reinterpret_cast<char*>(root.data()),HW5_ROOT_BYTES);
+  if(static_cast<size_t>(r.gcount())!=HW5_ROOT_BYTES||r.peek()!=EOF)
    throw std::runtime_error("wrong training projection size");
   for(unsigned a=0;a<V;++a){
    if(read32(root,a*HEAD_BYTES)!=a)throw std::runtime_error("wrong canonical head");
@@ -332,7 +332,7 @@ int main(int argc,char** argv){
      <<" books="<<bank.books<<" pairs="<<occupied
      <<" distinct_triples="<<bank.triple.size()
      <<" adjacent="<<bank.transitions<<" lag2="<<bank.lag2
-     <<" root_bytes="<<ROOT_BYTES<<" gateway_head=255\n";
+     <<" root_bytes="<<HW5_ROOT_BYTES<<" gateway_head=255\n";
   }else if(mode=="score"){
    if(argc<8)throw std::invalid_argument("score STUDENT ROOT TRIPLES EVAL LENGTHS sweep|fixed");
    Bank bank;bank.load(argv[3],argv[4]);
