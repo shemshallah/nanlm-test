@@ -112,6 +112,49 @@ def decode_exact(index, observed: frozenset[int]):
     return None, 'no_exact_candidate'
 
 
+def fit_role_credit_prototypes(training, epochs=120, rate=0.15):
+    """Hash-blind local residual-credit comparison, never BPTT.
+
+    Each observed 255-channel head-change pattern is a target; each lexical
+    role token has a 255D real-valued prototype, updated using only that
+    event's residual. This learner may fail because the hash routing was not
+    designed to preserve additive lexical meaning.
+    """
+    if epochs < 1 or not 0 < rate <= 1:
+        raise ValueError('invalid local-credit optimizer settings')
+    proto = {(role, token): [0.] * HEAD_COUNT
+             for event in training for role, token in enumerate(event['truth'])}
+    for _ in range(epochs):
+        for event in training:
+            keys = [(role, token) for role, token in enumerate(event['truth'])]
+            parts = [proto[k] for k in keys]
+            active = event['heads']
+            for i in range(HEAD_COUNT):
+                error = float(i in active) - sum(p[i] for p in parts)
+                step = rate * error / 3.
+                for p in parts:
+                    p[i] += step
+    return proto
+
+
+def predict_role_credit(proto, observed, vocabs):
+    """Rank candidate triples without invoking claim_vector or expected_heads."""
+    best = None
+    best_score = -float('inf')
+    norm_x = len(observed) ** 0.5
+    if norm_x == 0:
+        return None, None
+    for triple in product(*vocabs):
+        parts = [proto[(role, token)] for role, token in enumerate(triple)]
+        dot = sum(sum(part[i] for part in parts) for i in observed)
+        norm_p2 = sum(sum(part[i] for part in parts)**2 for i in range(HEAD_COUNT))
+        score = dot / (norm_x * norm_p2**0.5) if norm_p2 > 1e-16 else -1.
+        if score > best_score + 1e-12 or (abs(score - best_score) <= 1e-12
+                                         and (best is None or triple < best)):
+            best, best_score = triple, score
+    return best, best_score
+
+
 def static_heads(frame: dict) -> frozenset[int]:
     """Intentionally weak static-only control, includes accumulated history."""
     return frozenset(r['id'] for r in frame['rows']
@@ -136,6 +179,7 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
         raise ValueError('not every test event has an adjacent complete sensor record')
     idx, vocabs, count = candidate_index(training, max_candidates=max_candidates)
     seen = {r['truth'] for r in training}
+    local_role_credit = fit_role_credit_prototypes(training)
     last_frame_at_tick = {f['nanclock']: f for f in frames}
     answer = []
     for i, sample in enumerate(test):
@@ -147,6 +191,8 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
         guess, reason = decode_exact(idx, sample['heads'])
         frame = last_frame_at_tick[sample['tick']]
         static_guess, static_reason = decode_exact(idx, static_heads(frame))
+        credit_guess, credit_score = predict_role_credit(
+            local_role_credit, sample['heads'], vocabs)
         # Temporal-shuffle control: deterministic cyclic permutation of TEST
         # signatures, preserving label frequencies, head frequency, and
         # sequence lengths but severing event-to-signature alignment.
@@ -162,6 +208,9 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
             'static_status': static_reason,
             'static_correct': static_guess == truth,
             'shuffled_correct': shuffled_guess == truth,
+            'local_role_credit_guess': list(credit_guess) if credit_guess else None,
+            'local_role_credit_cosine': credit_score,
+            'local_role_credit_correct': credit_guess == truth,
             'observed_head_count': len(sample['heads']),
         })
     n = len(answer)
@@ -178,14 +227,19 @@ def evaluate(frames: list[dict], journal_tick: int, events: list[dict],
         'temporal_exact': sum(x['temporal_correct'] for x in answer),
         'static_exact': sum(x['static_correct'] for x in answer),
         'shuffled_exact': sum(x['shuffled_correct'] for x in answer),
+        'local_role_credit_exact': sum(x['local_role_credit_correct'] for x in answer),
         'abstentions': sum(x['temporal_guess'] is None for x in answer),
         'temporal_accuracy_all': sum(x['temporal_correct'] for x in answer) / n,
         'static_accuracy_all': sum(x['static_correct'] for x in answer) / n,
         'shuffled_accuracy_all': sum(x['shuffled_correct'] for x in answer) / n,
+        'local_role_credit_accuracy_all': sum(x['local_role_credit_correct'] for x in answer) / n,
+        'random_closed_vocab_accuracy_reference': 1. / count if count else None,
         'results': answer,
         'limitations': ('Known component vocabulary only; deterministic native hash '
                         'routing replicated in the candidate generator, not a learned '
-                        'concept decoder. Unseen words cannot be recovered; exact '
+                        'concept decoder. The hash-blind role-credit comparator is a '
+                        'small local update surrogate, not production NaNLM geometric '
+                        'credits. Unseen words cannot be recovered; exact '
                         'head signature can collide; static-only control is a basic '
                         'accumulated-head occupancy feature; not a language CE gain.'),
     }
