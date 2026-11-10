@@ -83,7 +83,7 @@ class AggregateTests(unittest.TestCase):
         final_tick, events = ag.read_journal(self.journal)
         c = ag.concepts(frames, final_tick, events)
         self.assertEqual(len(c), 3)
-        both = next(x for x in c if x['object'] == 'animal')
+        both = next(x for x in c if x['subject'] == 'penguin' and x['object'] == 'animal')
         self.assertEqual(both['evidence_state'], 'both')
         self.assertEqual(both['support_sources'], ['src_b'])
         self.assertEqual(both['refute_sources'], ['src_a'])
