@@ -224,3 +224,35 @@ Semantic heldout test role CE for the constrained arm was 0.69627 / 0.69586 / 0.
 
 The native synthetic test additionally verifies `alpha=0` byte-distribution identity for all 255 predictions, finite semantic task metrics, `alpha=1` equivalence to the trained proposal, strict scale validation, checkpoint/reload invariance, and unchanged exact NaN16 journal. The 8 MiB root remains the only physical Universe: the readout variants are scoped experimental heads.
 
+
+
+## Direct frozen-encoder arm (fifth variant)
+
+Two optional C++20 parameters now allow semantic head optimization without
+creating a candidate projection drift:
+
+`teach_role(state, example, lr, /*update_shared=*/false)` and
+`teach_sense(state, example, wordnet, lr, /*update_shared=*/false)`.
+
+In this mode, the pretrained byte projection and bias are held *exactly fixed*
+while role and synset classification heads receive supervised gradients.
+Role-specific orientation can still learn because it is not read by the byte
+predictor. Both the full-gradient default and the direct frozen mode share the
+same 255-component actual UnifiedWave state. There is still exactly **one**
+8 MiB NaN16 Universe; experimental readouts are not additional cognitive
+instances or disconnected copied roots.
+
+The pinned Alice/Dickens audit now includes a fifth model: **direct-frozen**.
+It receives the same byte warm-up, the same semantic examples and epoch order
+as the unrestricted joint model. The test compares it with the previous
+head-only *copy-back* model, which trains the candidate on a moving projection
+then discards that projection. These are not equivalent optimizers.
+
+The direct-frozen arm asserts exact equality of the byte predictor's
+development and cross-author CE and of the full shared-projection norm,
+while reporting independent heldout role/sense CE and accuracy. This is a
+test of whether purely semantic heads can learn on the existing language
+features **without** perturbing those features; it does not by itself
+demonstrate beneficial semantic-to-language transfer. No Dickens byte data
+are used in the optimizer or any gate.
+
