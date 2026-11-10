@@ -1,7 +1,5 @@
 name: HW4:0 fast native geometric continuation from epoch 103
 on:
-  push:
-    branches: ['experiment/hw4-native-fast-resume-20261109']
   workflow_dispatch:
 permissions:
   contents: read
