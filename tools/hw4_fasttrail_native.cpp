@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
           throw std::runtime_error("0xFF reserved ingress byte in corpus");
         const uint64_t window = bytes / WINDOW;
         const uint64_t offset = bytes % WINDOW;
-        const bool selected = window % stride == 0;
+        const bool selected = blend > 0.0 && window % stride == 0;
         if (selected && offset == 0) {
           trail.clear_traces();
           ++windows;
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
       }
     }
     if (input.bad() || bytes != expected || transitions + 1 != bytes ||
-        trail_transitions == 0)
+        (blend > 0.0 && trail_transitions == 0))
       throw std::runtime_error("incomplete scan or no sampled TRAIL transitions");
     const double scan_seconds = seconds(scan_start);
     double before_accuracy = 0;
@@ -285,13 +285,15 @@ int main(int argc, char** argv) {
       for (size_t k = 0; k < 3; ++k) {
         grad_src[i][k] /= fast_max;
         grad_dst[i][k] /= fast_max;
-        td_src[i][k] = -trail.credit_minus[i][k] /
-                       static_cast<double>(trail_transitions);
-        td_dst[i][k] = trail.credit_plus[i][k] /
-                       static_cast<double>(trail_transitions);
+        if (blend > 0.0) {
+          td_src[i][k] = -trail.credit_minus[i][k] /
+                         static_cast<double>(trail_transitions);
+          td_dst[i][k] = trail.credit_plus[i][k] /
+                         static_cast<double>(trail_transitions);
+        }
       }
     const double rail_max = maxabs(td_src, td_dst);
-    if (!std::isfinite(rail_max) || rail_max < 1e-17)
+    if (blend > 0.0 && (!std::isfinite(rail_max) || rail_max < 1e-17))
       throw std::runtime_error("invalid or degenerate sampled TRAIL credit");
     // Normalize independently; remove a conflicting component parallel
     // to the negative of the fast descent direction, preserving first-order
@@ -299,8 +301,10 @@ int main(int argc, char** argv) {
     double dot_ft = 0, norm_f = 0, norm_t = 0;
     for (size_t i = 0; i < V; ++i)
       for (size_t k = 0; k < 3; ++k) {
-        td_src[i][k] /= rail_max;
-        td_dst[i][k] /= rail_max;
+        if (blend > 0.0) {
+          td_src[i][k] /= rail_max;
+          td_dst[i][k] /= rail_max;
+        }
         dot_ft += grad_src[i][k] * td_src[i][k] +
                   grad_dst[i][k] * td_dst[i][k];
         norm_f += grad_src[i][k] * grad_src[i][k] +
@@ -308,7 +312,7 @@ int main(int argc, char** argv) {
         norm_t += td_src[i][k] * td_src[i][k] +
                   td_dst[i][k] * td_dst[i][k];
       }
-    const double cosine = dot_ft / std::sqrt(norm_f * norm_t);
+    const double cosine = norm_t > 0.0 ? dot_ft / std::sqrt(norm_f * norm_t) : 0.0;
     if (dot_ft < 0) {
       const double projection = dot_ft / norm_f;
       for (size_t i = 0; i < V; ++i)
