@@ -151,3 +151,23 @@ machine, compile the C++ audit with GCC/Clang C++20 -O2 -Werror, run it with
 the four split paths and the integer seed count 3, then run
 `tools/report_joint_gutenberg.py` with the receipt and manifest.
 
+
+
+## First successful cross-author receipt: negative transfer
+
+[GitHub Actions run 42757461252](https://github.com/shemshallah/nanlm-test/actions/runs/42757461252) completed successfully with GCC/Clang compilation under -Werror, pinned Gutenberg source digests, the 8 MiB native root, all three training-order seeds and preserved numerical artifacts. **This is a negative result; do not treat a passing CI job as a language-quality victory.**
+
+| Training-order seed | Byte-only cross-author CE | Naive joint cross-author CE | Joint minus byte (nats/byte) |
+|---|---:|---:|---:|
+| 20261109 | 2.959716540 | 2.972994472 | +0.013277931 |
+| 20261212 | 2.980040214 | 2.993224216 | +0.013184003 |
+| 20261315 | 2.970036977 | 2.985696344 | +0.015659366 |
+
+Average penalty: **+0.014040433 nats/byte**, sample standard deviation across the three training-order seeds **0.001402823**. Each seed evaluates the same 1,938 Dickens bytes (969 early and 969 later) after 2,636 Alice training bytes. The improvement previously measured on tiny synthetic contexts **does not carry over** to this book-disjoint evaluation. There is no inference that this sample represents all Gutenberg literature.
+
+The single optional semantic recurrent step was accepted for every seed based on disjoint Alice development CE, but slightly worsened Dickens CE each time: post-minus-pre joint CE **+0.000002826**, **+0.000002553**, **+0.000005275**. This reveals the limitation of a narrow, same-author development gate. All exact symbolic events remained unchanged.
+
+Synthetic heldout role accuracies were 0.50 / 0.25 / 0.50 across the seeds; sense accuracy was 0.75 in all three, but in one seed its shuffled control also reached 0.75. The current semantic task is weakly learned; no WordNet-scale natural sense induction is established.
+
+**Next ablation (under test): Pareto-gated semantic readout.** Train a matched fourth readout on the identical physical wave; offer batches of three synthetic semantic epochs; commit the entire readout atomically in memory only if independently heldout Alice byte CE does not increase. Keep the disjoint Dickens text outside the acceptance gate. Report accepted/rejected semantic batches and the resulting book-disjoint CE, even if zero batches are accepted. A zero-interference result achieved by rejecting all semantic updates must be called a failed joint-learning attempt, not successful transfer.
+
