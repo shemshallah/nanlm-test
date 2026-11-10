@@ -1,6 +1,7 @@
 #include "nanlm/universe.hpp"
 #include "nanlm/unified_wave.hpp"
 #include "nanlm/wordnet.hpp"
+#include "nanlm/semantic.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -18,7 +19,7 @@ using namespace nanlm;
 int main(int argc,char** argv){
  try{
   if(argc<3){
-   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN}\n";
+   std::cerr<<"usage: nanlm ROOT {init|inspect|train TEXT [EPOCHS] [BPTT_0_OR_1] [FREQUENCY_0_OR_1]|train-chunk CORPUS OFFSET LENGTH ABSOLUTE_STEP|eval TEXT [WAVE_EXEC_0_OR_1]|eval-credit TEXT [WAVE_EXEC_0_OR_1]|audit TEXT|calibrate DEV_TEXT|memorize TSV SOURCE|memorize-lines TXT SOURCE|recall CUE|probe-memory CUE [RESONANCE_0_OR_1]|suggest CUE [TOP_K]|suggest-triad CUE [TOP_K] [MAX_EDITS] [WAVE_EXEC_0_OR_1]|generate PROMPT BYTES [SEED] [TEMPERATURE] [TOP_P] [RESONANCE_0_OR_1] [WAVE_EXEC_0_OR_1]|spectrum|query A B TYPE [TIME]|write A B TYPE REFUTES WEIGHT TIME|import-wordnet DATA.NOUN|semantic-train FILE SOURCE|semantic-ask isa|ability SUBJECT OBJECT}\n";
    return 2;
   }
   const std::string path=argv[1],operation=argv[2];
@@ -402,6 +403,35 @@ int main(int argc,char** argv){
                   std::stof(argv[7]),std::stoull(argv[8]));
    universe.sync();
    std::cout<<"stored inverse-addressed temporal pair\n";
+  }else if(operation=="semantic-train"){
+   if(argc!=5)throw std::invalid_argument("semantic-train FILE SOURCE");
+   std::ifstream file(argv[3]);
+   if(!file)throw std::runtime_error("semantic training source unavailable");
+   WordNetIndex index;index.load(path+".wordnet.tsv");
+   SemanticBridge bridge(universe,index);
+   size_t seen=0;std::string line;
+   while(std::getline(file,line)){
+    if(line.empty())continue;
+    bridge.ingest(line,argv[4]);++seen;
+   }
+   if(!file.eof())throw std::runtime_error("truncated semantic input");
+   bridge.save();
+   std::cout<<"NANLM_SEMANTIC_TRAIN sentences="<<seen
+            <<" exact_claims="<<bridge.claims()<<" root_bytes="<<ROOT_BYTES<<"\n";
+  }else if(operation=="semantic-ask"){
+   if(argc!=6)throw std::invalid_argument("semantic-ask isa|ability SUBJECT OBJECT");
+   WordNetIndex index;index.load(path+".wordnet.tsv");
+   SemanticBridge bridge(universe,index);
+   const std::string kind=argv[3];
+   SemanticBridge::Answer ans{};
+   if(kind=="isa")ans=bridge.query_isa(argv[4],argv[5]);
+   else if(kind=="ability")ans=bridge.query_ability(argv[4],argv[5]);
+   else throw std::invalid_argument("unknown semantic query kind");
+   std::cout<<"NANLM_SEMANTIC_ANSWER relation="<<kind<<" state="<<int(ans.state)
+            <<" depth="<<ans.depth<<" sources="<<ans.sources.size()<<" path=";
+   for(size_t i=0;i<ans.path.size();++i)
+    std::cout<<(i?">":"")<<ans.path[i];
+   std::cout<<"\n";
   }else if(operation=="import-wordnet"){
    if(argc<4)throw std::invalid_argument("WordNet noun data required");
    WordNetIndex index;
