@@ -256,3 +256,33 @@ features **without** perturbing those features; it does not by itself
 demonstrate beneficial semantic-to-language transfer. No Dickens byte data
 are used in the optimizer or any gate.
 
+
+
+### Direct frozen-encoder measurement
+
+[Run 42759291547](https://github.com/shemshallah/nanlm-test/actions/runs/42759291547)
+successfully ran the expanded five-arm benchmark against the same immutable,
+author-disjoint source splits. The native GCC and Clang C++20 compilation
+completed with `-Werror`; the test receipt and seed CSV-equivalent rows
+are preserved in the Actions artifact.
+
+| Seed | Copy-back role CE | Direct frozen role CE | Copy-back sense CE | Direct frozen sense CE |
+|---|---:|---:|---:|---:|
+| 20261109 | 0.69627018 | 0.69613290 | 0.69047737 | 0.69039797 |
+| 20261212 | 0.69586395 | 0.69578957 | 0.68946462 | 0.68937233 |
+| 20261315 | 0.69455841 | 0.69448584 | 0.69354477 | 0.69345664 |
+
+The direct-frozen method lowers semantic heldout CE slightly on all three
+training-order seeds versus copying heads from an incompatible changed
+projection, but **does not improve semantic heldout accuracy** (roles:
+50% for every seed; senses: 75%, 75%, 50%). These datasets are too
+small to assert a significant generalizable advantage.
+
+All direct-frozen Gutenberg and Alice development byte CE matched byte-only
+**exactly** to reported precision; both arms used 144 role and 108 sense
+updates per seed. The naive joint model still worsens Dickens CE by
++0.014040433 nats/byte on average. No beneficial gradient into the shared
+language projection has been verified. This establishes a conservative
+fallback path with functioning task-specific learning and zero byte
+interference, but not improved general-purpose semantics or text generation.
+
