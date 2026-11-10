@@ -203,3 +203,24 @@ training corpus any larger or establish a reliable transfer advantage.
 
 **Status:** implementation committed to the draft experimental branch;
 the new GitHub Actions run must pass before reporting new metrics.
+
+
+## Split semantic heads from shared-byte credit — verified fourth arm
+
+Cross-author [GitHub Actions run 42758760796](https://github.com/shemshallah/nanlm-test/actions/runs/42758760796) passed C++20 strict GCC/Clang compilation, source verification and all three training-order audits. It adds an opt-in `JointWaveSemanticLearner::blend_semantics_from` operation:
+
+* `alpha=1` proposes the whole semantic projection/bias delta, alongside newly learned role/sense heads and role-specific orientation.
+* The fixed line search tries `alpha={1, 0.25, 0.0625, 0.015625, 0.00390625}` against **Alice-only** heldout development CE. Nonzero shared credit is accepted only with zero permitted byte CE increase.
+* On rejection, `alpha=0` still copies the trained task-specific semantic heads and role orientation while leaving all 255x24 shared projection coefficients, bias and byte-head weights exactly unchanged. This is semantic specialization on a frozen language encoder, **not joint credit**.
+* The method refuses unrelated learners, byte-update mismatches and nonfinite/out-of-range interpolation coefficients.
+
+| Seed | Shared semantic batches accepted | Head-only batches retained | Role steps retained | Sense steps retained | Dickens CE delta against byte-only |
+|---|---:|---:|---:|---:|---:|
+| 20261109 | 0 | 6 | 144 | 108 | 0.000000000 |
+| 20261212 | 0 | 6 | 144 | 108 | 0.000000000 |
+| 20261315 | 0 | 6 | 144 | 108 | 0.000000000 |
+
+Semantic heldout test role CE for the constrained arm was 0.69627 / 0.69586 / 0.69456, and sense CE was 0.69048 / 0.68946 / 0.69354. These values are weak: the unconstrained joint model achieved lower sense CE on all three seeds, although at a consistent Dickens byte cost. The constrained head-only arm did not establish cross-author language improvement. Zero byte regression follows from freezing the language readout and projection, **not from discovering a beneficial joint gradient**.
+
+The native synthetic test additionally verifies `alpha=0` byte-distribution identity for all 255 predictions, finite semantic task metrics, `alpha=1` equivalence to the trained proposal, strict scale validation, checkpoint/reload invariance, and unchanged exact NaN16 journal. The 8 MiB root remains the only physical Universe: the readout variants are scoped experimental heads.
+
