@@ -23,6 +23,7 @@ from hw5_context_experiment import STUDENT_SHA, load_manifest, parse, sha
 BOOTSTRAP_SEED = 601209
 BOOTSTRAP_DRAWS = 10000
 CASES = ("best_memory_only", "best_geometry_positive")
+SUPPORT_STRATA = ("seen_exact_triple", "seen_context_unseen_continuation", "unseen_context")
 
 
 def read_triplets(path: Path):
@@ -74,8 +75,35 @@ def score_one(student: Path, root: Path, triplets: Path,
     if len(rows) != 3 or [x["mode"] for x in rows] != [
             "geometry_only", "bigram_add05", "context_hybrid"]:
         raise ValueError("native score controls changed")
-    return {r["mode"]: {key: r[key] for key in
-            ("ce_nats", "accuracy", "transitions")} for r in rows}
+    strata = {}
+    for line in result.stdout.splitlines():
+        if not line.startswith("HW5_CONTEXT_STRATUM "):
+            continue
+        fields = dict(x.split("=", 1) for x in line.split()[1:])
+        group = fields.pop("regime", None)
+        if group not in SUPPORT_STRATA or group in strata:
+            raise ValueError("duplicate or unknown native support regime")
+        if fields.get("exact_model") != "HW5_train_only" or fields.get("bptt_attempted") != "0":
+            raise ValueError("invalid native support provenance")
+        if any(abs(float(fields[k]) - float(cfg[k])) > 1e-12 for k in
+               ("beta", "lambda", "delta", "kappa")):
+            raise ValueError("native geometric stratum configuration changed")
+        row = {k: float(fields[k]) for k in ("ce_nats", "accuracy")}
+        row["transitions"] = int(fields["transitions"])
+        if row["transitions"] < 0 or not 0 <= row["accuracy"] <= 1 or not math.isfinite(row["ce_nats"]):
+            raise ValueError("invalid native stratum metrics")
+        strata[group] = row
+    if set(strata) != set(SUPPORT_STRATA):
+        raise ValueError("missing native support strata")
+    if sum(v["transitions"] for v in strata.values()) != rows[-1]["transitions"]:
+        raise ValueError("support strata do not partition native evaluation")
+    aggregate_nll = sum(v["transitions"] * v["ce_nats"] for v in strata.values())
+    aggregate_hits = sum(v["transitions"] * v["accuracy"] for v in strata.values())
+    if (abs(aggregate_nll / rows[-1]["transitions"] - rows[-1]["ce_nats"]) > 2e-9 or
+            abs(aggregate_hits / rows[-1]["transitions"] - rows[-1]["accuracy"]) > 2e-9):
+        raise ValueError("support-stratified native scores do not sum to frozen score")
+    return {**{r["mode"]: {key: r[key] for key in
+            ("ce_nats", "accuracy", "transitions")} for r in rows}, "support_strata": strata}
 
 
 def weighted(rows, metric):
@@ -183,19 +211,30 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
             docpath.write_bytes(data)
             lengths.write_text(f"{nbytes}\n")
             case_rows = {}
+            case_strata = {}
             for case in CASES:
                 native = score_one(student, root, tri, docpath, lengths, frozen[case])
                 case_rows[case] = native["context_hybrid"]
+                case_strata[case] = native["support_strata"]
                 if case == CASES[0]:
                     case_rows["bigram_add05"] = native["bigram_add05"]
                     case_rows["geometry_only"] = native["geometry_only"]
             predicted = nbytes - 2
             if any(r["transitions"] != predicted for r in case_rows.values()):
                 raise ValueError("native cross-book transition or undercount")
+            observed_coverage = coverage(data, triples, contexts)
+            for case in CASES:
+                support = case_strata[case]
+                if (support["seen_exact_triple"]["transitions"] != observed_coverage["seen_exact_triple_count"] or
+                    support["seen_exact_triple"]["transitions"] +
+                    support["seen_context_unseen_continuation"]["transitions"] !=
+                        observed_coverage["seen_pair_context_count"]):
+                    raise ValueError("native stratum support differs from train-only exact-triple ledger")
             books.append({"index": i, "book_id": str(entry["id"]),
                           "document_sha256": hashlib.sha256(data).hexdigest(),
                           "bytes": nbytes, "transitions": predicted,
-                          "coverage": coverage(data, triples, contexts),
+                          "coverage": observed_coverage,
+                          "support_strata": case_strata,
                           **case_rows})
             print("HW5_BOOK", json.dumps({
                 "id": books[-1]["book_id"], "transitions": predicted,
@@ -219,6 +258,23 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
                 raise ValueError(f"per-book aggregate does not reproduce HW5 {case} {metric}")
     significance = paired_statistics(books)
     total_transitions = sum(b["transitions"] for b in books)
+    support_summary = {}
+    for group in SUPPORT_STRATA:
+        support_summary[group] = {}
+        for case in CASES:
+            group_rows = [b["support_strata"][case][group] for b in books]
+            n_group = sum(r["transitions"] for r in group_rows)
+            support_summary[group][case] = {
+                "transitions": n_group,
+                "ce_nats": weighted(group_rows, "ce_nats") if n_group else None,
+                "accuracy": weighted(group_rows, "accuracy") if n_group else None,
+            }
+        memory = support_summary[group][CASES[0]]
+        geom = support_summary[group][CASES[1]]
+        if memory["transitions"] != geom["transitions"]:
+            raise ValueError("support partition differs between frozen models")
+        support_summary[group]["delta_memory_minus_geometry_ce"] = (
+            memory["ce_nats"] - geom["ce_nats"] if memory["ce_nats"] is not None else None)
     result = {
         "schema": "nanlm-test.hw5-paired-attribution.v1",
         "source_run": 42746674921,
@@ -236,6 +292,7 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
         "test_exact_triple_coverage": sum(b["coverage"]["seen_exact_triple_count"] for b in books) / total_transitions,
         "test_seen_pair_context_coverage": sum(b["coverage"]["seen_pair_context_count"] for b in books) / total_transitions,
         "test_aggregate": totals,
+        "native_support_stratified_test": support_summary,
         "paired_book_statistics": significance,
         "books": books,
         "caveat": "Byte-level predictive attribution only; no semantic-understanding or geometric-training superiority claim.",
@@ -250,7 +307,8 @@ def run(reference: Path, student: Path, hw5: Path, output: Path):
         "cluster_bootstrap_95": significance["bootstrap_95_percentile_interval"],
         "book_signflip_p": significance["two_sided_sign_flip_p"],
         "triple_coverage": result["test_exact_triple_coverage"],
-        "pair_context_coverage": result["test_seen_pair_context_coverage"]
+        "pair_context_coverage": result["test_seen_pair_context_coverage"],
+        "native_support_stratified_test": support_summary
     }, sort_keys=True), flush=True)
 
 
