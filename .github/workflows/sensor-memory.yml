@@ -1,0 +1,88 @@
+name: Experimental four-resolution sensor memory
+concurrency:
+  group: sensor-matrix-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+on:
+  push:
+    branches: ['experiment/math-sensor-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  multiresolution-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test math sensor memory
+        shell: bash
+        run: |
+          set -euo pipefail
+          compiler="${{ matrix.compiler }}"
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_memory.cpp -o test_sensor_memory
+            ./test_sensor_memory | tee sensor-memory-test.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude src/sensor_memory_probe.cpp -o sensor-memory-probe
+            ./sensor-memory-probe tests/fixtures/sensor_sources.tsv penguin ISA animal | tee proof.log
+            grep -q 'state=3 inferred=1' proof.log
+            grep -q 'source_A source_B' proof.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_native_bridge.cpp -o test_sensor_native_bridge
+            ./test_sensor_native_bridge | tee native-bridge.log
+            grep -q "PASS: live UnifiedWaveLanguage membership" native-bridge.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude src/sensor_resident.cpp -o sensor-resident
+            SNAP=$(mktemp /tmp/nanlm-sensor.XXXXXX)
+            rm -f "$SNAP"
+            printf 'INGEST\tsource_A\t+\towl\tISA\tbird\nINGEST\tsource_B\t+\tbird\tISA\tanimal\nINGEST\tsource_C\t-\towl\tISA\tanimal\nQUERY\towl\tISA\tanimal\nHOTMAP\nMATRIX\nSENSOR_VECTOR\tGLOBAL\nSENSOR_TENSOR\tGLOBAL\nMEASURE\nTIMELINE\t4\nTICK\nSTATUS\nQUIT\n' | ./sensor-resident "$SNAP" | tee resident.log
+            printf 'QUERY\towl\tISA\tanimal\nHOTMAP\nMATRIX\nTIMELINE\t4\nQUIT\n' | ./sensor-resident "$SNAP" | tee resumed.log
+            grep -q 'QUERY state=3 inferred=1' resident.log
+            grep -q 'QUERY state=3 inferred=1' resumed.log
+            grep -q '^HOTMAP count=' resident.log
+            grep -q '^HOT slot=' resident.log
+            grep -q '^HOTMAP count=' resumed.log
+            grep -q '^STATUS tick=' resident.log
+            grep -q '^MATRIX seq=' resident.log
+            grep -q '^SENSOR_VECTOR level=GLOBAL' resident.log
+            grep -q '^SENSOR_TENSOR level=GLOBAL' resident.log
+            grep -q '^MEASURE seq=' resident.log
+            grep -q '^SLICE seq=' resident.log
+            grep -q '^MATRIX seq=' resumed.log
+            grep -q '^TIMELINE count=' resumed.log
+            test "$(stat -c%s "$SNAP.slices")" = 8388608
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_packet.cpp -o test_sensor_packet
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_hot_triads.cpp -o test_sensor_hot_triads
+            ./test_sensor_hot_triads | tee hot-triads.log
+            grep -q 'PASS: dynamic 255/85/hot/global triad map' hot-triads.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_timeslices.cpp -o test_sensor_timeslices
+            ./test_sensor_timeslices | tee sensor-timeslices.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_family_maps.cpp -o test_sensor_family_maps
+            ./test_sensor_family_maps | tee sensor-families.log
+            "$compiler" -std=c++20 -O2 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/test_sensor_family_chart.cpp -o test_sensor_family_chart
+            ./test_sensor_family_chart | tee sensor-charts.log
+            grep -q "PASS: eight isolated blank 8 MiB sensor charts" sensor-charts.log
+            grep -q "PASS: eight math sensors" sensor-families.log
+            grep -q 'PASS: four-resolution vector/tensor measurements' sensor-timeslices.log
+            ./test_sensor_packet | tee packet-test.log
+            grep -q 'PASS: plaintext-free numeric 255/85/1 proof packet' packet-test.log
+
+            rm -f "$SNAP" "$SNAP.tmp" "$SNAP.slices"
+
+      - name: Store sensor results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensor-memory-logs
+          path: |
+            sensor-memory-test.log
+            proof.log
+            native-bridge.log
+            resident.log
+            resumed.log
+            packet-test.log
+            hot-triads.log
+            sensor-timeslices.log
+            sensor-families.log
+            sensor-charts.log

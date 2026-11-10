@@ -1,0 +1,583 @@
+#pragma once
+// Experimental sensor-derived memory: 255 addressable head branches,
+// 85 triadic aggregators, dynamic hot-triad overlay, one global field, source-aware typed hyperedges.
+// Lexical hashes route information, but DO NOT constitute learned semantics.
+#include "nanlm/math_sensor_primitives.hpp"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <limits>
+#include <map>
+#include <queue>
+#include <set>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+namespace nanlm::math_sensor {
+
+inline std::uint64_t fingerprint(const std::string& s) {
+ std::uint64_t h=14695981039346656037ULL;
+ for(unsigned char c:s){h^=c;h*=1099511628211ULL;}
+ return mix(h);
+}
+inline Hypervector role_vector(const std::string& text,std::uint64_t role) {
+ return basis(mix(fingerprint(text)^role));
+}
+inline Hypervector claim_vector(const std::string& subject,const std::string& predicate,
+                                const std::string& object) {
+ return nanlm::math_sensor::bind(nanlm::math_sensor::bind(role_vector(subject,0x5355424a454354ULL),
+                  role_vector(predicate,0x50524544494354ULL)),
+             role_vector(object,0x4f424a454354ULL));
+}
+struct Assertion {
+ std::string source,subject,predicate,object;
+ bool refutes=false;
+ double confidence=1.;
+};
+struct StatementKey {
+ std::string subject,predicate,object;
+ bool operator<(const StatementKey& rhs) const {
+  return std::tie(subject,predicate,object)<std::tie(rhs.subject,rhs.predicate,rhs.object);
+ }
+};
+struct SupportSet {
+ std::set<std::string> supporting_sources,refuting_sources;
+ unsigned state()const {return unsigned(!supporting_sources.empty())|
+                               (unsigned(!refuting_sources.empty())<<1);}
+};
+struct FeatureLeaf {
+ Hypervector vector{};
+ std::array<double,3> measured_vector{};
+ std::array<double,9> tensor{};
+ double support_charge=0,refute_charge=0;
+ double curvature=0,activation=0;
+ std::uint64_t last_tick=0;
+ std::set<std::string> sources;
+};
+struct TriadAggregate {
+ std::array<double,3> vector{};
+ std::array<double,9> tensor{};
+ double support=0,refute=0,activation=0,curvature=0;
+ std::set<std::string> sources;
+};
+// Derived salience mapping. A hot triad is NOT a new head or a separate model.
+struct HotTriad {
+ std::uint8_t group=255;
+ std::array<std::uint8_t,3> heads{};
+ std::array<double,3> vector{};
+ std::array<double,9> tensor{};
+ double score=0,activation=0,previous_activation=0;
+ double support=0,refute=0,curvature=0;
+ std::size_t source_count=0;
+};
+struct HotTriadLink {
+ std::uint8_t a=255,b=255; // original triad IDs, not ephemeral slot numbers
+ double tensor_cosine=0,phase_lock=0;
+ std::size_t shared_sources=0;
+};
+struct HotFieldAggregate {
+ std::array<double,3> vector{};
+ std::array<double,9> tensor{};
+ double support=0,refute=0,activation=0;
+ std::size_t active=0,links=0;
+};
+struct GlobalAggregate {
+ std::array<double,3> vector{};
+ std::array<double,9> tensor{};
+ double support=0,refute=0,activation=0;
+ std::size_t unique_statements=0,unique_sources=0;
+ std::uint64_t tick=0;
+};
+struct ReasoningResult {
+ SupportSet evidence{};
+ bool inferred=false;
+ std::vector<std::string> proof_nodes;
+ std::set<std::string> proof_sources;
+ unsigned state()const{return evidence.state();}
+};
+
+class SensorMemory {
+public:
+ static constexpr std::size_t HEAD_COUNT=255,TRIAD_COUNT=85,HOT_MAX=12;
+ static constexpr std::size_t HOT_LINK_MAX=HOT_MAX*(HOT_MAX-1)/2;
+ using Branch=std::map<StatementKey,FeatureLeaf>;
+ using CurvatureSampler=std::function<double(std::uint8_t,std::uint8_t,std::uint8_t)>;
+private:
+ std::array<Branch,HEAD_COUNT> head_branches_{};
+ std::array<TriadAggregate,TRIAD_COUNT> triads_{};
+ std::array<double,HEAD_COUNT> head_state_{};
+ std::array<double,HEAD_COUNT> head_support_{},head_refute_{};
+ std::array<std::array<double,3>,HEAD_COUNT> head_vectors_{};
+ std::array<std::array<double,9>,HEAD_COUNT> head_tensors_{};
+ std::array<double,TRIAD_COUNT> previous_triad_activity_{};
+ std::array<HotTriad,HOT_MAX> hot_{};
+ std::array<std::int8_t,TRIAD_COUNT> hot_slots_{};
+ std::vector<HotTriadLink> hot_links_{};
+ HotFieldAggregate hot_field_{};
+ std::size_t hot_count_=0,hot_budget_=HOT_MAX;
+ double hot_cutoff_=0.01;
+ GlobalAggregate global_{};
+ TriadMap map_=default_map();
+ std::array<std::uint8_t,HEAD_COUNT> reverse_group_{};
+ std::array<std::uint8_t,HEAD_COUNT> reverse_position_{};
+ std::map<StatementKey,SupportSet> graph_{};
+ std::vector<Assertion> journal_{};
+ std::vector<std::uint64_t> event_ticks_{};
+ std::set<std::tuple<std::string,std::string,std::string,std::string,bool>> seen_{};
+ std::set<std::string> sources_{};
+ CurvatureSampler curvature_;
+ std::size_t leaf_limit_,statement_limit_;
+ double leak_=0.97;
+ std::uint64_t clock_=0;
+ static void check_text(const std::string& s) {
+  if(s.empty()||s.size()>192||s.find_first_of("\t\r\n\0",0,4)!=std::string::npos)
+   throw std::invalid_argument("empty, overlength or unsafe TSV field");
+ }
+ static void check_assertion(const Assertion& a) {
+  check_text(a.source);check_text(a.subject);check_text(a.predicate);check_text(a.object);
+  if(!std::isfinite(a.confidence)||a.confidence<=0||a.confidence>1)
+   throw std::invalid_argument("confidence must be finite in (0,1]");
+ }
+ void map_positions() {
+  std::array<bool,HEAD_COUNT> used{};
+  for(std::size_t g=0;g<TRIAD_COUNT;++g)
+   for(std::size_t k=0;k<3;++k){
+    const auto h=map_[g][k];
+    if(h>=HEAD_COUNT||used[h])throw std::invalid_argument("unbalanced triad mapping");
+    used[h]=true;
+    reverse_group_[h]=static_cast<std::uint8_t>(g);
+    reverse_position_[h]=static_cast<std::uint8_t>(k);
+   }
+  if(reverse_group_[0]!=0)throw std::invalid_argument("head zero must remain group zero");
+ }
+ static std::array<std::uint8_t,6> route(const Hypervector& x) {
+  std::vector<std::pair<std::size_t,std::uint8_t>> ranked;
+  ranked.reserve(HEAD_COUNT);
+  for(std::size_t h=0;h<HEAD_COUNT;++h)
+   ranked.push_back({distance(x,basis(0x100000000000ULL+h)),static_cast<std::uint8_t>(h)});
+  std::partial_sort(ranked.begin(),ranked.begin()+6,ranked.end());
+  std::array<std::uint8_t,6> heads{};
+  for(std::size_t k=0;k<heads.size();++k)heads[k]=ranked[k].second;
+  return heads;
+ }
+ static std::array<double,3> features(const Hypervector& claim,std::uint8_t head,
+                                      double tick_phase) {
+  const double v=similarity(claim,basis(0x100000000000ULL+head));
+  const double cs=std::cos(tick_phase),sn=std::sin(tick_phase);
+  const double depth=1.-double(distance(claim,basis(0x200000000000ULL+head)))/256.;
+  return {cs*v-sn*depth,sn*v+cs*depth,depth};
+ }
+ void recalc_hotspots() {
+  hot_.fill(HotTriad{});
+  hot_slots_.fill(-1);
+  hot_links_.clear();
+  hot_field_=HotFieldAggregate{};
+  hot_count_=0;
+  std::vector<std::pair<double,std::size_t>> ranked;
+  ranked.reserve(TRIAD_COUNT);
+  for(std::size_t g=0;g<TRIAD_COUNT;++g) {
+   const auto& t=triads_[g];
+   if(!(t.activation>hot_cutoff_))continue;
+   double tensor_norm2=0;
+   for(const auto x:t.tensor)tensor_norm2+=x*x;
+   // Pure sensor salience: activation, signed charge coexistence, tensor energy.
+   // Curvature is available as a feature, not a perpetual source of activity.
+   const double score=t.activation+0.25*std::min(t.support,t.refute)+
+                      0.05*std::sqrt(tensor_norm2);
+   if(std::isfinite(score))ranked.emplace_back(score,g);
+  }
+  std::sort(ranked.begin(),ranked.end(),[](const auto& a,const auto& b) {
+   if(a.first!=b.first)return a.first>b.first;
+   return a.second<b.second;
+  });
+  // A top-K selection based only on activation can erase an active
+  // minority refutation from the hot *readout*, even though the exact graph
+  // still holds it. Reserve hot slots for contradictory and signed evidence,
+  // when such active candidates exist, then fill by salience.
+  std::vector<std::pair<double,std::size_t>> selected;
+  selected.reserve(std::min(hot_budget_,ranked.size()));
+  const auto has_support=[&]() {
+   for(const auto& e:selected)if(triads_[e.second].support>0)return true;
+   return false;
+  };
+  const auto has_refute=[&]() {
+   for(const auto& e:selected)if(triads_[e.second].refute>0)return true;
+   return false;
+  };
+  const auto reserve=[&](const auto& pred) {
+   if(selected.size()>=hot_budget_)return;
+   for(const auto& e:ranked) {
+    if(!pred(triads_[e.second]))continue;
+    bool already=false;
+    for(const auto& chosen:selected)if(chosen.second==e.second)already=true;
+    if(!already){selected.push_back(e);break;}
+   }
+  };
+  reserve([](const TriadAggregate& t){return t.support>0&&t.refute>0;});
+  if(!has_refute())reserve([](const TriadAggregate& t){return t.refute>0;});
+  if(!has_support())reserve([](const TriadAggregate& t){return t.support>0;});
+  for(const auto& e:ranked) {
+   if(selected.size()>=hot_budget_)break;
+   bool already=false;
+   for(const auto& chosen:selected)if(chosen.second==e.second)already=true;
+   if(!already)selected.push_back(e);
+  }
+  std::sort(selected.begin(),selected.end(),[](const auto& a,const auto& b) {
+   if(a.first!=b.first)return a.first>b.first;
+   return a.second<b.second;
+  });
+  hot_count_=selected.size();
+  double weight_sum=0;
+  for(std::size_t slot=0;slot<hot_count_;++slot) {
+   const auto [score,g]=selected[slot];
+   const auto& triad=triads_[g];
+   auto& out=hot_[slot];
+   out.group=static_cast<std::uint8_t>(g);
+   out.heads=map_[g];
+   out.vector=triad.vector;
+   out.tensor=triad.tensor;
+   out.score=score;
+   out.activation=triad.activation;
+   out.previous_activation=previous_triad_activity_[g];
+   out.support=triad.support;out.refute=triad.refute;
+   out.curvature=triad.curvature;
+   out.source_count=triad.sources.size();
+   hot_slots_[g]=static_cast<std::int8_t>(slot);
+   weight_sum+=score;
+   hot_field_.support+=score*triad.support;
+   hot_field_.refute+=score*triad.refute;
+   hot_field_.activation+=score*triad.activation;
+   for(std::size_t k=0;k<3;++k)hot_field_.vector[k]+=score*triad.vector[k];
+   for(std::size_t k=0;k<9;++k)
+    hot_field_.tensor[k]+=score*triad.tensor[k];
+  }
+  if(weight_sum>0) {
+   hot_field_.support/=weight_sum;
+   hot_field_.refute/=weight_sum;
+   hot_field_.activation/=weight_sum;
+   for(auto& x:hot_field_.vector)x/=weight_sum;
+   for(auto& x:hot_field_.tensor)x/=weight_sum;
+  }
+  // Pairwise overlays carry distinct tensor alignment, U(1)-phase alignment
+  // and shared-source count, rather than crushing them into one edge number.
+  for(std::size_t i=0;i<hot_count_;++i)
+   for(std::size_t j=i+1;j<hot_count_;++j) {
+    const auto& a=hot_[i],&b=hot_[j];
+    double dot=0,na=0,nb=0;
+    for(std::size_t k=0;k<9;++k) {
+     dot+=a.tensor[k]*b.tensor[k];
+     na+=a.tensor[k]*a.tensor[k];
+     nb+=b.tensor[k]*b.tensor[k];
+    }
+    double cosine=na>0&&nb>0?dot/std::sqrt(na*nb):0;
+    cosine=std::clamp(cosine,-1.,1.);
+    const auto& left=triads_[a.group].sources;
+    const auto& right=triads_[b.group].sources;
+    auto x=left.begin(),y=right.begin();
+    std::size_t shared=0;
+    while(x!=left.end()&&y!=right.end()) {
+     if(*x<*y)++x;
+     else if(*y<*x)++y;
+     else {++shared;++x;++y;}
+    }
+    hot_links_.push_back({a.group,b.group,cosine,
+                          std::cos(wrap(a.curvature-b.curvature)),shared});
+   }
+  hot_field_.active=hot_count_;
+  hot_field_.links=hot_links_.size();
+ }
+
+ void recalc_global() {
+  recalc_hotspots();
+  global_.vector.fill(0);
+  global_.tensor.fill(0);
+  global_.support=global_.refute=global_.activation=0;
+  for(const auto& t:triads_) {
+   global_.support+=t.support;global_.refute+=t.refute;
+   global_.activation+=t.activation;
+   for(std::size_t i=0;i<3;++i)global_.vector[i]+=t.vector[i];
+   for(std::size_t i=0;i<9;++i)global_.tensor[i]+=t.tensor[i];
+  }
+  global_.support/=TRIAD_COUNT;global_.refute/=TRIAD_COUNT;
+  global_.activation/=TRIAD_COUNT;
+  for(auto& x:global_.vector)x/=TRIAD_COUNT;
+  for(auto& x:global_.tensor)x/=TRIAD_COUNT;
+  global_.unique_statements=graph_.size();
+  global_.unique_sources=sources_.size();
+  global_.tick=clock_;
+ }
+ void evict(Branch& b) {
+  if(b.size()<leaf_limit_)return;
+  auto victim=b.begin();
+  for(auto it=b.begin();it!=b.end();++it)
+   if(it->second.last_tick<victim->second.last_tick)victim=it;
+  b.erase(victim); // graph and journal retain exact source-bearing claims
+ }
+public:
+ explicit SensorMemory(std::size_t leaves_per_head=128,
+                       std::size_t statements=100000,double leak=0.97)
+  :curvature_([](std::uint8_t a,std::uint8_t b,std::uint8_t c){return curvature(a,b,c);}),
+   leaf_limit_(leaves_per_head),statement_limit_(statements),leak_(leak) {
+  if(!leaf_limit_||!statement_limit_||!std::isfinite(leak)||leak<0||leak>=1)
+   throw std::invalid_argument("invalid sensor bounds");
+  map_positions();
+ }
+ void set_mapping(const TriadMap& map) {
+  if(!journal_.empty())throw std::logic_error("remap before ingestion; or rebuild and replay");
+  const auto old=map_;
+  map_=map;
+  try {map_positions();}
+  catch(...) {map_=old;map_positions();throw;}
+ }
+ template<class NativeModel> void import_native_mapping(const NativeModel& model) {
+  TriadMap map{};std::array<std::uint8_t,TRIAD_COUNT> next{};
+  for(std::size_t h=0;h<HEAD_COUNT;++h){
+   const auto g=model.head_triad(static_cast<std::uint8_t>(h));
+   if(g>=TRIAD_COUNT||next[g]>=3)throw std::invalid_argument("bad native membership");
+   map[g][next[g]++]=static_cast<std::uint8_t>(h);
+  }
+  set_mapping(map);
+ }
+ template<class NativeUniverse> void import_native_geometry(const NativeUniverse& universe) {
+  curvature_=[&universe](std::uint8_t a,std::uint8_t b,std::uint8_t c){
+   return universe.triangle(a,b,c);
+  };
+ }
+ void tick() {
+  if(clock_==std::numeric_limits<std::uint64_t>::max())
+   throw std::overflow_error("sensor nanclock overflow");
+  for(std::size_t g=0;g<TRIAD_COUNT;++g)
+   previous_triad_activity_[g]=triads_[g].activation;
+  ++clock_;
+  for(auto& x:head_state_)x*=leak_;
+  for(auto& x:head_support_)x*=leak_;
+  for(auto& x:head_refute_)x*=leak_;
+  for(auto& v:head_vectors_)for(auto& x:v)x*=leak_;
+  for(auto& t:head_tensors_)for(auto& x:t)x*=leak_;
+  for(auto& t:triads_){
+   t.support*=leak_;t.refute*=leak_;t.activation*=leak_;
+   for(auto& x:t.vector)x*=leak_;
+   for(auto& x:t.tensor)x*=leak_;
+  }
+  recalc_global(); // exact graph and source provenance never decay on idle ticks
+ }
+ bool ingest(const Assertion& a) {
+  check_assertion(a);
+  auto id=std::make_tuple(a.source,a.subject,a.predicate,a.object,a.refutes);
+  if(seen_.contains(id))return false;
+  if(journal_.size()>=statement_limit_)throw std::length_error("journal budget exceeded");
+  if(clock_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("clock overflow");
+  tick();
+  seen_.insert(id);journal_.push_back(a);event_ticks_.push_back(clock_);sources_.insert(a.source);
+  const StatementKey key{a.subject,a.predicate,a.object};
+  auto& e=graph_[key];
+  (a.refutes?e.refuting_sources:e.supporting_sources).insert(a.source);
+  const auto v=claim_vector(a.subject,a.predicate,a.object);
+  const auto heads=route(v);
+  std::array<bool,TRIAD_COUNT> touched{};
+  const double angle=2.*PI*double(clock_%257)/257.;
+  for(auto h:heads){
+   auto& b=head_branches_[h];
+   if(!b.contains(key))evict(b);
+   auto& leaf=b[key];
+   if(leaf.last_tick==0)leaf.vector=v;
+   leaf.last_tick=clock_;leaf.sources.insert(a.source);
+   const auto xyz=features(v,h,angle);
+   const double strength=std::abs(xyz[0])+std::abs(xyz[1])+std::abs(xyz[2]);
+   leaf.activation+=strength*a.confidence;
+   head_state_[h]+=strength*a.confidence;
+   (a.refutes?head_refute_[h]:head_support_[h])+=a.confidence;
+   const double signed_weight=(a.refutes?-1.0:1.0)*a.confidence;
+   for(std::size_t i=0;i<3;++i){
+    leaf.measured_vector[i]+=signed_weight*xyz[i];
+    head_vectors_[h][i]+=signed_weight*xyz[i];
+   }
+   if(a.refutes)leaf.refute_charge+=a.confidence;
+   else leaf.support_charge+=a.confidence;
+   for(std::size_t i=0;i<3;++i)
+    for(std::size_t j=0;j<3;++j)
+     leaf.tensor[3*i+j]+=a.confidence*xyz[i]*xyz[j];
+   for(std::size_t i=0;i<9;++i)
+    head_tensors_[h][i]+=a.confidence*xyz[i/3]*xyz[i%3];
+   const auto g=reverse_group_[h];
+   auto& t=triads_[g];touched[g]=true;
+   t.sources.insert(a.source);
+   t.activation+=strength*a.confidence;
+   for(std::size_t i=0;i<3;++i)t.vector[i]+=signed_weight*xyz[i];
+   if(a.refutes)t.refute+=a.confidence;
+   else t.support+=a.confidence;
+   for(std::size_t i=0;i<9;++i)t.tensor[i]+=a.confidence*xyz[i/3]*xyz[i%3];
+  }
+  for(std::size_t g=0;g<TRIAD_COUNT;++g)if(touched[g]){
+   const auto& heads3=map_[g];
+   triads_[g].curvature=curvature_(heads3[0],heads3[1],heads3[2]);
+  }
+  recalc_global();
+  return true;
+ }
+ SupportSet direct(const std::string& subject,const std::string& predicate,
+                   const std::string& object)const {
+  const auto it=graph_.find(StatementKey{subject,predicate,object});
+  return it==graph_.end()?SupportSet{}:it->second;
+ }
+ // Restricted proof search: only positive ISA edges are transitive.
+ // Refutations remain direct evidence; no arbitrary explosive entailment.
+ ReasoningResult reason(const std::string& subject,const std::string& predicate,
+                        const std::string& object,std::size_t max_hops=5)const {
+  ReasoningResult out;out.evidence=direct(subject,predicate,object);
+  if(predicate!="ISA"||max_hops<2||subject==object)return out;
+  struct Entry {std::string node;std::vector<std::string> path;std::set<std::string> sources;};
+  std::queue<Entry> pending;
+  pending.push({subject,{subject},{}});
+  std::map<std::string,std::size_t> visited{{subject,0}};
+  std::size_t steps=0;
+  while(!pending.empty()&&steps++<4096){
+   auto current=std::move(pending.front());pending.pop();
+   const auto depth=current.path.size()-1;
+   if(depth>=max_hops)continue;
+   for(const auto& [key,ev]:graph_) {
+    if(key.predicate!="ISA"||key.subject!=current.node||ev.supporting_sources.empty())continue;
+    if(std::find(current.path.begin(),current.path.end(),key.object)!=current.path.end())continue;
+    auto path=current.path;path.push_back(key.object);
+    auto proof=current.sources;proof.insert(*ev.supporting_sources.begin());
+    if(key.object==object&&path.size()>=3){
+     out.inferred=true;out.proof_nodes=std::move(path);out.proof_sources=std::move(proof);
+     out.evidence.supporting_sources.insert(out.proof_sources.begin(),out.proof_sources.end());
+     return out;
+    }
+    const auto it=visited.find(key.object);
+    if(it==visited.end()||it->second>depth+1){
+     visited[key.object]=depth+1;
+     pending.push({key.object,std::move(path),std::move(proof)});
+    }
+   }
+  }
+  return out;
+ }
+ // Preserve NaNclock ordering of evidence, not merely the list of claims.
+ // For large clock jumps, analytical decay avoids replaying every empty tick.
+ // For small jumps, preserve the ordinary per-tick floating arithmetic.
+ void advance_to(std::uint64_t target){
+  if(target<clock_)throw std::invalid_argument("nanclock cannot run backwards");
+  const auto steps=target-clock_;
+  if(steps<=32){for(std::uint64_t i=0;i<steps;++i)tick();return;}
+  const double factor=std::pow(leak_,double(steps));
+  const double before_last=std::pow(leak_,double(steps-1));
+  for(auto& x:head_state_)x*=factor;
+  for(auto& x:head_support_)x*=factor;
+  for(auto& x:head_refute_)x*=factor;
+  for(auto& v:head_vectors_)for(auto& x:v)x*=factor;
+  for(auto& t:head_tensors_)for(auto& x:t)x*=factor;
+  for(std::size_t g=0;g<TRIAD_COUNT;++g){
+   auto& t=triads_[g];
+   previous_triad_activity_[g]=t.activation*before_last;
+   t.support*=factor;t.refute*=factor;t.activation*=factor;
+   for(auto& x:t.vector)x*=factor;
+   for(auto& x:t.tensor)x*=factor;
+  }
+  clock_=target;
+  recalc_global();
+ }
+ void save(const std::filesystem::path& path)const {
+  const auto tmp=std::filesystem::path(path.string()+".tmp");
+  std::ofstream file(tmp,std::ios::binary|std::ios::trunc);
+  if(!file)throw std::runtime_error("cannot open sensor snapshot");
+  if(journal_.size()!=event_ticks_.size())throw std::logic_error("sensor journal tick map corrupted");
+  file<<"NANLM_SENSOR_V2\t"<<clock_<<"\n";
+  for(std::size_t i=0;i<journal_.size();++i){
+   const auto& a=journal_[i];
+   file<<a.source<<'\t'<<(a.refutes?'-':'+')<<'\t'<<a.subject<<'\t'
+       <<a.predicate<<'\t'<<a.object<<'\t'<<std::hexfloat<<a.confidence
+       <<std::defaultfloat<<'\t'<<event_ticks_[i]<<'\n';
+  }
+  file.close();if(!file)throw std::runtime_error("sensor snapshot incomplete");
+  std::filesystem::rename(tmp,path);
+ }
+ void load(const std::filesystem::path& path) {
+  if(!journal_.empty())throw std::logic_error("load into a fresh sensor");
+  std::ifstream file(path,std::ios::binary);
+  if(!file)throw std::runtime_error("cannot read sensor snapshot");
+  std::string line;
+  if(!std::getline(file,line))throw std::runtime_error("missing sensor snapshot header");
+  const bool v1=line=="NANLM_SENSOR_V1";
+  std::uint64_t final_tick=0;
+  if(!v1){
+   const std::string prefix="NANLM_SENSOR_V2\t";
+   if(line.rfind(prefix,0)!=0)throw std::runtime_error("unknown sensor snapshot schema");
+   const auto t=line.substr(prefix.size());
+   std::size_t position=0;
+   final_tick=std::stoull(t,&position);
+   if(position!=t.size())throw std::runtime_error("invalid snapshot nanclock");
+  }
+  while(std::getline(file,line)){
+   std::istringstream in(line);std::vector<std::string> fields;std::string token;
+   while(std::getline(in,token,'\t'))fields.push_back(token);
+   if(fields.size()!=(v1?6u:7u)||(fields[1]!="+"&&fields[1]!="-"))
+    throw std::runtime_error("malformed sensor record");
+   std::size_t pos=0;
+   const double conf=std::stod(fields[5],&pos);
+   if(pos!=fields[5].size())throw std::runtime_error("bad confidence field");
+   if(!v1){
+    std::size_t tick_offset=0;
+    const auto event_tick=std::stoull(fields[6],&tick_offset);
+    if(tick_offset!=fields[6].size()||event_tick<=clock_||event_tick>final_tick)
+     throw std::runtime_error("invalid/out-of-order journal nanclock timestamp");
+    advance_to(event_tick-1);
+   }
+   if(!ingest({fields[0],fields[2],fields[3],fields[4],fields[1]=="-",conf}))
+    throw std::runtime_error("duplicate sensor event in snapshot");
+  }
+  if(!v1)advance_to(final_tick);
+  if(!file.eof())throw std::runtime_error("incomplete sensor snapshot read");
+ }
+ std::size_t ingest_tsv(std::istream& text) {
+  std::string line;std::size_t accepted=0;
+  while(std::getline(text,line)){
+   if(line.empty()||line[0]=='#')continue;
+   std::istringstream input(line);
+   std::vector<std::string> fields;std::string field;
+   while(std::getline(input,field,'\t'))fields.push_back(field);
+   if(fields.size()!=5||(fields[1]!="+"&&fields[1]!="-"))
+    throw std::runtime_error("expected source TAB +/- TAB subject TAB RELATION TAB object");
+   accepted+=ingest({fields[0],fields[2],fields[3],fields[4],fields[1]=="-",1.});
+  }
+  return accepted;
+ }
+ void set_hot_budget(std::size_t budget) {
+  if(budget==0||budget>HOT_MAX)throw std::invalid_argument("hot triad budget out of range");
+  hot_budget_=budget;recalc_global();
+ }
+ void set_hot_cutoff(double cutoff) {
+  if(!std::isfinite(cutoff)||cutoff<0)throw std::invalid_argument("invalid hot triad threshold");
+  hot_cutoff_=cutoff;recalc_global();
+ }
+ std::size_t hot_count()const{return hot_count_;}
+ std::size_t hot_budget()const{return hot_budget_;}
+ const HotTriad& hot_triad(std::size_t slot)const {
+  if(slot>=hot_count_)throw std::out_of_range("inactive hot triad slot");
+  return hot_[slot];
+ }
+ int hot_slot(std::uint8_t triad_id)const{return hot_slots_.at(triad_id);}
+ const std::vector<HotTriadLink>& hot_links()const{return hot_links_;}
+ const HotFieldAggregate& hot_field()const{return hot_field_;}
+ const std::array<double,3>& head_vector(std::uint8_t h)const{return head_vectors_.at(h);}
+ const std::array<double,9>& head_tensor(std::uint8_t h)const{return head_tensors_.at(h);}
+ const std::array<std::uint8_t,3>& triad_heads(std::uint8_t g)const{return map_.at(g);}
+ double head_activity(std::uint8_t h)const{return head_state_.at(h);}
+ double head_support(std::uint8_t h)const{return head_support_.at(h);}
+ double head_refute(std::uint8_t h)const{return head_refute_.at(h);}
+ const Branch& branch(std::uint8_t h)const {return head_branches_.at(h);}
+ const TriadAggregate& triad(std::size_t g)const {return triads_.at(g);}
+ const GlobalAggregate& global()const {return global_;}
+ std::size_t journal_size()const {return journal_.size();}
+ std::uint64_t clock()const {return clock_;}
+};
+} // namespace nanlm::math_sensor
