@@ -1,0 +1,44 @@
+name: Round 27 prospective cross-author panel
+on:
+  pull_request:
+    paths:
+      - .github/workflows/round27-prospective-panel.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download all precommitted new-book sources without selection
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, pathlib, re, urllib.request
+          books={35:"The Time Machine",84:"Frankenstein",120:"Treasure Island",1342:"Pride and Prejudice",1661:"The Adventures of Sherlock Holmes"}
+          root=pathlib.Path("round27_prospective_panel")
+          root.mkdir(parents=True,exist_ok=True)
+          listing=[]
+          for gid,title in sorted(books.items()):
+              url=f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt"
+              request=urllib.request.Request(url,headers={"User-Agent":"Round27-public-domain-prospective/1.0"})
+              with urllib.request.urlopen(request,timeout=55) as response:
+                  raw=response.read(12_000_001)
+              if not 5000<len(raw)<=12_000_000:raise ValueError(f"Bad size for book {gid}")
+              s=raw.decode("utf-8-sig","strict")
+              if not re.search(rf"\beboo?k\s*#\s*{gid}\b",s[:5000],re.I):raise ValueError(f"Wrong Gutenberg ID for {gid}")
+              if not re.search(r"\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK",s,re.I):raise ValueError(f"Missing start for {gid}")
+              if not re.search(r"\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK",s,re.I):raise ValueError(f"Missing end for {gid}")
+              (root/f"pg{gid}.txt").write_bytes(raw)
+              listing.append({"id":gid,"title":title,"raw_sha256":hashlib.sha256(raw).hexdigest(),"bytes":len(raw),"source":url})
+          (root/"manifest.json").write_text(json.dumps({"precommitted_round":27,"book_ids":sorted(books),"model_selection_permitted":False,"sample_count_per_book":1800,"seed":2026112122,"records":listing},indent=2)+"\n")
+          print(json.dumps(listing,indent=2))
+          PY
+      - name: Publish source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: round27-prospective-five-book-originals
+          path: round27_prospective_panel/
+          if-no-files-found: error
+          retention-days: 14
