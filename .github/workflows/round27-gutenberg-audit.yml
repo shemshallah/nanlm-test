@@ -1,0 +1,46 @@
+name: Round 27 precommitted Gutenberg sources
+on:
+  pull_request:
+    paths:
+      - .github/workflows/round27-gutenberg-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  originals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Acquire exact public-domain originals
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, pathlib, re, urllib.request
+          root = pathlib.Path("round27_public_gutenberg")
+          root.mkdir(parents=True, exist_ok=True)
+          titles={11:"Alice's Adventures in Wonderland", 158:"Emma", 219:"Heart of Darkness"}
+          entries=[]
+          for gid,title in sorted(titles.items()):
+              url=f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt"
+              req=urllib.request.Request(url,headers={"User-Agent":"Round27-public-domain-research/1.0"})
+              with urllib.request.urlopen(req,timeout=45) as response:
+                  raw=response.read(12_000_001)
+              assert 5000<len(raw)<=12_000_000, (gid,len(raw))
+              s=raw.decode("utf-8-sig")
+              assert re.search(rf"\beboo?k\s*#\s*{gid}\b",s[:5000],re.I), (gid,"wrong Gutenberg ID")
+              assert re.search(r"\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK",s,re.I),gid
+              assert re.search(r"\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK",s,re.I),gid
+              p=root/f"pg{gid}.txt"
+              p.write_bytes(raw)
+              entries.append({"id":gid,"title":title,"source":url,"raw_sha256":hashlib.sha256(raw).hexdigest(),"bytes":len(raw)})
+          (root/"manifest.json").write_text(json.dumps({"round":27,"precommitted_ids":[11,158,219],"entries":entries},indent=2)+"\n")
+          print(json.dumps(entries,indent=2))
+          PY
+      - name: Upload acquired originals
+        uses: actions/upload-artifact@v4
+        with:
+          name: round27-precommitted-gutenberg-originals
+          path: round27_public_gutenberg/
+          if-no-files-found: error
+          compression-level: 6
+          retention-days: 14
